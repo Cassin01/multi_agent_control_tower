@@ -13,6 +13,7 @@ pub struct SessionInfo {
     pub created_at: DateTime<Utc>,
 }
 
+#[derive(Clone)]
 pub struct TmuxManager {
     session_name: String,
 }

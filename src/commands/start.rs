@@ -1,6 +1,7 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::path::PathBuf;
+use tokio::task::JoinSet;
 
 use crate::config::Config;
 use crate::context::ContextStore;
@@ -67,36 +68,52 @@ pub async fn execute(args: Args) -> Result<()> {
 
     let claude = ClaudeManager::new(config.session_name(), context_store);
 
+    println!("Launching {} experts in parallel...", config.num_experts);
+
+    let mut tasks: JoinSet<Result<(u32, String, bool)>> = JoinSet::new();
+
     for (i, expert) in config.experts.iter().enumerate() {
         let expert_id = i as u32;
-        println!("  [{}] {} - Launching Claude...", expert_id, expert.name);
+        let expert_name = expert.name.clone();
+        let tmux = tmux.clone();
+        let claude = claude.clone();
+        let session_hash = config.session_hash();
+        let working_dir = project_path.to_str().unwrap().to_string();
+        let timeout = config.timeouts.agent_ready;
+        let instruction = load_instruction(&config, &expert.name)?;
 
-        tmux.set_pane_title(expert_id, &expert.name).await?;
+        tasks.spawn(async move {
+            tmux.set_pane_title(expert_id, &expert_name).await?;
 
-        claude
-            .launch_claude(
-                expert_id,
-                &config.session_hash(),
-                project_path.to_str().unwrap(),
-            )
-            .await?;
+            claude
+                .launch_claude(expert_id, &session_hash, &working_dir)
+                .await?;
 
-        let ready = claude
-            .wait_for_ready(expert_id, config.timeouts.agent_ready)
-            .await?;
+            let ready = claude.wait_for_ready(expert_id, timeout).await?;
 
+            if !instruction.is_empty() {
+                claude.send_instruction(expert_id, &instruction).await?;
+            }
+
+            Ok((expert_id, expert_name, ready))
+        });
+    }
+
+    let mut results: Vec<(u32, String, bool)> = Vec::new();
+    while let Some(result) = tasks.join_next().await {
+        results.push(result.context("Task panicked")??.into());
+    }
+
+    results.sort_by_key(|(id, _, _)| *id);
+
+    for (expert_id, name, ready) in results {
         if ready {
-            println!("  [{}] {} - Ready", expert_id, expert.name);
+            println!("  [{}] {} - Ready", expert_id, name);
         } else {
             println!(
                 "  [{}] {} - Timeout (may still be starting)",
-                expert_id, expert.name
+                expert_id, name
             );
-        }
-
-        let instruction = load_instruction(&config, &expert.name)?;
-        if !instruction.is_empty() {
-            claude.send_instruction(expert_id, &instruction).await?;
         }
     }
 

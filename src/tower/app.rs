@@ -201,7 +201,7 @@ impl TowerApp {
                     }
                 }
 
-                if key.code == KeyCode::Enter && self.focus != FocusArea::TaskInput {
+                if key.code == KeyCode::Enter {
                     self.assign_task().await?;
                 }
             }

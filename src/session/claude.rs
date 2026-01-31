@@ -5,6 +5,7 @@ use tokio::time::{sleep, Duration};
 use super::TmuxManager;
 use crate::context::ContextStore;
 
+#[derive(Clone)]
 pub struct ClaudeManager {
     tmux: TmuxManager,
     context_store: ContextStore,
