@@ -132,7 +132,7 @@ Initialize the expert session with Claude agents.
 4. Wait for all agents to be ready
 5. Send instruction prompts to each expert
 
-### `macot stop`
+### `macot down`
 Gracefully shut down the expert session.
 
 **Behavior:**
