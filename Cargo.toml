@@ -37,6 +37,7 @@ sha2 = "0.10"
 hex = "0.4"
 regex = "1"
 async-trait = "0.1"
+minijinja = "2"
 dirs = "5"
 
 [dev-dependencies]

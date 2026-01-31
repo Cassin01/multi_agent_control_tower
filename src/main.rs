@@ -5,6 +5,7 @@ mod cli;
 mod commands;
 mod config;
 mod context;
+mod instructions;
 mod models;
 mod queue;
 mod session;

@@ -5,6 +5,7 @@ use tokio::task::JoinSet;
 
 use crate::config::Config;
 use crate::context::ContextStore;
+use crate::instructions::load_instruction_with_template;
 use crate::queue::QueueManager;
 use crate::session::{ClaudeManager, TmuxManager};
 
@@ -125,19 +126,5 @@ pub async fn execute(args: Args) -> Result<()> {
 }
 
 fn load_instruction(config: &Config, expert_name: &str) -> Result<String> {
-    let core_path = config.instructions_path.join("core.md");
-    let expert_path = config.instructions_path.join(format!("{}.md", expert_name));
-
-    let mut instruction = String::new();
-
-    if core_path.exists() {
-        instruction.push_str(&std::fs::read_to_string(&core_path)?);
-        instruction.push_str("\n\n");
-    }
-
-    if expert_path.exists() {
-        instruction.push_str(&std::fs::read_to_string(&expert_path)?);
-    }
-
-    Ok(instruction)
+    load_instruction_with_template(&config.instructions_path, expert_name)
 }

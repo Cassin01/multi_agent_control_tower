@@ -102,6 +102,35 @@ impl Report {
     pub fn duration(&self) -> Option<chrono::Duration> {
         self.completed_at.map(|end| end - self.started_at)
     }
+
+    /// Generate a sample YAML schema with example data for documentation.
+    pub fn sample_yaml_schema() -> String {
+        use chrono::TimeZone;
+
+        let sample = Self {
+            task_id: "task-YYYYMMDD-HHMMSS".to_string(),
+            expert_id: 0,
+            expert_name: "your_expert_name".to_string(),
+            status: TaskStatus::Done,
+            started_at: Utc.with_ymd_and_hms(2024, 1, 15, 10, 31, 0).unwrap(),
+            completed_at: Some(Utc.with_ymd_and_hms(2024, 1, 15, 10, 45, 0).unwrap()),
+            summary: "Brief description of work completed.".to_string(),
+            details: ReportDetails {
+                findings: vec![Finding {
+                    description: "Issue description".to_string(),
+                    severity: "high".to_string(),
+                    file: Some("path/to/file.rs".to_string()),
+                    line: Some(45),
+                }],
+                recommendations: vec!["Recommendation text".to_string()],
+                files_modified: vec!["path/to/modified/file.rs".to_string()],
+                files_created: vec!["path/to/new/file.rs".to_string()],
+            },
+            errors: vec![],
+        };
+
+        serde_yaml::to_string(&sample).unwrap()
+    }
 }
 
 #[cfg(test)]
@@ -209,5 +238,30 @@ errors: []
         let report = Report::new("task-001".to_string(), 0, "architect".to_string())
             .complete("Done".to_string());
         assert!(report.duration().is_some());
+    }
+
+    #[test]
+    fn sample_yaml_schema_generates_valid_yaml() {
+        let schema = Report::sample_yaml_schema();
+        let parsed: Result<Report, _> = serde_yaml::from_str(&schema);
+        assert!(parsed.is_ok(), "Generated schema should be valid YAML");
+    }
+
+    #[test]
+    fn sample_yaml_schema_contains_required_fields() {
+        let schema = Report::sample_yaml_schema();
+        assert!(schema.contains("task_id:"));
+        assert!(schema.contains("expert_id:"));
+        assert!(schema.contains("expert_name:"));
+        assert!(schema.contains("status:"));
+        assert!(schema.contains("started_at:"));
+        assert!(schema.contains("completed_at:"));
+        assert!(schema.contains("summary:"));
+        assert!(schema.contains("details:"));
+        assert!(schema.contains("findings:"));
+        assert!(schema.contains("recommendations:"));
+        assert!(schema.contains("files_modified:"));
+        assert!(schema.contains("files_created:"));
+        assert!(schema.contains("errors:"));
     }
 }

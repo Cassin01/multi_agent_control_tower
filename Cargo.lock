@@ -616,6 +616,7 @@ dependencies = [
  "crossterm",
  "dirs",
  "hex",
+ "minijinja",
  "ratatui",
  "regex",
  "serde",
@@ -644,6 +645,15 @@ name = "memchr"
 version = "2.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f52b00d39961fc5b2736ea853c9cc86238e165017a493d1d5c8eac6bdc4cc273"
+
+[[package]]
+name = "minijinja"
+version = "2.15.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b479616bb6f0779fb0f3964246beda02d4b01144e1b0d5519616e012ccc2a245"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "mio"
