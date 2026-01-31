@@ -132,8 +132,12 @@ mod tests {
 
     #[test]
     fn task_serializes_to_yaml() {
-        let task = Task::new(0, "architect".to_string(), "Review authentication".to_string())
-            .with_priority(TaskPriority::High);
+        let task = Task::new(
+            0,
+            "architect".to_string(),
+            "Review authentication".to_string(),
+        )
+        .with_priority(TaskPriority::High);
 
         let yaml = serde_yaml::to_string(&task).unwrap();
         assert!(yaml.contains("expert_id: 0"));

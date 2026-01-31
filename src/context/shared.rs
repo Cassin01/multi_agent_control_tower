@@ -141,18 +141,31 @@ mod tests {
     fn shared_context_get_decisions_for_expert_filters_correctly() {
         let mut ctx = SharedContext::default();
 
+        ctx.add_decision(Decision::new(
+            0,
+            "Global".to_string(),
+            "Use TypeScript".to_string(),
+            "Type safety".to_string(),
+        ));
+
         ctx.add_decision(
-            Decision::new(0, "Global".to_string(), "Use TypeScript".to_string(), "Type safety".to_string())
+            Decision::new(
+                0,
+                "Frontend".to_string(),
+                "Use React".to_string(),
+                "Popular".to_string(),
+            )
+            .with_affects_experts(vec![1]),
         );
 
         ctx.add_decision(
-            Decision::new(0, "Frontend".to_string(), "Use React".to_string(), "Popular".to_string())
-                .with_affects_experts(vec![1])
-        );
-
-        ctx.add_decision(
-            Decision::new(0, "Backend".to_string(), "Use Rust".to_string(), "Performance".to_string())
-                .with_affects_experts(vec![2])
+            Decision::new(
+                0,
+                "Backend".to_string(),
+                "Use Rust".to_string(),
+                "Performance".to_string(),
+            )
+            .with_affects_experts(vec![2]),
         );
 
         let expert1_decisions = ctx.get_decisions_for_expert(1);

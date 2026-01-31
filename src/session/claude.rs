@@ -40,7 +40,9 @@ impl ClaudeManager {
 
         let claude_cmd = format!("cd {} && claude {}", working_dir, args.join(" "));
 
-        self.tmux.send_keys_with_enter(expert_id, &claude_cmd).await?;
+        self.tmux
+            .send_keys_with_enter(expert_id, &claude_cmd)
+            .await?;
 
         Ok(())
     }

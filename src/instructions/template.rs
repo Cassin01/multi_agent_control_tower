@@ -35,8 +35,8 @@ pub fn load_instruction_with_template(
     let mut instruction = String::new();
 
     if core_template_path.exists() {
-        let template_content = std::fs::read_to_string(&core_template_path)
-            .context("Failed to read core template")?;
+        let template_content =
+            std::fs::read_to_string(&core_template_path).context("Failed to read core template")?;
         instruction.push_str(&render_template(&template_content)?);
         instruction.push_str("\n\n");
     } else if core_legacy_path.exists() {

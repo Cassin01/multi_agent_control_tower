@@ -139,7 +139,10 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(10));
         ctx.set_session_id("session-xyz".to_string());
 
-        assert_eq!(ctx.claude_session.session_id, Some("session-xyz".to_string()));
+        assert_eq!(
+            ctx.claude_session.session_id,
+            Some("session-xyz".to_string())
+        );
         assert!(ctx.updated_at > initial_updated);
     }
 
@@ -159,7 +162,11 @@ mod tests {
     fn expert_context_add_task_history_appends() {
         let mut ctx = ExpertContext::new(0, "architect".to_string(), "abc123".to_string());
 
-        ctx.add_task_history("task-001".to_string(), "done".to_string(), "Completed review".to_string());
+        ctx.add_task_history(
+            "task-001".to_string(),
+            "done".to_string(),
+            "Completed review".to_string(),
+        );
 
         assert_eq!(ctx.task_history.len(), 1);
         assert_eq!(ctx.task_history[0].task_id, "task-001");
@@ -211,7 +218,10 @@ task_history:
         let ctx: ExpertContext = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(ctx.expert_id, 1);
         assert_eq!(ctx.expert_name, "frontend");
-        assert_eq!(ctx.claude_session.session_id, Some("session-abc".to_string()));
+        assert_eq!(
+            ctx.claude_session.session_id,
+            Some("session-abc".to_string())
+        );
         assert_eq!(ctx.knowledge.files_analyzed.len(), 1);
         assert_eq!(ctx.task_history.len(), 1);
     }

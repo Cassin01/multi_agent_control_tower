@@ -32,8 +32,7 @@ pub async fn execute(args: Args) -> Result<()> {
 
     println!("Starting macot session for: {}", project_path.display());
 
-    let mut config = Config::load(args.config)?
-        .with_project_path(project_path.clone());
+    let mut config = Config::load(args.config)?.with_project_path(project_path.clone());
 
     if let Some(n) = args.num_experts {
         config = config.with_num_experts(n);
@@ -120,7 +119,10 @@ pub async fn execute(args: Args) -> Result<()> {
 
     println!("\nSession started successfully!");
     println!("Run 'macot tower' to open the control tower UI");
-    println!("Run 'tmux attach -t {}' to view agents directly", config.session_name());
+    println!(
+        "Run 'tmux attach -t {}' to view agents directly",
+        config.session_name()
+    );
 
     Ok(())
 }

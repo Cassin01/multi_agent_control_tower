@@ -216,11 +216,7 @@ impl TmuxManager {
         Ok(sessions)
     }
 
-    pub async fn init_session_metadata(
-        &self,
-        project_path: &str,
-        num_experts: u32,
-    ) -> Result<()> {
+    pub async fn init_session_metadata(&self, project_path: &str, num_experts: u32) -> Result<()> {
         self.set_env("MACOT_PROJECT_PATH", project_path).await?;
         self.set_env("MACOT_NUM_EXPERTS", &num_experts.to_string())
             .await?;

@@ -147,10 +147,14 @@ impl TowerApp {
     }
 
     fn update_focus(&mut self) {
-        self.status_display.set_focused(self.focus == FocusArea::ExpertList);
-        self.task_input.set_focused(self.focus == FocusArea::TaskInput);
-        self.effort_selector.set_focused(self.focus == FocusArea::EffortSelector);
-        self.report_display.set_focused(self.focus == FocusArea::ReportList);
+        self.status_display
+            .set_focused(self.focus == FocusArea::ExpertList);
+        self.task_input
+            .set_focused(self.focus == FocusArea::TaskInput);
+        self.effort_selector
+            .set_focused(self.focus == FocusArea::EffortSelector);
+        self.report_display
+            .set_focused(self.focus == FocusArea::ReportList);
     }
 
     pub fn next_focus(&mut self) {
@@ -207,9 +211,7 @@ impl TowerApp {
                     }
                 }
 
-                if key.code == KeyCode::Char('s')
-                    && key.modifiers.contains(KeyModifiers::CONTROL)
-                {
+                if key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL) {
                     self.assign_task().await?;
                 }
             }
@@ -299,23 +301,36 @@ impl TowerApp {
             .map(|e| e.name.clone())
             .unwrap_or_else(|| format!("expert{}", expert_id));
 
-        let task = Task::new(expert_id, expert_name.clone(), self.task_input.content().to_string())
-            .with_effort(EffortConfig::from_level(self.effort_selector.selected()));
+        let task = Task::new(
+            expert_id,
+            expert_name.clone(),
+            self.task_input.content().to_string(),
+        )
+        .with_effort(EffortConfig::from_level(self.effort_selector.selected()));
 
         self.queue.write_task(&task).await?;
 
         let decision = Decision::new(
             expert_id,
             format!("Task Assignment to {}", expert_name),
-            format!("Assigned: {}", task.description.chars().take(100).collect::<String>()),
+            format!(
+                "Assigned: {}",
+                task.description.chars().take(100).collect::<String>()
+            ),
             format!("Effort: {:?}", self.effort_selector.selected()),
         );
-        self.context_store.add_decision(&self.config.session_hash(), decision).await?;
+        self.context_store
+            .add_decision(&self.config.session_hash(), decision)
+            .await?;
 
         let session_hash = self.config.session_hash();
-        let mut expert_ctx = self.context_store
-            .load_expert_context(&session_hash, expert_id).await?
-            .unwrap_or_else(|| ExpertContext::new(expert_id, expert_name.clone(), session_hash.clone()));
+        let mut expert_ctx = self
+            .context_store
+            .load_expert_context(&session_hash, expert_id)
+            .await?
+            .unwrap_or_else(|| {
+                ExpertContext::new(expert_id, expert_name.clone(), session_hash.clone())
+            });
         expert_ctx.add_task_history(
             task.task_id.clone(),
             "assigned".to_string(),
@@ -329,7 +344,9 @@ impl TowerApp {
             self.effort_selector.selected(),
             expert_id
         );
-        self.claude.send_keys_with_enter(expert_id, &task_prompt).await?;
+        self.claude
+            .send_keys_with_enter(expert_id, &task_prompt)
+            .await?;
 
         self.task_input.clear();
         self.set_message(format!("Task assigned to {}", expert_name));

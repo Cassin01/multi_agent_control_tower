@@ -54,7 +54,9 @@ impl ContextStore {
         session_hash: &str,
         expert_id: u32,
     ) -> Result<Option<ExpertContext>> {
-        let path = self.expert_path(session_hash, expert_id).join("context.yaml");
+        let path = self
+            .expert_path(session_hash, expert_id)
+            .join("context.yaml");
 
         if !path.exists() {
             return Ok(None);
@@ -100,11 +102,7 @@ impl ContextStore {
         Ok(ctx)
     }
 
-    pub async fn save_shared_context(
-        &self,
-        session_hash: &str,
-        ctx: &SharedContext,
-    ) -> Result<()> {
+    pub async fn save_shared_context(&self, session_hash: &str, ctx: &SharedContext) -> Result<()> {
         let shared_path = self.shared_path(session_hash);
         fs::create_dir_all(&shared_path).await?;
 
@@ -201,7 +199,10 @@ mod tests {
         let loaded = loaded.unwrap();
         assert_eq!(loaded.expert_id, 0);
         assert_eq!(loaded.expert_name, "architect");
-        assert_eq!(loaded.claude_session.session_id, Some("session-xyz".to_string()));
+        assert_eq!(
+            loaded.claude_session.session_id,
+            Some("session-xyz".to_string())
+        );
     }
 
     #[tokio::test]
@@ -221,11 +222,19 @@ mod tests {
         let ctx = ExpertContext::new(0, "architect".to_string(), "abc123".to_string());
         store.save_expert_context(&ctx).await.unwrap();
 
-        assert!(store.load_expert_context("abc123", 0).await.unwrap().is_some());
+        assert!(store
+            .load_expert_context("abc123", 0)
+            .await
+            .unwrap()
+            .is_some());
 
         store.clear_expert_context("abc123", 0).await.unwrap();
 
-        assert!(store.load_expert_context("abc123", 0).await.unwrap().is_none());
+        assert!(store
+            .load_expert_context("abc123", 0)
+            .await
+            .unwrap()
+            .is_none());
     }
 
     #[tokio::test]

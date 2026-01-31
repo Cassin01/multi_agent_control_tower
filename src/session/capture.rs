@@ -138,9 +138,12 @@ impl CaptureManager {
             '◐', '◓', '◑', '◒', // Circle spinners
         ];
         // Check recent lines for thinking indicators
-        if lines.iter().rev().take(10).any(|line| {
-            thinking_indicators.iter().any(|c| line.contains(*c))
-        }) {
+        if lines
+            .iter()
+            .rev()
+            .take(10)
+            .any(|line| thinking_indicators.iter().any(|c| line.contains(*c)))
+        {
             return AgentStatus::Thinking;
         }
 
@@ -159,9 +162,7 @@ impl CaptureManager {
         // Check recent lines since UI elements may appear after the prompt
         if lines.iter().rev().take(10).any(|line| {
             let trimmed = line.trim();
-            trimmed.starts_with('❯')
-                || trimmed.starts_with('>')
-                || trimmed.ends_with('>')
+            trimmed.starts_with('❯') || trimmed.starts_with('>') || trimmed.ends_with('>')
         }) {
             return AgentStatus::Idle;
         }
@@ -212,47 +213,41 @@ mod tests {
 
     #[test]
     fn analyze_status_detects_idle_with_prompt() {
-        let lines = vec![
-            "Some output".to_string(),
-            "> ".to_string(),
-        ];
+        let lines = vec!["Some output".to_string(), "> ".to_string()];
         assert_eq!(CaptureManager::analyze_status(&lines), AgentStatus::Idle);
     }
 
     #[test]
     fn analyze_status_detects_idle_with_claude_prompt() {
-        let lines = vec![
-            "Some output".to_string(),
-            "❯ ".to_string(),
-        ];
+        let lines = vec!["Some output".to_string(), "❯ ".to_string()];
         assert_eq!(CaptureManager::analyze_status(&lines), AgentStatus::Idle);
     }
 
     #[test]
     fn analyze_status_detects_thinking_with_spinner() {
-        let lines = vec![
-            "Some output".to_string(),
-            "⠋ Processing...".to_string(),
-        ];
-        assert_eq!(CaptureManager::analyze_status(&lines), AgentStatus::Thinking);
+        let lines = vec!["Some output".to_string(), "⠋ Processing...".to_string()];
+        assert_eq!(
+            CaptureManager::analyze_status(&lines),
+            AgentStatus::Thinking
+        );
     }
 
     #[test]
     fn analyze_status_detects_thinking_with_claude_asterisk() {
-        let lines = vec![
-            "Some output".to_string(),
-            "✻ Churned for 59s".to_string(),
-        ];
-        assert_eq!(CaptureManager::analyze_status(&lines), AgentStatus::Thinking);
+        let lines = vec!["Some output".to_string(), "✻ Churned for 59s".to_string()];
+        assert_eq!(
+            CaptureManager::analyze_status(&lines),
+            AgentStatus::Thinking
+        );
     }
 
     #[test]
     fn analyze_status_detects_executing_with_claude_tool() {
-        let lines = vec![
-            "Some output".to_string(),
-            "⏺ Bash(cargo build)".to_string(),
-        ];
-        assert_eq!(CaptureManager::analyze_status(&lines), AgentStatus::Executing);
+        let lines = vec!["Some output".to_string(), "⏺ Bash(cargo build)".to_string()];
+        assert_eq!(
+            CaptureManager::analyze_status(&lines),
+            AgentStatus::Executing
+        );
     }
 
     #[test]
@@ -261,13 +256,19 @@ mod tests {
             "Some output".to_string(),
             "Reading file: src/main.rs".to_string(),
         ];
-        assert_eq!(CaptureManager::analyze_status(&lines), AgentStatus::Executing);
+        assert_eq!(
+            CaptureManager::analyze_status(&lines),
+            AgentStatus::Executing
+        );
 
         let lines2 = vec![
             "Some output".to_string(),
             "Writing to output.txt".to_string(),
         ];
-        assert_eq!(CaptureManager::analyze_status(&lines2), AgentStatus::Executing);
+        assert_eq!(
+            CaptureManager::analyze_status(&lines2),
+            AgentStatus::Executing
+        );
     }
 
     #[test]
@@ -312,7 +313,10 @@ mod tests {
     #[test]
     fn extract_last_activity_returns_default_for_empty() {
         let lines: Vec<String> = vec![];
-        assert_eq!(CaptureManager::extract_last_activity(&lines), "(no activity)");
+        assert_eq!(
+            CaptureManager::extract_last_activity(&lines),
+            "(no activity)"
+        );
     }
 
     #[test]

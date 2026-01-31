@@ -73,12 +73,9 @@ pub async fn execute(args: Args) -> Result<()> {
     if args.cleanup {
         println!("Cleaning up session data...");
 
-        let session_hash = session_name
-            .strip_prefix("macot-")
-            .unwrap_or(&session_name);
+        let session_hash = session_name.strip_prefix("macot-").unwrap_or(&session_name);
 
-        let config = Config::default()
-            .with_project_path(std::path::PathBuf::from(&project_path));
+        let config = Config::default().with_project_path(std::path::PathBuf::from(&project_path));
         let context_store = ContextStore::new(config.queue_path.clone());
 
         if let Err(e) = context_store.cleanup_session(session_hash).await {

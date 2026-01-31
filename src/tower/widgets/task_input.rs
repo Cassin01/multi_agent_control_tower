@@ -130,7 +130,12 @@ impl TaskInput {
 
             vec![Line::from(vec![
                 Span::styled(before, text_style),
-                Span::styled("│", Style::default().fg(Color::Yellow).add_modifier(Modifier::SLOW_BLINK)),
+                Span::styled(
+                    "│",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::SLOW_BLINK),
+                ),
                 Span::styled(after, text_style),
             ])]
         } else {

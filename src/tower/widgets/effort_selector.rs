@@ -53,7 +53,11 @@ impl EffortSelector {
         let spans: Vec<Span> = levels
             .iter()
             .map(|level| {
-                let marker = if *level == self.selected { "●" } else { "○" };
+                let marker = if *level == self.selected {
+                    "●"
+                } else {
+                    "○"
+                };
                 let style = if *level == self.selected {
                     Style::default()
                         .fg(Color::Green)

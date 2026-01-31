@@ -81,14 +81,9 @@ async fn reset_expert(
     let expert_id = config.resolve_expert_id(&expert)?;
     let expert_name = config.get_expert_name(expert_id);
 
-    println!(
-        "Resetting expert {} ({})...",
-        expert_id, expert_name
-    );
+    println!("Resetting expert {} ({})...", expert_id, expert_name);
 
-    let session_hash = session_name
-        .strip_prefix("macot-")
-        .unwrap_or(&session_name);
+    let session_hash = session_name.strip_prefix("macot-").unwrap_or(&session_name);
     let context_store = ContextStore::new(config.queue_path.clone());
     let claude = ClaudeManager::new(session_name.clone(), context_store.clone());
 

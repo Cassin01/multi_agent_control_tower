@@ -164,7 +164,10 @@ impl ReportDetailModal {
 
                 lines.push(Line::from(vec![
                     Span::raw(format!("  {}. ", i + 1)),
-                    Span::styled(format!("[{}]", finding.severity.to_uppercase()), severity_style),
+                    Span::styled(
+                        format!("[{}]", finding.severity.to_uppercase()),
+                        severity_style,
+                    ),
                     Span::raw(format!(" {}{}", finding.description, location)),
                 ]));
             }

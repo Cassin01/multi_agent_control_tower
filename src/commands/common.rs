@@ -1,5 +1,5 @@
-use anyhow::{bail, Result};
 use crate::session::TmuxManager;
+use anyhow::{bail, Result};
 
 /// Resolve a single macot session from running sessions.
 pub async fn resolve_single_session(no_sessions_msg: &str) -> Result<String> {

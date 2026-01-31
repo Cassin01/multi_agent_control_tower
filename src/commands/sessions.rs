@@ -19,7 +19,10 @@ pub async fn execute() -> Result<()> {
     for session in sessions {
         let created = session.created_at.format("%Y-%m-%d %H:%M");
         let path = if session.project_path.len() > 38 {
-            format!("...{}", &session.project_path[session.project_path.len() - 35..])
+            format!(
+                "...{}",
+                &session.project_path[session.project_path.len() - 35..]
+            )
         } else {
             session.project_path.clone()
         };

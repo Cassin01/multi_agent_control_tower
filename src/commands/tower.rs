@@ -20,7 +20,10 @@ pub struct Args {
 pub async fn execute(args: Args) -> Result<()> {
     let session_name = match args.session_name {
         Some(name) => name,
-        None => common::resolve_single_session("No macot sessions running. Run 'macot start' first.").await?,
+        None => {
+            common::resolve_single_session("No macot sessions running. Run 'macot start' first.")
+                .await?
+        }
     };
 
     let tmux = TmuxManager::new(session_name.clone());
