@@ -70,10 +70,10 @@ impl UI {
                 Style::default().fg(Color::Yellow),
             ),
             Span::raw("| "),
-            Span::styled(format!("○{} ", summary.idle), Style::default().fg(Color::Gray)),
-            Span::styled(format!("◐{} ", summary.thinking), Style::default().fg(Color::Yellow)),
-            Span::styled(format!("●{} ", summary.executing), Style::default().fg(Color::Green)),
-            Span::styled(format!("✗{}", summary.error), Style::default().fg(Color::Red)),
+            Span::styled(format!("○ {} ", summary.idle), Style::default().fg(Color::Gray)),
+            Span::styled(format!("◐ {} ", summary.thinking), Style::default().fg(Color::Yellow)),
+            Span::styled(format!("● {} ", summary.executing), Style::default().fg(Color::Green)),
+            Span::styled(format!("✗ {}", summary.error), Style::default().fg(Color::Red)),
         ];
 
         let header = Paragraph::new(Line::from(title)).block(
@@ -108,7 +108,7 @@ impl UI {
             Span::raw(" | "),
             Span::styled("Tab", Style::default().fg(Color::Yellow)),
             Span::raw(": Switch focus "),
-            Span::styled("Enter", Style::default().fg(Color::Yellow)),
+            Span::styled("Ctrl+S", Style::default().fg(Color::Yellow)),
             Span::raw(": Assign task "),
             Span::styled("Ctrl+R", Style::default().fg(Color::Yellow)),
             Span::raw(": Refresh "),

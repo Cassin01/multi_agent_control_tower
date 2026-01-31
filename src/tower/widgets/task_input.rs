@@ -21,6 +21,15 @@ impl TaskInput {
         }
     }
 
+    /// Convert character-based cursor position to byte index
+    fn cursor_byte_index(&self) -> usize {
+        self.content
+            .char_indices()
+            .nth(self.cursor_position)
+            .map(|(i, _)| i)
+            .unwrap_or(self.content.len())
+    }
+
     pub fn set_focused(&mut self, focused: bool) {
         self.focused = focused;
     }
@@ -36,7 +45,7 @@ impl TaskInput {
 
     #[allow(dead_code)]
     pub fn set_content(&mut self, content: String) {
-        self.cursor_position = content.len();
+        self.cursor_position = content.chars().count();
         self.content = content;
     }
 
@@ -46,7 +55,8 @@ impl TaskInput {
     }
 
     pub fn insert_char(&mut self, c: char) {
-        self.content.insert(self.cursor_position, c);
+        let byte_idx = self.cursor_byte_index();
+        self.content.insert(byte_idx, c);
         self.cursor_position += 1;
     }
 
@@ -57,13 +67,16 @@ impl TaskInput {
     pub fn delete_char(&mut self) {
         if self.cursor_position > 0 {
             self.cursor_position -= 1;
-            self.content.remove(self.cursor_position);
+            let byte_idx = self.cursor_byte_index();
+            self.content.remove(byte_idx);
         }
     }
 
     pub fn delete_forward(&mut self) {
-        if self.cursor_position < self.content.len() {
-            self.content.remove(self.cursor_position);
+        let char_count = self.content.chars().count();
+        if self.cursor_position < char_count {
+            let byte_idx = self.cursor_byte_index();
+            self.content.remove(byte_idx);
         }
     }
 
@@ -74,7 +87,8 @@ impl TaskInput {
     }
 
     pub fn move_cursor_right(&mut self) {
-        if self.cursor_position < self.content.len() {
+        let char_count = self.content.chars().count();
+        if self.cursor_position < char_count {
             self.cursor_position += 1;
         }
     }
@@ -84,7 +98,7 @@ impl TaskInput {
     }
 
     pub fn move_cursor_end(&mut self) {
-        self.cursor_position = self.content.len();
+        self.cursor_position = self.content.chars().count();
     }
 
     pub fn is_empty(&self) -> bool {
@@ -110,8 +124,9 @@ impl TaskInput {
                 Style::default().fg(Color::DarkGray),
             ))]
         } else if self.focused {
-            let before = &self.content[..self.cursor_position];
-            let after = &self.content[self.cursor_position..];
+            let byte_idx = self.cursor_byte_index();
+            let before = &self.content[..byte_idx];
+            let after = &self.content[byte_idx..];
 
             vec![Line::from(vec![
                 Span::styled(before, text_style),
@@ -256,5 +271,89 @@ mod tests {
         let mut input = TaskInput::new();
         input.set_content("   \n  \t  ".to_string());
         assert!(input.is_empty());
+    }
+
+    #[test]
+    fn task_input_japanese_insert() {
+        let mut input = TaskInput::new();
+        input.insert_char('あ');
+        input.insert_char('い');
+        input.insert_char('う');
+        assert_eq!(input.content(), "あいう");
+        assert_eq!(input.cursor_position, 3);
+    }
+
+    #[test]
+    fn task_input_japanese_delete() {
+        let mut input = TaskInput::new();
+        input.set_content("あいう".to_string());
+
+        input.delete_char();
+        assert_eq!(input.content(), "あい");
+
+        input.delete_char();
+        assert_eq!(input.content(), "あ");
+    }
+
+    #[test]
+    fn task_input_japanese_cursor_movement() {
+        let mut input = TaskInput::new();
+        input.set_content("あいう".to_string());
+
+        assert_eq!(input.cursor_position, 3);
+
+        input.move_cursor_left();
+        assert_eq!(input.cursor_position, 2);
+
+        input.move_cursor_start();
+        assert_eq!(input.cursor_position, 0);
+
+        input.move_cursor_right();
+        assert_eq!(input.cursor_position, 1);
+
+        input.move_cursor_end();
+        assert_eq!(input.cursor_position, 3);
+    }
+
+    #[test]
+    fn task_input_japanese_insert_in_middle() {
+        let mut input = TaskInput::new();
+        input.set_content("あう".to_string());
+        input.move_cursor_start();
+        input.move_cursor_right();
+
+        input.insert_char('い');
+        assert_eq!(input.content(), "あいう");
+    }
+
+    #[test]
+    fn task_input_mixed_ascii_japanese() {
+        let mut input = TaskInput::new();
+        input.set_content("Hello世界".to_string());
+
+        assert_eq!(input.cursor_position, 7);
+
+        input.delete_char();
+        assert_eq!(input.content(), "Hello世");
+
+        input.move_cursor_start();
+        for _ in 0..5 {
+            input.move_cursor_right();
+        }
+        input.insert_char('!');
+        assert_eq!(input.content(), "Hello!世");
+    }
+
+    #[test]
+    fn task_input_delete_forward_japanese() {
+        let mut input = TaskInput::new();
+        input.set_content("あいう".to_string());
+        input.move_cursor_start();
+
+        input.delete_forward();
+        assert_eq!(input.content(), "いう");
+
+        input.delete_forward();
+        assert_eq!(input.content(), "う");
     }
 }

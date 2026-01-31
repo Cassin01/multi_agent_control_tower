@@ -101,27 +101,7 @@ impl CaptureManager {
     }
 
     fn analyze_status(lines: &[String]) -> AgentStatus {
-        let last_non_empty = lines
-            .iter()
-            .rev()
-            .find(|line| !line.trim().is_empty())
-            .map(|s| s.as_str())
-            .unwrap_or("");
-
-        if last_non_empty.starts_with('>') || last_non_empty.ends_with('>') {
-            return AgentStatus::Idle;
-        }
-
-        let spinner_chars = [
-            '⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏', '◐', '◓', '◑', '◒',
-        ];
-        if spinner_chars
-            .iter()
-            .any(|c| last_non_empty.contains(*c))
-        {
-            return AgentStatus::Thinking;
-        }
-
+        // Check for errors first (highest priority)
         if lines.iter().any(|line| {
             line.contains("Error:")
                 || line.contains("error:")
@@ -131,13 +111,59 @@ impl CaptureManager {
             return AgentStatus::Error;
         }
 
-        if last_non_empty.contains("Reading")
-            || last_non_empty.contains("Writing")
-            || last_non_empty.contains("Running")
-            || last_non_empty.contains("Executing")
-            || last_non_empty.contains("Searching")
-        {
+        // Claude Code tool execution indicator (⏺)
+        // Search more lines since UI elements appear at the bottom
+        if lines.iter().rev().take(15).any(|line| {
+            let trimmed = line.trim();
+            trimmed.starts_with('⏺') || trimmed.contains("Running")
+        }) {
             return AgentStatus::Executing;
+        }
+
+        // Check for executing keywords in recent lines
+        if lines.iter().rev().take(15).any(|line| {
+            line.contains("Reading")
+                || line.contains("Writing")
+                || line.contains("Executing")
+                || line.contains("Searching")
+        }) {
+            return AgentStatus::Executing;
+        }
+
+        // Claude Code thinking indicators
+        let thinking_indicators = [
+            '✻', // Claude Code thinking asterisk (six teardrop)
+            '✳', // Claude Code thinking asterisk (eight spoked)
+            '⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏', // Braille spinners
+            '◐', '◓', '◑', '◒', // Circle spinners
+        ];
+        // Check recent lines for thinking indicators
+        if lines.iter().rev().take(10).any(|line| {
+            thinking_indicators.iter().any(|c| line.contains(*c))
+        }) {
+            return AgentStatus::Thinking;
+        }
+
+        // Check for thinking status messages in recent lines
+        if lines.iter().rev().take(10).any(|line| {
+            line.contains("Thinking")
+                || line.contains("thought for")
+                || line.contains("Churned")
+                || line.contains("gibbeting")
+                || line.contains("Cogitating")
+        }) {
+            return AgentStatus::Thinking;
+        }
+
+        // Claude Code idle prompt (❯) and standard prompt (>)
+        // Check recent lines since UI elements may appear after the prompt
+        if lines.iter().rev().take(10).any(|line| {
+            let trimmed = line.trim();
+            trimmed.starts_with('❯')
+                || trimmed.starts_with('>')
+                || trimmed.ends_with('>')
+        }) {
+            return AgentStatus::Idle;
         }
 
         AgentStatus::Unknown
@@ -194,12 +220,39 @@ mod tests {
     }
 
     #[test]
+    fn analyze_status_detects_idle_with_claude_prompt() {
+        let lines = vec![
+            "Some output".to_string(),
+            "❯ ".to_string(),
+        ];
+        assert_eq!(CaptureManager::analyze_status(&lines), AgentStatus::Idle);
+    }
+
+    #[test]
     fn analyze_status_detects_thinking_with_spinner() {
         let lines = vec![
             "Some output".to_string(),
             "⠋ Processing...".to_string(),
         ];
         assert_eq!(CaptureManager::analyze_status(&lines), AgentStatus::Thinking);
+    }
+
+    #[test]
+    fn analyze_status_detects_thinking_with_claude_asterisk() {
+        let lines = vec![
+            "Some output".to_string(),
+            "✻ Churned for 59s".to_string(),
+        ];
+        assert_eq!(CaptureManager::analyze_status(&lines), AgentStatus::Thinking);
+    }
+
+    #[test]
+    fn analyze_status_detects_executing_with_claude_tool() {
+        let lines = vec![
+            "Some output".to_string(),
+            "⏺ Bash(cargo build)".to_string(),
+        ];
+        assert_eq!(CaptureManager::analyze_status(&lines), AgentStatus::Executing);
     }
 
     #[test]

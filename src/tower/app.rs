@@ -125,6 +125,13 @@ impl TowerApp {
         Ok(())
     }
 
+    async fn poll_status(&mut self) -> Result<()> {
+        if self.poll_counter % 5 != 0 {
+            return Ok(());
+        }
+        self.refresh_status().await
+    }
+
     async fn poll_reports(&mut self) -> Result<()> {
         self.poll_counter += 1;
         if self.poll_counter % 10 != 0 {
@@ -201,7 +208,9 @@ impl TowerApp {
                     }
                 }
 
-                if key.code == KeyCode::Enter {
+                if key.code == KeyCode::Char('s')
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                {
                     self.assign_task().await?;
                 }
             }
@@ -321,6 +330,7 @@ impl TowerApp {
         while self.is_running() {
             terminal.draw(|frame| UI::render(frame, self))?;
             self.handle_events().await?;
+            self.poll_status().await?;
             self.poll_reports().await?;
         }
 
