@@ -23,7 +23,7 @@ macot enables parallel code tasks by managing multiple Claude agents (experts) w
          │ assign             │ monitor            │ report
          ▼                    ▼                    │
 ┌─────────────────────────────────────────────────────────────────┐
-│                     tmux Session (expert)                        │
+│                  tmux Session (macot-{hash})                     │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐        │
 │  │ Expert 0 │  │ Expert 1 │  │ Expert 2 │  │ Expert N │        │
 │  │ (Claude) │  │ (Claude) │  │ (Claude) │  │ (Claude) │        │
@@ -68,9 +68,26 @@ File-based task and report exchange:
 
 ### tmux Session Manager
 Manages the underlying terminal sessions:
-- Session name: `expert`
+- Session naming: `macot-{hash}` where hash is first 8 chars of SHA256(absolute_project_path)
 - One pane per expert agent
 - Color-coded prompts for visual distinction
+
+**Session Environment Variables:**
+Each tmux session stores metadata in environment variables:
+```bash
+MACOT_PROJECT_PATH    # Absolute path to the project directory
+MACOT_NUM_EXPERTS     # Number of expert agents in this session
+MACOT_CREATED_AT      # Session creation timestamp (ISO 8601)
+```
+
+**Session Discovery:**
+```bash
+# List all macot sessions
+tmux list-sessions -F "#{session_name}" | grep "^macot-"
+
+# Get project path for a session
+tmux showenv -t {session_name} MACOT_PROJECT_PATH
+```
 
 ---
 
@@ -82,8 +99,8 @@ Manages the underlying terminal sessions:
 # Number of expert agents to spawn
 num_experts: 4
 
-# Project path (defaults to current directory)
-project_path: .
+# Session prefix (used in session naming: {prefix}-{hash})
+session_prefix: "macot"
 
 # Expert configuration
 experts:
@@ -100,46 +117,123 @@ experts:
 timeouts:
   agent_ready: 30
   task_completion: 600
-
-# tmux session name
-session_name: "expert"
 ```
+
+### Session Naming Convention
+
+Sessions are named using a hash of the absolute project path to enable multiple concurrent sessions:
+
+```
+Format: {session_prefix}-{hash}
+Where:
+  - session_prefix: Configurable prefix (default: "macot")
+  - hash: First 8 characters of SHA256(absolute_project_path)
+
+Example:
+  project_path: /Users/user/myproject
+  absolute_path: /Users/user/myproject (resolved)
+  SHA256: a1b2c3d4e5f6...
+  session_name: macot-a1b2c3d4
+```
+
+This ensures:
+- Unique session per project directory
+- Deterministic naming (same path → same session name)
+- Multiple projects can run simultaneously
 
 ### Environment Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `MACOT_CONFIG` | Path to config file | `~/.config/macot/config.yaml` |
-| `MACOT_PROJECT_PATH` | Override project path | Current directory |
-| `MACOT_NUM_EXPERTS` | Override number of experts | From config |
+
+**Note:** `MACOT_PROJECT_PATH` and `MACOT_NUM_EXPERTS` are stored in tmux session environment (see tmux Session Manager section), not as shell environment variables.
 
 ---
 
 ## 4. Commands
 
-### `macot start [options]`
-Initialize the expert session with Claude agents.
+### `macot start [project_path] [options]`
+Initialize the expert session with Claude agents for a specific project.
+
+**Arguments:**
+- `project_path`: Path to project directory (default: current directory)
 
 **Options:**
 - `-n, --num-experts <N>`: Number of experts (overrides config)
-- `-p, --project <path>`: Project directory path
 - `-c, --config <path>`: Custom config file path
 
 **Behavior:**
-1. Create tmux session with N panes
-2. Set unique prompt colors per pane
-3. Launch Claude CLI in each pane with `--dangerously-skip-permissions`
-4. Wait for all agents to be ready
-5. Send instruction prompts to each expert
+1. Resolve `project_path` to absolute path
+2. Generate session name: `{prefix}-{SHA256(absolute_path)[:8]}`
+3. Check if session already exists (error if running)
+4. Create tmux session with N panes
+5. Store metadata in tmux environment:
+   ```bash
+   tmux setenv -t {session} MACOT_PROJECT_PATH {absolute_path}
+   tmux setenv -t {session} MACOT_NUM_EXPERTS {num_experts}
+   tmux setenv -t {session} MACOT_CREATED_AT {timestamp}
+   ```
+6. Set unique prompt colors per pane
+7. Launch Claude CLI in each pane with `--dangerously-skip-permissions`
+8. Wait for all agents to be ready
+9. Send instruction prompts to each expert
 
-### `macot down`
-Gracefully shut down the expert session.
+**Example:**
+```bash
+# Start session for current directory
+macot start
+
+# Start session for specific project
+macot start /path/to/myproject
+
+# Start with custom number of experts
+macot start /path/to/myproject -n 6
+```
+
+### `macot sessions`
+List all running macot sessions.
+
+**Output format:**
+```
+SESSION           PROJECT PATH                         EXPERTS  CREATED
+macot-a1b2c3d4    /Users/user/project1                 4        2024-01-15 10:30
+macot-e5f6g7h8    /Users/user/project2                 3        2024-01-15 11:45
+```
 
 **Behavior:**
-1. Send exit commands to all Claude instances
-2. Wait for graceful termination (timeout: 10s)
-3. Force kill remaining processes
-4. Destroy tmux session
+1. Find all tmux sessions matching `{prefix}-*`
+2. For each session, retrieve environment variables
+3. Display formatted table with session info
+
+### `macot down [session_name]`
+Gracefully shut down a specific expert session.
+
+**Arguments:**
+- `session_name`: Name of the session to stop (e.g., `macot-a1b2c3d4`)
+  - If omitted and only one session exists, stops that session
+  - If omitted and multiple sessions exist, shows error with list
+
+**Behavior:**
+1. Validate session exists
+2. Send exit commands to all Claude instances
+3. Wait for graceful termination (timeout: 10s)
+4. Force kill remaining processes
+5. Destroy tmux session
+
+**Example:**
+```bash
+# Stop specific session
+macot down macot-a1b2c3d4
+
+# Stop only running session (if single session)
+macot down
+```
+
+### `macot stop` (deprecated alias)
+Alias for `macot down`. Kept for backward compatibility.
+
+**Note:** Prefer using `macot down` for new scripts and documentation.
 
 ### `macot tower`
 Launch the control tower UI.
@@ -152,12 +246,18 @@ Launch the control tower UI.
 - Status display per expert (idle/in_progress/done)
 - Report viewer for completed tasks
 
-### `macot status`
+### `macot status [session_name]`
 Display current session status without entering tower UI.
+
+**Arguments:**
+- `session_name`: Name of the session to check (optional)
+  - If omitted and only one session exists, shows that session
+  - If omitted and multiple sessions exist, shows error with list
 
 **Output:**
 ```
-Session: expert (running)
+Session: macot-a1b2c3d4 (running)
+Project: /Users/user/myproject
 Experts:
   [0] architect  - idle
   [1] frontend   - in_progress
@@ -219,7 +319,7 @@ queue/
 
 ### Session Initialization Flow
 ```
-User runs `macot start`
+User runs `macot start [project_path]`
          │
          ▼
 ┌─────────────────────────────┐
@@ -228,31 +328,57 @@ User runs `macot start`
          │
          ▼
 ┌─────────────────────────────┐
-│ 2. Create tmux session      │
+│ 2. Resolve project_path     │
+│    to absolute path         │
+└─────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────┐
+│ 3. Generate session name    │
+│    hash = SHA256(abs_path)  │
+│    name = macot-{hash[:8]}  │
+└─────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────┐
+│ 4. Check if session exists  │
+│    (error if already running)│
+└─────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────┐
+│ 5. Create tmux session      │
 │    with N panes             │
 └─────────────────────────────┘
          │
          ▼
 ┌─────────────────────────────┐
-│ 3. Configure pane prompts   │
+│ 6. Store session metadata   │
+│    in tmux environment      │
+│    (PROJECT_PATH, NUM, TIME)│
+└─────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────┐
+│ 7. Configure pane prompts   │
 │    (colors, titles)         │
 └─────────────────────────────┘
          │
          ▼
 ┌─────────────────────────────┐
-│ 4. Launch Claude CLI        │
+│ 8. Launch Claude CLI        │
 │    in each pane             │
 └─────────────────────────────┘
          │
          ▼
 ┌─────────────────────────────┐
-│ 5. Wait for ready signal    │
+│ 9. Wait for ready signal    │
 │    (poll for prompt)        │
 └─────────────────────────────┘
          │
          ▼
 ┌─────────────────────────────┐
-│ 6. Send instruction files   │
+│10. Send instruction files   │
 │    to each expert           │
 └─────────────────────────────┘
          │
@@ -324,28 +450,40 @@ Expert completes task
 
 ### Session Teardown Flow
 ```
-User runs `macot stop`
+User runs `macot down [session_name]`
          │
          ▼
 ┌─────────────────────────────┐
-│ 1. Send /exit to all Claude │
-│    instances                │
+│ 1. Resolve target session   │
+│    (from arg or single      │
+│     running session)        │
 └─────────────────────────────┘
          │
          ▼
 ┌─────────────────────────────┐
-│ 2. Wait for graceful exit   │
+│ 2. Validate session exists  │
+└─────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────┐
+│ 3. Send /exit to all Claude │
+│    instances in session     │
+└─────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────┐
+│ 4. Wait for graceful exit   │
 │    (timeout: 10s)           │
 └─────────────────────────────┘
          │
          ▼
 ┌─────────────────────────────┐
-│ 3. Kill remaining processes │
+│ 5. Kill remaining processes │
 └─────────────────────────────┘
          │
          ▼
 ┌─────────────────────────────┐
-│ 4. Destroy tmux session     │
+│ 6. Destroy tmux session     │
 └─────────────────────────────┘
          │
          ▼
