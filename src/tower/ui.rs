@@ -13,7 +13,7 @@ use ratatui::{
     Frame, Terminal,
 };
 
-use super::app::TowerApp;
+use super::app::{FocusArea, TowerApp};
 use super::widgets::ViewMode;
 
 pub struct UI;
@@ -83,14 +83,22 @@ impl UI {
     fn render_header(frame: &mut Frame, area: Rect, app: &mut TowerApp) {
         let summary = app.status_display().get_status_summary();
 
-        let title = vec![
+        let mut title = vec![
             Span::styled(
                 " MACOT ",
                 Style::default()
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::raw(" - Multi Agent Control Tower | "),
+        ];
+
+        // Show subtitle only when width is sufficient
+        if area.width >= 100 {
+            title.push(Span::raw(" - Multi Agent Control Tower "));
+        }
+        title.push(Span::raw("| "));
+
+        title.extend([
             Span::styled(
                 format!("Session: {} ", app.config().session_name()),
                 Style::default().fg(Color::Yellow),
@@ -112,7 +120,7 @@ impl UI {
                 format!("✗ {}", summary.error),
                 Style::default().fg(Color::Red),
             ),
-        ];
+        ]);
 
         let header = Paragraph::new(Line::from(title)).block(
             Block::default()
@@ -141,16 +149,25 @@ impl UI {
             Style::default().fg(Color::Green)
         };
 
-        let help_text = vec![
+        let mut help_text = vec![
             Span::styled(message, message_style),
             Span::raw(" | "),
             Span::styled("Tab", Style::default().fg(Color::Yellow)),
             Span::raw(": Switch focus "),
-            Span::styled("Ctrl+S", Style::default().fg(Color::Yellow)),
-            Span::raw(": Assign task "),
-            Span::styled("Ctrl+Q", Style::default().fg(Color::Yellow)),
-            Span::raw(": Quit"),
         ];
+
+        if app.focus() == FocusArea::TaskInput {
+            help_text.push(Span::styled("Ctrl+S", Style::default().fg(Color::Yellow)));
+            help_text.push(Span::raw(": Assign task "));
+        }
+
+        if app.focus() == FocusArea::ExpertList {
+            help_text.push(Span::styled("Ctrl+R", Style::default().fg(Color::Yellow)));
+            help_text.push(Span::raw(": Reset "));
+        }
+
+        help_text.push(Span::styled("Ctrl+Q", Style::default().fg(Color::Yellow)));
+        help_text.push(Span::raw(": Quit"));
 
         let footer = Paragraph::new(Line::from(help_text)).block(
             Block::default()

@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use crate::config::Config;
 use crate::context::{ContextStore, Decision, ExpertContext};
+use crate::instructions::load_instruction_with_template;
 use crate::models::{EffortConfig, Task};
 use crate::queue::QueueManager;
 use crate::session::{CaptureManager, ClaudeManager, TmuxManager};
@@ -200,7 +201,7 @@ impl TowerApp {
                     FocusArea::ExpertList => self.handle_expert_list_keys(key.code),
                     FocusArea::TaskInput => self.handle_task_input_keys(key.code, key.modifiers),
                     FocusArea::EffortSelector => self.handle_effort_selector_keys(key.code),
-                    FocusArea::ReportList => self.handle_report_list_keys(key.code),
+                    FocusArea::ReportList => self.handle_report_list_keys(key.code, key.modifiers),
                 }
 
                 if key.code == KeyCode::Tab {
@@ -210,9 +211,22 @@ impl TowerApp {
                         self.next_focus();
                     }
                 }
+                if key.code == KeyCode::BackTab {
+                    self.prev_focus();
+                }
 
-                if key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                if key.code == KeyCode::Char('s')
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                    && self.focus == FocusArea::TaskInput
+                {
                     self.assign_task().await?;
+                }
+
+                if key.code == KeyCode::Char('r')
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                    && self.focus == FocusArea::ExpertList
+                {
+                    self.reset_expert().await?;
                 }
             }
         }
@@ -262,7 +276,7 @@ impl TowerApp {
         }
     }
 
-    fn handle_report_list_keys(&mut self, code: KeyCode) {
+    fn handle_report_list_keys(&mut self, code: KeyCode, modifiers: KeyModifiers) {
         match self.report_display.view_mode() {
             ViewMode::List => match code {
                 KeyCode::Up | KeyCode::Char('k') => self.report_display.prev(),
@@ -270,14 +284,19 @@ impl TowerApp {
                 KeyCode::Enter => self.report_display.open_detail(),
                 _ => {}
             },
-            ViewMode::Detail => match code {
-                KeyCode::Up | KeyCode::Char('k') => self.report_display.scroll_up(),
-                KeyCode::Down | KeyCode::Char('j') => self.report_display.scroll_down(),
-                KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') | KeyCode::Tab => {
-                    self.report_display.close_detail()
+            ViewMode::Detail => {
+                match code {
+                    KeyCode::Up | KeyCode::Char('k') => self.report_display.scroll_up(),
+                    KeyCode::Down | KeyCode::Char('j') => self.report_display.scroll_down(),
+                    KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') | KeyCode::Tab | KeyCode::BackTab => {
+                        self.report_display.close_detail()
+                    }
+                    _ => {}
                 }
-                _ => {}
-            },
+                if code == KeyCode::Char('q') && modifiers.contains(KeyModifiers::CONTROL) {
+                    self.report_display.close_detail();
+                }
+            }
         }
     }
 
@@ -351,6 +370,35 @@ impl TowerApp {
         self.task_input.clear();
         self.set_message(format!("Task assigned to {}", expert_name));
 
+        Ok(())
+    }
+
+    pub async fn reset_expert(&mut self) -> Result<()> {
+        let expert_id = match self.status_display.selected_expert_id() {
+            Some(id) => id,
+            None => {
+                self.set_message("No expert selected".to_string());
+                return Ok(());
+            }
+        };
+
+        let expert_name = self.config.get_expert_name(expert_id);
+
+        self.set_message(format!("Resetting {}...", expert_name));
+
+        self.context_store
+            .clear_expert_context(&self.config.session_hash(), expert_id)
+            .await?;
+
+        self.claude.send_clear(expert_id).await?;
+
+        let instruction =
+            load_instruction_with_template(&self.config.instructions_path, &expert_name)?;
+        if !instruction.is_empty() {
+            self.claude.send_instruction(expert_id, &instruction).await?;
+        }
+
+        self.set_message(format!("{} reset complete", expert_name));
         Ok(())
     }
 
