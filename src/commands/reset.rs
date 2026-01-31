@@ -2,8 +2,10 @@ use anyhow::{bail, Result};
 use clap::{Args as ClapArgs, Subcommand};
 use std::path::PathBuf;
 
+use crate::commands::common;
 use crate::config::Config;
 use crate::context::ContextStore;
+use crate::instructions::load_instruction_with_template;
 use crate::session::{ClaudeManager, TmuxManager};
 
 #[derive(ClapArgs)]
@@ -52,7 +54,7 @@ async fn reset_expert(
 ) -> Result<()> {
     let session_name = match session {
         Some(name) => name,
-        None => resolve_single_session().await?,
+        None => common::resolve_single_session_default().await?,
     };
 
     let tmux = TmuxManager::new(session_name.clone());
@@ -76,11 +78,8 @@ async fn reset_expert(
         .with_project_path(PathBuf::from(&project_path))
         .with_num_experts(num_experts);
 
-    let expert_id = resolve_expert_id(&expert, &config)?;
-    let expert_name = config
-        .get_expert(expert_id)
-        .map(|e| e.name.clone())
-        .unwrap_or_else(|| format!("expert{}", expert_id));
+    let expert_id = config.resolve_expert_id(&expert)?;
+    let expert_name = config.get_expert_name(expert_id);
 
     println!(
         "Resetting expert {} ({})...",
@@ -129,67 +128,11 @@ async fn reset_expert(
     }
 
     println!("  Resending instructions...");
-    let instruction = load_instruction(&config, &expert_name)?;
+    let instruction = load_instruction_with_template(&config.instructions_path, &expert_name)?;
     if !instruction.is_empty() {
         claude.send_instruction(expert_id, &instruction).await?;
     }
 
     println!("Expert {} reset complete.", expert_id);
     Ok(())
-}
-
-fn resolve_expert_id(expert: &str, config: &Config) -> Result<u32> {
-    if let Ok(id) = expert.parse::<u32>() {
-        if id < config.experts.len() as u32 {
-            return Ok(id);
-        }
-        bail!(
-            "Expert ID {} out of range (0-{})",
-            id,
-            config.experts.len() - 1
-        );
-    }
-
-    if let Some((id, _)) = config.get_expert_by_name(expert) {
-        return Ok(id);
-    }
-
-    bail!("Unknown expert: {}", expert)
-}
-
-fn load_instruction(config: &Config, expert_name: &str) -> Result<String> {
-    let core_path = config.instructions_path.join("core.md");
-    let expert_path = config.instructions_path.join(format!("{}.md", expert_name));
-
-    let mut instruction = String::new();
-
-    if core_path.exists() {
-        instruction.push_str(&std::fs::read_to_string(&core_path)?);
-        instruction.push_str("\n\n");
-    }
-
-    if expert_path.exists() {
-        instruction.push_str(&std::fs::read_to_string(&expert_path)?);
-    }
-
-    Ok(instruction)
-}
-
-async fn resolve_single_session() -> Result<String> {
-    let sessions = TmuxManager::list_all_macot_sessions().await?;
-
-    match sessions.len() {
-        0 => bail!("No macot sessions running"),
-        1 => Ok(sessions[0].session_name.clone()),
-        _ => {
-            eprintln!("Multiple sessions running. Please specify one with --session:");
-            for session in &sessions {
-                eprintln!(
-                    "  {} - {}",
-                    session.session_name, session.project_path
-                );
-            }
-            bail!("Multiple sessions running, please specify session name")
-        }
-    }
 }

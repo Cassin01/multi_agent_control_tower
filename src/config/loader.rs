@@ -157,6 +157,35 @@ impl Config {
     pub fn session_name(&self) -> String {
         format!("{}-{}", self.session_prefix, self.session_hash())
     }
+
+    /// Resolve expert by ID (u32) or name (case-insensitive)
+    pub fn resolve_expert_id(&self, expert: &str) -> Result<u32> {
+        use anyhow::bail;
+
+        if let Ok(id) = expert.parse::<u32>() {
+            if id < self.experts.len() as u32 {
+                return Ok(id);
+            }
+            bail!(
+                "Expert ID {} out of range (0-{})",
+                id,
+                self.experts.len() - 1
+            );
+        }
+
+        if let Some((id, _)) = self.get_expert_by_name(expert) {
+            return Ok(id);
+        }
+
+        bail!("Unknown expert: {}", expert)
+    }
+
+    /// Get expert name with fallback to default naming
+    pub fn get_expert_name(&self, id: u32) -> String {
+        self.get_expert(id)
+            .map(|e| e.name.clone())
+            .unwrap_or_else(|| format!("expert{}", id))
+    }
 }
 
 #[cfg(test)]
@@ -295,5 +324,38 @@ timeouts:
         assert!(yaml.contains("num_experts: 4"));
         assert!(yaml.contains("session_prefix: macot"));
         assert!(yaml.contains("name: architect"));
+    }
+
+    #[test]
+    fn config_resolve_expert_id_by_number() {
+        let config = Config::default();
+        assert_eq!(config.resolve_expert_id("0").unwrap(), 0);
+        assert_eq!(config.resolve_expert_id("1").unwrap(), 1);
+    }
+
+    #[test]
+    fn config_resolve_expert_id_by_name() {
+        let config = Config::default();
+        assert_eq!(config.resolve_expert_id("architect").unwrap(), 0);
+        assert_eq!(config.resolve_expert_id("FRONTEND").unwrap(), 1);
+    }
+
+    #[test]
+    fn config_resolve_expert_id_invalid() {
+        let config = Config::default();
+        assert!(config.resolve_expert_id("99").is_err());
+        assert!(config.resolve_expert_id("unknown").is_err());
+    }
+
+    #[test]
+    fn config_get_expert_name_valid() {
+        let config = Config::default();
+        assert_eq!(config.get_expert_name(0), "architect");
+    }
+
+    #[test]
+    fn config_get_expert_name_fallback() {
+        let config = Config::default();
+        assert_eq!(config.get_expert_name(99), "expert99");
     }
 }

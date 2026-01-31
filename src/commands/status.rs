@@ -1,6 +1,7 @@
 use anyhow::{bail, Result};
 use clap::Args as ClapArgs;
 
+use crate::commands::common;
 use crate::config::Config;
 use crate::session::{CaptureManager, TmuxManager};
 
@@ -13,7 +14,7 @@ pub struct Args {
 pub async fn execute(args: Args) -> Result<()> {
     let session_name = match args.session_name {
         Some(name) => name,
-        None => resolve_single_session().await?,
+        None => common::resolve_single_session_default().await?,
     };
 
     let tmux = TmuxManager::new(session_name.clone());
@@ -66,23 +67,4 @@ pub async fn execute(args: Args) -> Result<()> {
     }
 
     Ok(())
-}
-
-async fn resolve_single_session() -> Result<String> {
-    let sessions = TmuxManager::list_all_macot_sessions().await?;
-
-    match sessions.len() {
-        0 => bail!("No macot sessions running"),
-        1 => Ok(sessions[0].session_name.clone()),
-        _ => {
-            eprintln!("Multiple sessions running. Please specify one:");
-            for session in &sessions {
-                eprintln!(
-                    "  {} - {}",
-                    session.session_name, session.project_path
-                );
-            }
-            bail!("Multiple sessions running, please specify session name")
-        }
-    }
 }
