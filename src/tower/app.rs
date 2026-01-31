@@ -125,6 +125,12 @@ impl TowerApp {
         Ok(())
     }
 
+    pub async fn refresh_reports(&mut self) -> Result<()> {
+        let reports = self.queue.list_reports().await?;
+        self.report_display.set_reports(reports);
+        Ok(())
+    }
+
     async fn poll_status(&mut self) -> Result<()> {
         if self.poll_counter % 5 != 0 {
             return Ok(());
@@ -137,9 +143,7 @@ impl TowerApp {
         if self.poll_counter % 10 != 0 {
             return Ok(());
         }
-        let reports = self.queue.list_reports().await?;
-        self.report_display.set_reports(reports);
-        Ok(())
+        self.refresh_reports().await
     }
 
     fn update_focus(&mut self) {
@@ -186,6 +190,7 @@ impl TowerApp {
                         }
                         KeyCode::Char('r') => {
                             self.refresh_status().await?;
+                            self.refresh_reports().await?;
                             self.set_message("Status refreshed".to_string());
                             return Ok(());
                         }
@@ -326,6 +331,7 @@ impl TowerApp {
 
         self.update_focus();
         self.refresh_status().await?;
+        self.refresh_reports().await?;
 
         while self.is_running() {
             terminal.draw(|frame| UI::render(frame, self))?;

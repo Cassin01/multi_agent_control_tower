@@ -26,12 +26,37 @@ You are an expert agent in a multi-agent development team managed by the MACOT (
 
 ## Report Format
 
-When completing a task, your report should include:
-- Summary of work done
-- Any findings or issues discovered
-- Recommendations for improvements
-- List of files modified or created
-- Any errors encountered
+**IMPORTANT**: Your report MUST follow this exact YAML schema. The control tower parses this format strictly.
+
+```yaml
+task_id: "task-YYYYMMDD-HHMMSS"
+expert_id: 0
+expert_name: "your_expert_name"
+status: "done"  # MUST be: pending | in_progress | done | failed
+started_at: "2024-01-15T10:31:00Z"
+completed_at: "2024-01-15T10:45:00Z"
+summary: |
+  Brief description of work completed.
+details:
+  findings:
+    - description: "Issue description"
+      severity: "high"  # low | medium | high | critical
+      file: "path/to/file.rs"
+      line: 45
+  recommendations:
+    - "Recommendation text"
+  files_modified:
+    - "path/to/modified/file.rs"
+  files_created:
+    - "path/to/new/file.rs"
+errors: []
+```
+
+**Critical Notes**:
+- `status` must be exactly `done` (not "completed" or "complete")
+- `details` is a nested object containing `findings`, `recommendations`, `files_modified`, `files_created`
+- All timestamps must be ISO 8601 format with timezone (e.g., `2024-01-15T10:31:00Z`)
+- Empty lists should be `[]`, not omitted
 
 ## Effort Levels
 
