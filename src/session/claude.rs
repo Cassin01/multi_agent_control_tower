@@ -86,7 +86,7 @@ impl ClaudeManager {
         while start.elapsed() < timeout {
             let content = self.tmux.capture_pane(expert_id).await?;
 
-            if content.contains(">") || content.contains("Ready") {
+            if content.contains("bypass permissions") {
                 return Ok(true);
             }
 

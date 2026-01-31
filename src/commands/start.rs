@@ -80,26 +80,23 @@ pub async fn execute(args: Args) -> Result<()> {
                 project_path.to_str().unwrap(),
             )
             .await?;
-    }
 
-    println!("\nWaiting for agents to be ready...");
-    tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
-
-    for (i, expert) in config.experts.iter().enumerate() {
-        let expert_id = i as u32;
         let ready = claude
             .wait_for_ready(expert_id, config.timeouts.agent_ready)
             .await?;
 
         if ready {
             println!("  [{}] {} - Ready", expert_id, expert.name);
-
-            let instruction = load_instruction(&config, &expert.name)?;
-            if !instruction.is_empty() {
-                claude.send_instruction(expert_id, &instruction).await?;
-            }
         } else {
-            println!("  [{}] {} - Timeout (may still be starting)", expert_id, expert.name);
+            println!(
+                "  [{}] {} - Timeout (may still be starting)",
+                expert_id, expert.name
+            );
+        }
+
+        let instruction = load_instruction(&config, &expert.name)?;
+        if !instruction.is_empty() {
+            claude.send_instruction(expert_id, &instruction).await?;
         }
     }
 
