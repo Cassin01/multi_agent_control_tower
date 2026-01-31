@@ -14,6 +14,7 @@ use ratatui::{
 };
 
 use super::app::TowerApp;
+use super::widgets::ViewMode;
 
 pub struct UI;
 
@@ -52,6 +53,31 @@ impl UI {
         app.effort_selector().render(frame, chunks[3]);
         app.report_display().render(frame, chunks[4]);
         Self::render_footer(frame, chunks[5], app);
+
+        if app.report_display().view_mode() == ViewMode::Detail {
+            let modal_area = Self::centered_area(frame.area(), 80, 90);
+            app.report_display().render_detail_modal(frame, modal_area);
+        }
+    }
+
+    fn centered_area(area: Rect, percent_x: u16, percent_y: u16) -> Rect {
+        let popup_layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Percentage((100 - percent_y) / 2),
+                Constraint::Percentage(percent_y),
+                Constraint::Percentage((100 - percent_y) / 2),
+            ])
+            .split(area);
+
+        Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage((100 - percent_x) / 2),
+                Constraint::Percentage(percent_x),
+                Constraint::Percentage((100 - percent_x) / 2),
+            ])
+            .split(popup_layout[1])[1]
     }
 
     fn render_header(frame: &mut Frame, area: Rect, app: &mut TowerApp) {

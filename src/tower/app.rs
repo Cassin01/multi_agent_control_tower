@@ -9,7 +9,7 @@ use crate::queue::QueueManager;
 use crate::session::{CaptureManager, ClaudeManager, TmuxManager};
 
 use super::ui::UI;
-use super::widgets::{EffortSelector, ReportDisplay, StatusDisplay, TaskInput};
+use super::widgets::{EffortSelector, ReportDisplay, StatusDisplay, TaskInput, ViewMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusArea {
@@ -267,10 +267,21 @@ impl TowerApp {
     }
 
     fn handle_report_list_keys(&mut self, code: KeyCode) {
-        match code {
-            KeyCode::Up | KeyCode::Char('k') => self.report_display.prev(),
-            KeyCode::Down | KeyCode::Char('j') => self.report_display.next(),
-            _ => {}
+        match self.report_display.view_mode() {
+            ViewMode::List => match code {
+                KeyCode::Up | KeyCode::Char('k') => self.report_display.prev(),
+                KeyCode::Down | KeyCode::Char('j') => self.report_display.next(),
+                KeyCode::Enter => self.report_display.open_detail(),
+                _ => {}
+            },
+            ViewMode::Detail => match code {
+                KeyCode::Up | KeyCode::Char('k') => self.report_display.scroll_up(),
+                KeyCode::Down | KeyCode::Char('j') => self.report_display.scroll_down(),
+                KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') | KeyCode::Tab => {
+                    self.report_display.close_detail()
+                }
+                _ => {}
+            },
         }
     }
 

@@ -8,10 +8,21 @@ use ratatui::{
 
 use crate::models::{Report, TaskStatus};
 
+use super::report_detail_modal::ReportDetailModal;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ViewMode {
+    #[default]
+    List,
+    Detail,
+}
+
 pub struct ReportDisplay {
     reports: Vec<Report>,
     state: ListState,
     focused: bool,
+    view_mode: ViewMode,
+    detail_modal: ReportDetailModal,
 }
 
 impl ReportDisplay {
@@ -20,7 +31,41 @@ impl ReportDisplay {
             reports: Vec::new(),
             state: ListState::default(),
             focused: false,
+            view_mode: ViewMode::List,
+            detail_modal: ReportDetailModal::new(),
         }
+    }
+
+    pub fn view_mode(&self) -> ViewMode {
+        self.view_mode
+    }
+
+    pub fn selected_report(&self) -> Option<&Report> {
+        self.state.selected().and_then(|i| self.reports.get(i))
+    }
+
+    pub fn open_detail(&mut self) {
+        if let Some(report) = self.selected_report().cloned() {
+            self.detail_modal.show(report);
+            self.view_mode = ViewMode::Detail;
+        }
+    }
+
+    pub fn close_detail(&mut self) {
+        self.detail_modal.hide();
+        self.view_mode = ViewMode::List;
+    }
+
+    pub fn scroll_up(&mut self) {
+        self.detail_modal.scroll_up();
+    }
+
+    pub fn scroll_down(&mut self) {
+        self.detail_modal.scroll_down(100);
+    }
+
+    pub fn render_detail_modal(&self, frame: &mut Frame, area: Rect) {
+        self.detail_modal.render(frame, area);
     }
 
     pub fn set_reports(&mut self, reports: Vec<Report>) {
@@ -200,5 +245,65 @@ mod tests {
 
         display.set_focused(true);
         assert!(display.focused);
+    }
+
+    #[test]
+    fn report_display_starts_in_list_mode() {
+        let display = ReportDisplay::new();
+        assert_eq!(display.view_mode(), ViewMode::List);
+    }
+
+    #[test]
+    fn report_display_open_detail_switches_to_detail_mode() {
+        let mut display = ReportDisplay::new();
+        display.set_reports(vec![create_test_report(
+            0,
+            "architect",
+            TaskStatus::Done,
+            "Completed",
+        )]);
+        display.next();
+        display.open_detail();
+        assert_eq!(display.view_mode(), ViewMode::Detail);
+    }
+
+    #[test]
+    fn report_display_close_detail_switches_to_list_mode() {
+        let mut display = ReportDisplay::new();
+        display.set_reports(vec![create_test_report(
+            0,
+            "architect",
+            TaskStatus::Done,
+            "Completed",
+        )]);
+        display.next();
+        display.open_detail();
+        display.close_detail();
+        assert_eq!(display.view_mode(), ViewMode::List);
+    }
+
+    #[test]
+    fn report_display_selected_report_returns_current() {
+        let mut display = ReportDisplay::new();
+        display.set_reports(vec![
+            create_test_report(0, "architect", TaskStatus::Done, "First"),
+            create_test_report(1, "frontend", TaskStatus::InProgress, "Second"),
+        ]);
+        display.next();
+        let selected = display.selected_report();
+        assert!(selected.is_some());
+        assert_eq!(selected.unwrap().expert_name, "architect");
+
+        display.next();
+        let selected = display.selected_report();
+        assert!(selected.is_some());
+        assert_eq!(selected.unwrap().expert_name, "frontend");
+    }
+
+    #[test]
+    fn report_display_open_detail_without_selection_stays_in_list() {
+        let mut display = ReportDisplay::new();
+        display.open_detail();
+        assert_eq!(display.view_mode(), ViewMode::List);
     }
 }
