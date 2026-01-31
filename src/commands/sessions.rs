@@ -11,8 +11,8 @@ pub async fn execute() -> Result<()> {
     }
 
     println!(
-        "{:<18} {:<40} {:>8} {}",
-        "SESSION", "PROJECT PATH", "EXPERTS", "CREATED"
+        "{:<18} {:<40} {:>8} CREATED",
+        "SESSION", "PROJECT PATH", "EXPERTS"
     );
     println!("{}", "-".repeat(80));
 

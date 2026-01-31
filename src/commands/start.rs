@@ -101,7 +101,7 @@ pub async fn execute(args: Args) -> Result<()> {
 
     let mut results: Vec<(u32, String, bool)> = Vec::new();
     while let Some(result) = tasks.join_next().await {
-        results.push(result.context("Task panicked")??.into());
+        results.push(result.context("Task panicked")??);
     }
 
     results.sort_by_key(|(id, _, _)| *id);

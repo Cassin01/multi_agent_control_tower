@@ -132,7 +132,7 @@ impl TowerApp {
     }
 
     async fn poll_status(&mut self) -> Result<()> {
-        if self.poll_counter % 5 != 0 {
+        if !self.poll_counter.is_multiple_of(5) {
             return Ok(());
         }
         self.refresh_status().await
@@ -140,7 +140,7 @@ impl TowerApp {
 
     async fn poll_reports(&mut self) -> Result<()> {
         self.poll_counter += 1;
-        if self.poll_counter % 10 != 0 {
+        if !self.poll_counter.is_multiple_of(10) {
             return Ok(());
         }
         self.refresh_reports().await

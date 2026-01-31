@@ -108,14 +108,12 @@ async fn reset_expert(
             context_store
                 .clear_expert_context(session_hash, expert_id)
                 .await?;
-        } else {
-            if let Some(mut ctx) = context_store
-                .load_expert_context(session_hash, expert_id)
-                .await?
-            {
-                ctx.clear_knowledge();
-                context_store.save_expert_context(&ctx).await?;
-            }
+        } else if let Some(mut ctx) = context_store
+            .load_expert_context(session_hash, expert_id)
+            .await?
+        {
+            ctx.clear_knowledge();
+            context_store.save_expert_context(&ctx).await?;
         }
 
         println!("  Sending /clear to Claude...");

@@ -118,7 +118,7 @@ impl QueueManager {
         let mut entries = fs::read_dir(&tasks_path).await?;
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
-            if path.extension().map_or(false, |e| e == "yaml") {
+            if path.extension().is_some_and(|e| e == "yaml") {
                 if let Ok(content) = fs::read_to_string(&path).await {
                     if let Ok(task) = serde_yaml::from_str::<Task>(&content) {
                         tasks.push(task);
@@ -142,7 +142,7 @@ impl QueueManager {
         let mut entries = fs::read_dir(&reports_path).await?;
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
-            if path.extension().map_or(false, |e| e == "yaml") {
+            if path.extension().is_some_and(|e| e == "yaml") {
                 if let Ok(content) = fs::read_to_string(&path).await {
                     if let Ok(report) = serde_yaml::from_str::<Report>(&content) {
                         reports.push(report);
