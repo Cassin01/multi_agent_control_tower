@@ -188,12 +188,6 @@ impl TowerApp {
                             self.quit();
                             return Ok(());
                         }
-                        KeyCode::Char('r') => {
-                            self.refresh_status().await?;
-                            self.refresh_reports().await?;
-                            self.set_message("Status refreshed".to_string());
-                            return Ok(());
-                        }
                         _ => {}
                     }
                 }

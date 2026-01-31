@@ -136,8 +136,6 @@ impl UI {
             Span::raw(": Switch focus "),
             Span::styled("Ctrl+S", Style::default().fg(Color::Yellow)),
             Span::raw(": Assign task "),
-            Span::styled("Ctrl+R", Style::default().fg(Color::Yellow)),
-            Span::raw(": Refresh "),
             Span::styled("Ctrl+Q", Style::default().fg(Color::Yellow)),
             Span::raw(": Quit"),
         ];
