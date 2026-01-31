@@ -1,0 +1,44 @@
+[package]
+name = "macot"
+version = "0.1.0"
+edition = "2021"
+description = "Multi Agent Control Tower - CLI for orchestrating Claude CLI instances"
+license = "MIT"
+authors = ["Cassin01"]
+repository = "https://github.com/Cassin01/multi_agent_control_tower"
+
+[[bin]]
+name = "macot"
+path = "src/main.rs"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# TUI
+ratatui = { version = "0.29", features = ["crossterm"] }
+crossterm = "0.28"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+
+# Utilities
+anyhow = "1"
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+chrono = { version = "0.4", features = ["serde"] }
+sha2 = "0.10"
+hex = "0.4"
+regex = "1"
+async-trait = "0.1"
+dirs = "5"
+
+[dev-dependencies]
+tempfile = "3"
+tokio-test = "0.4"
