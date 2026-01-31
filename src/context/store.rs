@@ -2,7 +2,8 @@ use anyhow::Result;
 use std::path::PathBuf;
 use tokio::fs;
 
-use super::{Decision, ExpertContext, SharedContext};
+use super::expert::ExpertContext;
+use super::shared::{Decision, SharedContext};
 
 #[derive(Clone)]
 pub struct ContextStore {
@@ -43,6 +44,7 @@ impl ContextStore {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub async fn session_exists(&self, session_hash: &str) -> bool {
         self.session_path(session_hash).exists()
     }
@@ -127,6 +129,7 @@ impl ContextStore {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub async fn list_sessions(&self) -> Result<Vec<String>> {
         let mut sessions = Vec::new();
 

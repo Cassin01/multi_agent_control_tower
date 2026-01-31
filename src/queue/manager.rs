@@ -27,6 +27,7 @@ impl QueueManager {
         self.tasks_path().join(format!("expert{}.yaml", expert_id))
     }
 
+    #[allow(dead_code)]
     fn report_file(&self, expert_id: u32) -> PathBuf {
         self.reports_path()
             .join(format!("expert{}_report.yaml", expert_id))
@@ -47,6 +48,7 @@ impl QueueManager {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub async fn read_task(&self, expert_id: u32) -> Result<Option<Task>> {
         let path = self.task_file(expert_id);
 
@@ -61,6 +63,7 @@ impl QueueManager {
         Ok(Some(task))
     }
 
+    #[allow(dead_code)]
     pub async fn clear_task(&self, expert_id: u32) -> Result<()> {
         let path = self.task_file(expert_id);
         if path.exists() {
@@ -69,6 +72,7 @@ impl QueueManager {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub async fn write_report(&self, report: &Report) -> Result<()> {
         let path = self.report_file(report.expert_id);
         let content = serde_yaml::to_string(report)?;
@@ -78,6 +82,7 @@ impl QueueManager {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub async fn read_report(&self, expert_id: u32) -> Result<Option<Report>> {
         let path = self.report_file(expert_id);
 
@@ -92,6 +97,7 @@ impl QueueManager {
         Ok(Some(report))
     }
 
+    #[allow(dead_code)]
     pub async fn clear_report(&self, expert_id: u32) -> Result<()> {
         let path = self.report_file(expert_id);
         if path.exists() {
@@ -100,6 +106,7 @@ impl QueueManager {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub async fn list_pending_tasks(&self) -> Result<Vec<Task>> {
         let mut tasks = Vec::new();
         let tasks_path = self.tasks_path();
@@ -148,6 +155,7 @@ impl QueueManager {
         Ok(reports)
     }
 
+    #[allow(dead_code)]
     pub async fn cleanup(&self) -> Result<()> {
         if self.tasks_path().exists() {
             fs::remove_dir_all(self.tasks_path()).await?;

@@ -82,16 +82,19 @@ impl EffortConfig {
         }
     }
 
+    #[allow(dead_code)]
     pub fn with_scope_boundary(mut self, boundary: String) -> Self {
         self.scope_boundary = Some(boundary);
         self
     }
 
+    #[allow(dead_code)]
     pub fn with_max_tool_calls(mut self, max: u32) -> Self {
         self.max_tool_calls = max;
         self
     }
 
+    #[allow(dead_code)]
     pub fn with_max_files_modified(mut self, max: Option<u32>) -> Self {
         self.max_files_modified = max;
         self

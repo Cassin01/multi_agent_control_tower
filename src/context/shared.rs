@@ -26,6 +26,7 @@ impl Decision {
         }
     }
 
+    #[allow(dead_code)]
     pub fn with_affects_experts(mut self, experts: Vec<u32>) -> Self {
         self.affects_experts = experts;
         self
@@ -62,6 +63,7 @@ impl SharedContext {
         self.decisions.push(decision);
     }
 
+    #[allow(dead_code)]
     pub fn get_decisions_for_expert(&self, expert_id: u32) -> Vec<&Decision> {
         self.decisions
             .iter()
@@ -69,6 +71,7 @@ impl SharedContext {
             .collect()
     }
 
+    #[allow(dead_code)]
     pub fn get_decisions_by_topic(&self, topic: &str) -> Vec<&Decision> {
         let topic_lower = topic.to_lowercase();
         self.decisions
@@ -77,10 +80,12 @@ impl SharedContext {
             .collect()
     }
 
+    #[allow(dead_code)]
     pub fn add_convention(&mut self, convention: Convention) {
         self.conventions.push(convention);
     }
 
+    #[allow(dead_code)]
     pub fn get_conventions(&self) -> &[Convention] {
         &self.conventions
     }

@@ -1,3 +1,3 @@
 mod loader;
 
-pub use loader::{Config, ExpertConfig, TimeoutConfig};
+pub use loader::Config;

@@ -77,11 +77,13 @@ impl ExpertContext {
         self.updated_at = Utc::now();
     }
 
+    #[allow(dead_code)]
     pub fn set_session_id(&mut self, session_id: String) {
         self.claude_session.session_id = Some(session_id);
         self.touch();
     }
 
+    #[allow(dead_code)]
     pub fn add_file_analysis(&mut self, path: String, summary: String) {
         self.knowledge.files_analyzed.push(FileAnalysis {
             path,
@@ -100,11 +102,13 @@ impl ExpertContext {
         self.touch();
     }
 
+    #[allow(dead_code)]
     pub fn clear_knowledge(&mut self) {
         self.knowledge = Knowledge::default();
         self.touch();
     }
 
+    #[allow(dead_code)]
     pub fn clear_session(&mut self) {
         self.claude_session = ClaudeSession::default();
         self.touch();

@@ -25,6 +25,7 @@ impl EffortSelector {
         self.focused = focused;
     }
 
+    #[allow(dead_code)]
     pub fn is_focused(&self) -> bool {
         self.focused
     }
@@ -41,6 +42,7 @@ impl EffortSelector {
         self.selected
     }
 
+    #[allow(dead_code)]
     pub fn set_selected(&mut self, level: EffortLevel) {
         self.selected = level;
     }

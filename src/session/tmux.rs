@@ -26,6 +26,7 @@ impl TmuxManager {
         Self::new(config.session_name())
     }
 
+    #[allow(dead_code)]
     pub fn session_name(&self) -> &str {
         &self.session_name
     }
@@ -113,7 +114,7 @@ impl TmuxManager {
             .args([
                 "send-keys",
                 "-t",
-                &format!("{}:{}", self.session_name, pane_id),
+                &format!("{}:0.{}", self.session_name, pane_id),
                 keys,
             ])
             .output()
@@ -133,7 +134,7 @@ impl TmuxManager {
             .args([
                 "capture-pane",
                 "-t",
-                &format!("{}:{}", self.session_name, pane_id),
+                &format!("{}:0.{}", self.session_name, pane_id),
                 "-p",
             ])
             .output()
@@ -157,7 +158,7 @@ impl TmuxManager {
             .args([
                 "select-pane",
                 "-t",
-                &format!("{}:{}", self.session_name, pane_id),
+                &format!("{}:0.{}", self.session_name, pane_id),
                 "-T",
                 title,
             ])

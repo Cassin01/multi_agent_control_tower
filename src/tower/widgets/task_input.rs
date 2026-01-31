@@ -25,6 +25,7 @@ impl TaskInput {
         self.focused = focused;
     }
 
+    #[allow(dead_code)]
     pub fn is_focused(&self) -> bool {
         self.focused
     }
@@ -33,6 +34,7 @@ impl TaskInput {
         &self.content
     }
 
+    #[allow(dead_code)]
     pub fn set_content(&mut self, content: String) {
         self.cursor_position = content.len();
         self.content = content;

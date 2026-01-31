@@ -62,11 +62,13 @@ impl Task {
         }
     }
 
+    #[allow(dead_code)]
     pub fn with_context(mut self, context: TaskContext) -> Self {
         self.context = context;
         self
     }
 
+    #[allow(dead_code)]
     pub fn with_priority(mut self, priority: TaskPriority) -> Self {
         self.priority = priority;
         self
@@ -77,6 +79,7 @@ impl Task {
         self
     }
 
+    #[allow(dead_code)]
     pub fn set_status(&mut self, status: TaskStatus) {
         self.status = status;
     }

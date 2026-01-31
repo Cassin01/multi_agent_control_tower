@@ -38,7 +38,8 @@ impl UI {
             .margin(1)
             .constraints([
                 Constraint::Length(3),
-                Constraint::Min(10),
+                Constraint::Min(8),
+                Constraint::Length(6),
                 Constraint::Length(8),
                 Constraint::Length(3),
                 Constraint::Length(3),
@@ -47,9 +48,10 @@ impl UI {
 
         Self::render_header(frame, chunks[0], app);
         app.status_display().render(frame, chunks[1]);
-        Self::render_task_input(frame, chunks[2], app);
-        app.effort_selector().render(frame, chunks[3]);
-        Self::render_footer(frame, chunks[4], app);
+        app.report_display().render(frame, chunks[2]);
+        Self::render_task_input(frame, chunks[3], app);
+        app.effort_selector().render(frame, chunks[4]);
+        Self::render_footer(frame, chunks[5], app);
     }
 
     fn render_header(frame: &mut Frame, area: Rect, app: &mut TowerApp) {

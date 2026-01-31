@@ -41,6 +41,7 @@ pub struct Report {
 }
 
 impl Report {
+    #[allow(dead_code)]
     pub fn new(task_id: String, expert_id: u32, expert_name: String) -> Self {
         Self {
             task_id,
@@ -55,6 +56,7 @@ impl Report {
         }
     }
 
+    #[allow(dead_code)]
     pub fn complete(mut self, summary: String) -> Self {
         self.status = TaskStatus::Done;
         self.completed_at = Some(Utc::now());
@@ -62,6 +64,7 @@ impl Report {
         self
     }
 
+    #[allow(dead_code)]
     pub fn fail(mut self, error: String) -> Self {
         self.status = TaskStatus::Failed;
         self.completed_at = Some(Utc::now());
@@ -69,27 +72,33 @@ impl Report {
         self
     }
 
+    #[allow(dead_code)]
     pub fn with_details(mut self, details: ReportDetails) -> Self {
         self.details = details;
         self
     }
 
+    #[allow(dead_code)]
     pub fn add_finding(&mut self, finding: Finding) {
         self.details.findings.push(finding);
     }
 
+    #[allow(dead_code)]
     pub fn add_recommendation(&mut self, recommendation: String) {
         self.details.recommendations.push(recommendation);
     }
 
+    #[allow(dead_code)]
     pub fn add_modified_file(&mut self, file: String) {
         self.details.files_modified.push(file);
     }
 
+    #[allow(dead_code)]
     pub fn add_created_file(&mut self, file: String) {
         self.details.files_created.push(file);
     }
 
+    #[allow(dead_code)]
     pub fn duration(&self) -> Option<chrono::Duration> {
         self.completed_at.map(|end| end - self.started_at)
     }

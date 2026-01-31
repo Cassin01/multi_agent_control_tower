@@ -50,7 +50,9 @@ impl AgentStatus {
 pub struct PaneCapture {
     pub expert_id: u32,
     pub expert_name: String,
+    #[allow(dead_code)]
     pub lines: Vec<String>,
+    #[allow(dead_code)]
     pub captured_at: DateTime<Utc>,
     pub status: AgentStatus,
     pub last_activity: String,

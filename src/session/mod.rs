@@ -4,4 +4,4 @@ mod tmux;
 
 pub use capture::{AgentStatus, CaptureManager, PaneCapture};
 pub use claude::ClaudeManager;
-pub use tmux::{SessionInfo, TmuxManager};
+pub use tmux::TmuxManager;

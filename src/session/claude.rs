@@ -44,6 +44,7 @@ impl ClaudeManager {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub async fn capture_session_id(&self, expert_id: u32) -> Result<Option<String>> {
         sleep(Duration::from_secs(2)).await;
 
@@ -112,6 +113,7 @@ mod tests {
     use std::path::PathBuf;
     use tempfile::TempDir;
 
+    #[allow(dead_code)]
     fn create_test_manager() -> (ClaudeManager, TempDir) {
         let temp_dir = TempDir::new().unwrap();
         let context_store = ContextStore::new(temp_dir.path().to_path_buf());

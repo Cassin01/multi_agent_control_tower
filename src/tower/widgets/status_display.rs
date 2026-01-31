@@ -31,6 +31,7 @@ impl StatusDisplay {
         self.focused = focused;
     }
 
+    #[allow(dead_code)]
     pub fn is_focused(&self) -> bool {
         self.focused
     }

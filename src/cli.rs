@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 
-use crate::commands::{down, reset, sessions, start, status, tower};
+use crate::commands::{down, reset, start, status, tower};
 
 #[derive(Parser)]
 #[command(name = "macot")]

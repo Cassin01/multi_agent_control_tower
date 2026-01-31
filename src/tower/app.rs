@@ -3,23 +3,25 @@ use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use std::time::Duration;
 
 use crate::config::Config;
-use crate::context::ContextStore;
+use crate::context::{ContextStore, Decision, ExpertContext};
 use crate::models::{EffortConfig, Task};
 use crate::queue::QueueManager;
 use crate::session::{CaptureManager, ClaudeManager, TmuxManager};
 
 use super::ui::UI;
-use super::widgets::{EffortSelector, StatusDisplay, TaskInput};
+use super::widgets::{EffortSelector, ReportDisplay, StatusDisplay, TaskInput};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusArea {
     ExpertList,
     TaskInput,
     EffortSelector,
+    ReportList,
 }
 
 pub struct TowerApp {
     config: Config,
+    #[allow(dead_code)]
     tmux: TmuxManager,
     capture: CaptureManager,
     claude: ClaudeManager,
@@ -29,10 +31,12 @@ pub struct TowerApp {
     status_display: StatusDisplay,
     task_input: TaskInput,
     effort_selector: EffortSelector,
+    report_display: ReportDisplay,
 
     focus: FocusArea,
     running: bool,
     message: Option<String>,
+    poll_counter: u32,
 }
 
 impl TowerApp {
@@ -53,10 +57,12 @@ impl TowerApp {
             status_display: StatusDisplay::new(),
             task_input: TaskInput::new(),
             effort_selector: EffortSelector::new(),
+            report_display: ReportDisplay::new(),
 
             focus: FocusArea::ExpertList,
             running: true,
             message: None,
+            poll_counter: 0,
         }
     }
 
@@ -80,6 +86,7 @@ impl TowerApp {
         self.message.as_deref()
     }
 
+    #[allow(dead_code)]
     pub fn focus(&self) -> FocusArea {
         self.focus
     }
@@ -100,6 +107,10 @@ impl TowerApp {
         &self.config
     }
 
+    pub fn report_display(&mut self) -> &mut ReportDisplay {
+        &mut self.report_display
+    }
+
     pub async fn refresh_status(&mut self) -> Result<()> {
         let experts: Vec<(u32, String)> = self
             .config
@@ -114,26 +125,39 @@ impl TowerApp {
         Ok(())
     }
 
+    async fn poll_reports(&mut self) -> Result<()> {
+        self.poll_counter += 1;
+        if self.poll_counter % 10 != 0 {
+            return Ok(());
+        }
+        let reports = self.queue.list_reports().await?;
+        self.report_display.set_reports(reports);
+        Ok(())
+    }
+
     fn update_focus(&mut self) {
         self.status_display.set_focused(self.focus == FocusArea::ExpertList);
         self.task_input.set_focused(self.focus == FocusArea::TaskInput);
         self.effort_selector.set_focused(self.focus == FocusArea::EffortSelector);
+        self.report_display.set_focused(self.focus == FocusArea::ReportList);
     }
 
     pub fn next_focus(&mut self) {
         self.focus = match self.focus {
             FocusArea::ExpertList => FocusArea::TaskInput,
             FocusArea::TaskInput => FocusArea::EffortSelector,
-            FocusArea::EffortSelector => FocusArea::ExpertList,
+            FocusArea::EffortSelector => FocusArea::ReportList,
+            FocusArea::ReportList => FocusArea::ExpertList,
         };
         self.update_focus();
     }
 
     pub fn prev_focus(&mut self) {
         self.focus = match self.focus {
-            FocusArea::ExpertList => FocusArea::EffortSelector,
+            FocusArea::ExpertList => FocusArea::ReportList,
             FocusArea::TaskInput => FocusArea::ExpertList,
             FocusArea::EffortSelector => FocusArea::TaskInput,
+            FocusArea::ReportList => FocusArea::EffortSelector,
         };
         self.update_focus();
     }
@@ -166,6 +190,7 @@ impl TowerApp {
                     FocusArea::ExpertList => self.handle_expert_list_keys(key.code),
                     FocusArea::TaskInput => self.handle_task_input_keys(key.code, key.modifiers),
                     FocusArea::EffortSelector => self.handle_effort_selector_keys(key.code),
+                    FocusArea::ReportList => self.handle_report_list_keys(key.code),
                 }
 
                 if key.code == KeyCode::Tab {
@@ -221,6 +246,14 @@ impl TowerApp {
         }
     }
 
+    fn handle_report_list_keys(&mut self, code: KeyCode) {
+        match code {
+            KeyCode::Up | KeyCode::Char('k') => self.report_display.prev(),
+            KeyCode::Down | KeyCode::Char('j') => self.report_display.next(),
+            _ => {}
+        }
+    }
+
     pub async fn assign_task(&mut self) -> Result<()> {
         let expert_id = match self.status_display.selected_expert_id() {
             Some(id) => id,
@@ -246,6 +279,25 @@ impl TowerApp {
 
         self.queue.write_task(&task).await?;
 
+        let decision = Decision::new(
+            expert_id,
+            format!("Task Assignment to {}", expert_name),
+            format!("Assigned: {}", task.description.chars().take(100).collect::<String>()),
+            format!("Effort: {:?}", self.effort_selector.selected()),
+        );
+        self.context_store.add_decision(&self.config.session_hash(), decision).await?;
+
+        let session_hash = self.config.session_hash();
+        let mut expert_ctx = self.context_store
+            .load_expert_context(&session_hash, expert_id).await?
+            .unwrap_or_else(|| ExpertContext::new(expert_id, expert_name.clone(), session_hash.clone()));
+        expert_ctx.add_task_history(
+            task.task_id.clone(),
+            "assigned".to_string(),
+            task.description.chars().take(100).collect(),
+        );
+        self.context_store.save_expert_context(&expert_ctx).await?;
+
         let task_prompt = format!(
             "New task assigned:\n{}\n\nEffort level: {:?}\nPlease read the task file at queue/tasks/expert{}.yaml",
             task.description,
@@ -269,6 +321,7 @@ impl TowerApp {
         while self.is_running() {
             terminal.draw(|frame| UI::render(frame, self))?;
             self.handle_events().await?;
+            self.poll_reports().await?;
         }
 
         UI::restore_terminal()?;
@@ -311,12 +364,18 @@ mod tests {
         assert_eq!(app.focus(), FocusArea::EffortSelector);
 
         app.next_focus();
+        assert_eq!(app.focus(), FocusArea::ReportList);
+
+        app.next_focus();
         assert_eq!(app.focus(), FocusArea::ExpertList);
     }
 
     #[test]
     fn tower_app_focus_cycles_backwards() {
         let mut app = TowerApp::new(create_test_config());
+
+        app.prev_focus();
+        assert_eq!(app.focus(), FocusArea::ReportList);
 
         app.prev_focus();
         assert_eq!(app.focus(), FocusArea::EffortSelector);
