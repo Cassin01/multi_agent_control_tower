@@ -233,7 +233,13 @@ impl TowerApp {
 
     fn handle_task_input_keys(&mut self, code: KeyCode, modifiers: KeyModifiers) {
         match code {
-            KeyCode::Char(c) => self.task_input.insert_char(c),
+            KeyCode::Char(c) => {
+                if !modifiers.contains(KeyModifiers::CONTROL)
+                    && !modifiers.contains(KeyModifiers::ALT)
+                {
+                    self.task_input.insert_char(c);
+                }
+            }
             KeyCode::Backspace => self.task_input.delete_char(),
             KeyCode::Delete => self.task_input.delete_forward(),
             KeyCode::Left => self.task_input.move_cursor_left(),
