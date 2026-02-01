@@ -143,6 +143,11 @@ impl UI {
 
     fn render_footer(frame: &mut Frame, area: Rect, app: &mut TowerApp) {
         let message = app.message().unwrap_or("");
+        let message = if message.is_empty() {
+            String::new()
+        } else {
+            format!("{} | ", message)
+        };
         let message_style = if message.contains("Error") || message.contains("empty") {
             Style::default().fg(Color::Red)
         } else {
@@ -151,7 +156,6 @@ impl UI {
 
         let mut help_text = vec![
             Span::styled(message, message_style),
-            Span::raw(" | "),
             Span::styled("Tab", Style::default().fg(Color::Yellow)),
             Span::raw(": Switch focus "),
         ];
