@@ -119,9 +119,23 @@ impl QueueManager {
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
             if path.extension().is_some_and(|e| e == "yaml") {
-                if let Ok(content) = fs::read_to_string(&path).await {
-                    if let Ok(task) = serde_yaml::from_str::<Task>(&content) {
-                        tasks.push(task);
+                match fs::read_to_string(&path).await {
+                    Ok(content) => match serde_yaml::from_str::<Task>(&content) {
+                        Ok(task) => tasks.push(task),
+                        Err(e) => {
+                            tracing::error!(
+                                "Failed to parse task file {}: {}",
+                                path.display(),
+                                e
+                            );
+                        }
+                    },
+                    Err(e) => {
+                        tracing::error!(
+                            "Failed to read task file {}: {}",
+                            path.display(),
+                            e
+                        );
                     }
                 }
             }
@@ -143,9 +157,32 @@ impl QueueManager {
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
             if path.extension().is_some_and(|e| e == "yaml") {
-                if let Ok(content) = fs::read_to_string(&path).await {
-                    if let Ok(report) = serde_yaml::from_str::<Report>(&content) {
-                        reports.push(report);
+                match fs::read_to_string(&path).await {
+                    Ok(content) => match serde_yaml::from_str::<Report>(&content) {
+                        Ok(report) => {
+                            if let Err(validation_errors) = report.validate() {
+                                tracing::warn!(
+                                    "Report {} has validation warnings: {:?}",
+                                    path.display(),
+                                    validation_errors
+                                );
+                            }
+                            reports.push(report);
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                "Failed to parse report file {}: {}",
+                                path.display(),
+                                e
+                            );
+                        }
+                    },
+                    Err(e) => {
+                        tracing::error!(
+                            "Failed to read report file {}: {}",
+                            path.display(),
+                            e
+                        );
                     }
                 }
             }

@@ -103,6 +103,42 @@ impl Report {
         self.completed_at.map(|end| end - self.started_at)
     }
 
+    /// Validate the report for common issues that could cause YAML parsing problems.
+    /// Returns Ok(()) if valid, or Err with a list of validation error messages.
+    #[allow(dead_code)]
+    pub fn validate(&self) -> Result<(), Vec<String>> {
+        let mut errors = Vec::new();
+
+        // Check severity values
+        const VALID_SEVERITIES: [&str; 4] = ["low", "medium", "high", "critical"];
+        for (i, finding) in self.details.findings.iter().enumerate() {
+            if !VALID_SEVERITIES.contains(&finding.severity.as_str()) {
+                errors.push(format!(
+                    "Finding {}: invalid severity '{}' - must be one of: {:?}",
+                    i + 1,
+                    finding.severity,
+                    VALID_SEVERITIES
+                ));
+            }
+        }
+
+        // Check recommendations are simple strings (no newlines)
+        for (i, rec) in self.details.recommendations.iter().enumerate() {
+            if rec.contains('\n') {
+                errors.push(format!(
+                    "Recommendation {}: contains newlines - use simple single-line strings only",
+                    i + 1
+                ));
+            }
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
+
     /// Generate a sample YAML schema with example data for documentation.
     pub fn sample_yaml_schema() -> String {
         use chrono::TimeZone;
@@ -263,5 +299,88 @@ errors: []
         assert!(schema.contains("files_modified:"));
         assert!(schema.contains("files_created:"));
         assert!(schema.contains("errors:"));
+    }
+
+    #[test]
+    fn validate_passes_for_valid_report() {
+        let mut report = Report::new("task-001".to_string(), 0, "architect".to_string());
+        report.add_finding(Finding {
+            description: "Issue found".to_string(),
+            severity: "high".to_string(),
+            file: None,
+            line: None,
+        });
+        report.add_recommendation("Simple recommendation".to_string());
+
+        assert!(report.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_fails_for_invalid_severity() {
+        let mut report = Report::new("task-001".to_string(), 0, "architect".to_string());
+        report.add_finding(Finding {
+            description: "Issue found".to_string(),
+            severity: "HIGH".to_string(), // Invalid: should be lowercase
+            file: None,
+            line: None,
+        });
+
+        let result = report.validate();
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(errors[0].contains("invalid severity"));
+        assert!(errors[0].contains("HIGH"));
+    }
+
+    #[test]
+    fn validate_fails_for_multiline_recommendation() {
+        let mut report = Report::new("task-001".to_string(), 0, "architect".to_string());
+        report.add_recommendation("Line 1\nLine 2".to_string());
+
+        let result = report.validate();
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(errors[0].contains("contains newlines"));
+    }
+
+    #[test]
+    fn validate_collects_multiple_errors() {
+        let mut report = Report::new("task-001".to_string(), 0, "architect".to_string());
+        report.add_finding(Finding {
+            description: "Issue 1".to_string(),
+            severity: "CRITICAL".to_string(), // Invalid
+            file: None,
+            line: None,
+        });
+        report.add_finding(Finding {
+            description: "Issue 2".to_string(),
+            severity: "unknown".to_string(), // Invalid
+            file: None,
+            line: None,
+        });
+        report.add_recommendation("Multi\nline".to_string()); // Invalid
+
+        let result = report.validate();
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert_eq!(errors.len(), 3);
+    }
+
+    #[test]
+    fn validate_accepts_all_valid_severities() {
+        for severity in ["low", "medium", "high", "critical"] {
+            let mut report = Report::new("task-001".to_string(), 0, "architect".to_string());
+            report.add_finding(Finding {
+                description: "Issue".to_string(),
+                severity: severity.to_string(),
+                file: None,
+                line: None,
+            });
+            assert!(
+                report.validate().is_ok(),
+                "Severity '{}' should be valid",
+                severity
+            );
+        }
     }
 }
