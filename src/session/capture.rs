@@ -171,19 +171,25 @@ impl CaptureManager {
     }
 
     fn extract_last_activity(lines: &[String]) -> String {
-        lines
+        // Get the fifth non-empty line from the bottom
+        let nlines = lines
             .iter()
-            .rev()
-            .find(|line| !line.trim().is_empty())
-            .map(|s| {
-                let trimmed = s.trim();
-                if trimmed.len() > 60 {
-                    format!("{}...", &trimmed[..57])
-                } else {
-                    trimmed.to_string()
-                }
-            })
-            .unwrap_or_else(|| "(no activity)".to_string())
+            .filter(|line| !line.trim().is_empty())
+            .cloned()
+            .collect::<Vec<String>>();
+
+        let target_row =  5;
+        let nlines_len = nlines.len();
+        if nlines_len < target_row {
+            return String::new();
+        }
+        let line = &nlines[nlines_len - target_row];
+        let trimmed = line.trim();
+        if trimmed.len() > 60 {
+            format!("{}...", &trimmed[..57])
+        } else {
+            trimmed.to_string()
+        }
     }
 }
 
@@ -291,32 +297,51 @@ mod tests {
     }
 
     #[test]
-    fn extract_last_activity_gets_last_non_empty() {
+    fn extract_last_activity_gets_fifth_from_bottom() {
         let lines = vec![
             "First line".to_string(),
-            "Second line".to_string(),
-            "   ".to_string(),
-            "".to_string(),
+            "Target line".to_string(),
+            "Third line".to_string(),
+            "Fourth line".to_string(),
+            "Fifth line".to_string(),
+            "Sixth line".to_string(),
         ];
-        assert_eq!(CaptureManager::extract_last_activity(&lines), "Second line");
+        assert_eq!(
+            CaptureManager::extract_last_activity(&lines),
+            "Target line"
+        );
     }
 
     #[test]
     fn extract_last_activity_truncates_long_lines() {
         let long_line = "A".repeat(100);
-        let lines = vec![long_line];
+        let lines = vec![
+            long_line,
+            "line 2".to_string(),
+            "line 3".to_string(),
+            "line 4".to_string(),
+            "line 5".to_string(),
+        ];
         let result = CaptureManager::extract_last_activity(&lines);
         assert!(result.len() <= 60);
         assert!(result.ends_with("..."));
     }
 
     #[test]
-    fn extract_last_activity_returns_default_for_empty() {
+    fn extract_last_activity_returns_empty_for_less_than_five_lines() {
+        let lines: Vec<String> = vec![
+            "line 1".to_string(),
+            "line 2".to_string(),
+            "line 3".to_string(),
+            "line 4".to_string(),
+        ];
+        assert_eq!(CaptureManager::extract_last_activity(&lines), "");
+    }
+
+    #[test]
+    fn extract_last_activity_returns_empty_for_empty_vec() {
         let lines: Vec<String> = vec![];
-        assert_eq!(
-            CaptureManager::extract_last_activity(&lines),
-            "(no activity)"
-        );
+        assert_eq!(CaptureManager::extract_last_activity(&lines), "");
     }
 
     #[test]

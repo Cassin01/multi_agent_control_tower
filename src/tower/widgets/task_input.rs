@@ -128,16 +128,36 @@ impl TaskInput {
             let before = &self.content[..byte_idx];
             let after = &self.content[byte_idx..];
 
-            vec![Line::from(vec![
-                Span::styled(before, text_style),
+            let before_lines: Vec<&str> = before.split('\n').collect();
+            let after_parts: Vec<&str> = after.split('\n').collect();
+
+            let mut lines = Vec::new();
+
+            // Lines before cursor line
+            for line in &before_lines[..before_lines.len().saturating_sub(1)] {
+                lines.push(Line::from(Span::styled(*line, text_style)));
+            }
+
+            // Cursor line: last part of before + cursor + first part of after
+            let cursor_line_before = before_lines.last().unwrap_or(&"");
+            let cursor_line_after = after_parts.first().unwrap_or(&"");
+            lines.push(Line::from(vec![
+                Span::styled(*cursor_line_before, text_style),
                 Span::styled(
                     "│",
                     Style::default()
                         .fg(Color::Yellow)
                         .add_modifier(Modifier::SLOW_BLINK),
                 ),
-                Span::styled(after, text_style),
-            ])]
+                Span::styled(*cursor_line_after, text_style),
+            ]));
+
+            // Lines after cursor line
+            for line in after_parts.iter().skip(1) {
+                lines.push(Line::from(Span::styled(*line, text_style)));
+            }
+
+            lines
         } else {
             self.content
                 .lines()

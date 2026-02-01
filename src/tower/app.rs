@@ -257,9 +257,7 @@ impl TowerApp {
             KeyCode::Home => self.task_input.move_cursor_start(),
             KeyCode::End => self.task_input.move_cursor_end(),
             KeyCode::Enter => {
-                if modifiers.contains(KeyModifiers::SHIFT) {
-                    self.task_input.insert_newline();
-                }
+                self.task_input.insert_newline();
             }
             KeyCode::Esc => {
                 self.task_input.clear();
