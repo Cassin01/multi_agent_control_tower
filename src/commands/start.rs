@@ -48,27 +48,27 @@ pub async fn execute(args: Args) -> Result<()> {
     }
 
     println!("Creating session: {}", config.session_name());
-    println!("Number of experts: {}", config.num_experts);
+    println!("Number of experts: {}", config.num_experts());
 
     let queue = QueueManager::new(config.queue_path.clone());
     queue.init().await.context("Failed to initialize queue")?;
 
     let context_store = ContextStore::new(config.queue_path.clone());
     context_store
-        .init_session(&config.session_hash(), config.num_experts)
+        .init_session(&config.session_hash(), config.num_experts())
         .await
         .context("Failed to initialize context store")?;
 
-    tmux.create_session(config.num_experts, project_path.to_str().unwrap())
+    tmux.create_session(config.num_experts(), project_path.to_str().unwrap())
         .await
         .context("Failed to create tmux session")?;
 
-    tmux.init_session_metadata(project_path.to_str().unwrap(), config.num_experts)
+    tmux.init_session_metadata(project_path.to_str().unwrap(), config.num_experts())
         .await?;
 
     let claude = ClaudeManager::new(config.session_name(), context_store);
 
-    println!("Launching {} experts in parallel...", config.num_experts);
+    println!("Launching {} experts in parallel...", config.num_experts());
 
     let mut tasks: JoinSet<Result<(u32, String, bool)>> = JoinSet::new();
 

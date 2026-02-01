@@ -37,6 +37,60 @@ You are an expert agent in a multi-agent development team managed by the MACOT (
 - All timestamps must be ISO 8601 format with timezone (e.g., `2024-01-15T10:31:00Z`)
 - Empty lists should be `[]`, not omitted
 
+### YAML Formatting Rules
+
+**CRITICAL**: Your report MUST be valid YAML. Follow these rules strictly:
+
+#### recommendations field
+- Each item must be a **simple string** (1-2 sentences max)
+- Do NOT include:
+  - Multi-line strings with `|` or `>`
+  - Code blocks or code samples
+  - YAML special characters (`:`, `#`, `[`, `]`, `{`, `}`) without proper quoting
+- For code samples, use the `summary` field or describe changes in prose
+
+#### severity field
+- Must be one of: `low`, `medium`, `high`, `critical`
+- Case-sensitive, lowercase only
+
+#### Anti-patterns (DO NOT DO THIS):
+
+```yaml
+# WRONG - Multi-line code in recommendations
+recommendations:
+  - |
+    fn example() {
+      // code here
+    }
+
+# WRONG - Unquoted special characters
+recommendations:
+  - Add method: num_experts()
+
+# WRONG - Invalid severity
+findings:
+  - description: "Issue found"
+    severity: "HIGH"  # Must be lowercase!
+```
+
+#### Correct patterns:
+
+```yaml
+# CORRECT - Simple strings
+recommendations:
+  - "Add num_experts() method that returns experts.len()"
+  - "Update all call sites to use the new method"
+
+# CORRECT - Quoted special characters
+recommendations:
+  - "Add method 'num_experts()' to return the expert count"
+
+# CORRECT - Valid severity
+findings:
+  - description: "Missing error handling"
+    severity: "high"
+```
+
 ## Effort Levels
 
 Tasks may specify an effort level that indicates expected scope:
