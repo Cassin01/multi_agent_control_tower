@@ -36,7 +36,6 @@ impl Default for TimeoutConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    pub num_experts: u32,
     pub session_prefix: String,
     pub experts: Vec<ExpertConfig>,
     #[serde(default)]
@@ -52,7 +51,6 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            num_experts: 4,
             session_prefix: "macot".to_string(),
             experts: vec![
                 ExpertConfig {
@@ -113,8 +111,12 @@ impl Config {
         self
     }
 
+    /// Returns the number of experts (derived from experts array length)
+    pub fn num_experts(&self) -> u32 {
+        self.experts.len() as u32
+    }
+
     pub fn with_num_experts(mut self, num_experts: u32) -> Self {
-        self.num_experts = num_experts;
         while self.experts.len() < num_experts as usize {
             let idx = self.experts.len();
             self.experts.push(ExpertConfig {
@@ -196,7 +198,7 @@ mod tests {
     #[test]
     fn config_default_has_four_experts() {
         let config = Config::default();
-        assert_eq!(config.num_experts, 4);
+        assert_eq!(config.num_experts(), 4);
         assert_eq!(config.experts.len(), 4);
         assert_eq!(config.experts[0].name, "architect");
         assert_eq!(config.experts[1].name, "frontend");
@@ -205,14 +207,14 @@ mod tests {
     #[test]
     fn config_with_num_experts_adjusts_list() {
         let config = Config::default().with_num_experts(2);
-        assert_eq!(config.num_experts, 2);
+        assert_eq!(config.num_experts(), 2);
         assert_eq!(config.experts.len(), 2);
     }
 
     #[test]
     fn config_with_num_experts_expands_list() {
         let config = Config::default().with_num_experts(6);
-        assert_eq!(config.num_experts, 6);
+        assert_eq!(config.num_experts(), 6);
         assert_eq!(config.experts.len(), 6);
         assert_eq!(config.experts[4].name, "expert4");
         assert_eq!(config.experts[5].name, "expert5");
@@ -291,7 +293,7 @@ timeouts:
         std::fs::write(&config_path, yaml).unwrap();
 
         let config = Config::load(Some(config_path)).unwrap();
-        assert_eq!(config.num_experts, 3);
+        assert_eq!(config.num_experts(), 3);
         assert_eq!(config.session_prefix, "test");
         assert_eq!(config.experts[0].name, "lead");
         assert_eq!(config.timeouts.agent_ready, 60);
@@ -300,7 +302,7 @@ timeouts:
     #[test]
     fn config_load_returns_default_when_file_missing() {
         let config = Config::load(Some(PathBuf::from("/nonexistent/config.yaml"))).unwrap();
-        assert_eq!(config.num_experts, 4);
+        assert_eq!(config.num_experts(), 4);
         assert_eq!(config.session_prefix, "macot");
     }
 
@@ -321,7 +323,8 @@ timeouts:
         let config = Config::default();
         let yaml = serde_yaml::to_string(&config).unwrap();
 
-        assert!(yaml.contains("num_experts: 4"));
+        // num_experts is no longer serialized; it's derived from experts.len()
+        assert!(!yaml.contains("num_experts"));
         assert!(yaml.contains("session_prefix: macot"));
         assert!(yaml.contains("name: architect"));
     }
