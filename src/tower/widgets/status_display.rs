@@ -78,6 +78,10 @@ impl StatusDisplay {
         self.selected().map(|c| c.expert_id)
     }
 
+    pub fn expert_count(&self) -> usize {
+        self.captures.len()
+    }
+
     pub fn render(&mut self, frame: &mut Frame, area: Rect) {
         let items: Vec<ListItem> = self
             .captures

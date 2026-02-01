@@ -34,13 +34,16 @@ impl UI {
     }
 
     pub fn render(frame: &mut Frame, app: &mut TowerApp) {
+        // Dynamic height: expert_count + 2 (borders), minimum 3
+        let expert_height = (app.status_display().expert_count() + 2).max(3) as u16;
+
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .margin(1)
             .constraints([
                 Constraint::Length(3),
+                Constraint::Length(expert_height),
                 Constraint::Min(8),
-                Constraint::Length(8),
                 Constraint::Length(3),
                 Constraint::Length(6),
                 Constraint::Length(3),
