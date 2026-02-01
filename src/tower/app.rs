@@ -230,7 +230,9 @@ impl TowerApp {
             match event::read()? {
                 Event::Mouse(mouse) => {
                     if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
-                        if !self.help_modal.is_visible() {
+                        if !self.help_modal.is_visible()
+                            && self.report_display.view_mode() != ViewMode::Detail
+                        {
                             self.handle_mouse_click(mouse.column, mouse.row);
                         }
                     }
@@ -262,6 +264,18 @@ impl TowerApp {
                         KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
                             self.help_modal.hide();
                         }
+                        _ => {}
+                    }
+                    return Ok(());
+                }
+
+                if self.report_display.view_mode() == ViewMode::Detail {
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
+                            self.report_display.close_detail();
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => self.report_display.scroll_up(),
+                        KeyCode::Down | KeyCode::Char('j') => self.report_display.scroll_down(),
                         _ => {}
                     }
                     return Ok(());
@@ -368,7 +382,7 @@ impl TowerApp {
                 match code {
                     KeyCode::Up | KeyCode::Char('k') => self.report_display.scroll_up(),
                     KeyCode::Down | KeyCode::Char('j') => self.report_display.scroll_down(),
-                    KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') | KeyCode::Tab | KeyCode::BackTab => {
+                    KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
                         self.report_display.close_detail()
                     }
                     _ => {}
