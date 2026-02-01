@@ -292,6 +292,16 @@ impl TowerApp {
                     self.assign_task().await?;
                 }
 
+                if key.modifiers.contains(KeyModifiers::CONTROL)
+                    && self.focus == FocusArea::TaskInput
+                {
+                    match key.code {
+                        KeyCode::Char('p') => self.status_display.prev(),
+                        KeyCode::Char('n') => self.status_display.next(),
+                        _ => {}
+                    }
+                }
+
                 if key.code == KeyCode::Char('r')
                     && key.modifiers.contains(KeyModifiers::CONTROL)
                     && self.focus == FocusArea::ExpertList

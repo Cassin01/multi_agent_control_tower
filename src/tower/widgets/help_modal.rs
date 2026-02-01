@@ -80,6 +80,8 @@ impl HelpModal {
             Line::from(""),
             Self::subsection_title("Task Input"),
             Self::key_line("Ctrl+S", "Assign task to selected expert"),
+            Self::key_line("Ctrl+P", "Select previous expert"),
+            Self::key_line("Ctrl+N", "Select next expert"),
             Self::key_line("Enter", "Insert newline"),
             Self::key_line("Esc", "Clear input"),
             Line::from(""),
