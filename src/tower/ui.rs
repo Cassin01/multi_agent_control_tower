@@ -58,8 +58,30 @@ impl UI {
         Self::render_footer(frame, chunks[5], app);
 
         if app.report_display().view_mode() == ViewMode::Detail {
-            let modal_area = Self::centered_area(frame.area(), 80, 90);
+            let (percent_x, percent_y) = Self::responsive_modal_size(frame.area(), 80, 90);
+            let modal_area = Self::centered_area(frame.area(), percent_x, percent_y);
             app.report_display().render_detail_modal(frame, modal_area);
+        }
+
+        if app.help_modal().is_visible() {
+            let (percent_x, percent_y) = Self::responsive_modal_size(frame.area(), 60, 80);
+            let modal_area = Self::centered_area(frame.area(), percent_x, percent_y);
+            app.help_modal().render(frame, modal_area);
+        }
+    }
+
+    fn responsive_modal_size(area: Rect, base_x: u16, base_y: u16) -> (u16, u16) {
+        const NARROW_WIDTH_THRESHOLD: u16 = 80;
+        const SHORT_HEIGHT_THRESHOLD: u16 = 30;
+        const MAX_PERCENT: u16 = 98;
+
+        let should_maximize =
+            area.width < NARROW_WIDTH_THRESHOLD || area.height < SHORT_HEIGHT_THRESHOLD;
+
+        if should_maximize {
+            (MAX_PERCENT, MAX_PERCENT)
+        } else {
+            (base_x, base_y)
         }
     }
 
@@ -173,6 +195,8 @@ impl UI {
             help_text.push(Span::raw(": Reset "));
         }
 
+        help_text.push(Span::styled("Ctrl+H", Style::default().fg(Color::Yellow)));
+        help_text.push(Span::raw(": Help "));
         help_text.push(Span::styled("Ctrl+Q", Style::default().fg(Color::Yellow)));
         help_text.push(Span::raw(": Quit"));
 

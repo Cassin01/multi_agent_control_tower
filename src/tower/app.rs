@@ -10,7 +10,7 @@ use crate::queue::QueueManager;
 use crate::session::{CaptureManager, ClaudeManager, TmuxManager};
 
 use super::ui::UI;
-use super::widgets::{EffortSelector, ReportDisplay, StatusDisplay, TaskInput, ViewMode};
+use super::widgets::{EffortSelector, HelpModal, ReportDisplay, StatusDisplay, TaskInput, ViewMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusArea {
@@ -33,6 +33,7 @@ pub struct TowerApp {
     task_input: TaskInput,
     effort_selector: EffortSelector,
     report_display: ReportDisplay,
+    help_modal: HelpModal,
 
     focus: FocusArea,
     running: bool,
@@ -59,6 +60,7 @@ impl TowerApp {
             task_input: TaskInput::new(),
             effort_selector: EffortSelector::new(),
             report_display: ReportDisplay::new(),
+            help_modal: HelpModal::new(),
 
             focus: FocusArea::ExpertList,
             running: true,
@@ -110,6 +112,10 @@ impl TowerApp {
 
     pub fn report_display(&mut self) -> &mut ReportDisplay {
         &mut self.report_display
+    }
+
+    pub fn help_modal(&mut self) -> &mut HelpModal {
+        &mut self.help_modal
     }
 
     pub async fn refresh_status(&mut self) -> Result<()> {
@@ -193,8 +199,22 @@ impl TowerApp {
                             self.quit();
                             return Ok(());
                         }
+                        KeyCode::Char('h') => {
+                            self.help_modal.toggle();
+                            return Ok(());
+                        }
                         _ => {}
                     }
+                }
+
+                if self.help_modal.is_visible() {
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
+                            self.help_modal.hide();
+                        }
+                        _ => {}
+                    }
+                    return Ok(());
                 }
 
                 match self.focus {
