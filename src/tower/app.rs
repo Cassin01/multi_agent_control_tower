@@ -1,5 +1,6 @@
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
+use ratatui::layout::Rect;
 use std::time::Duration;
 
 use crate::config::Config;
@@ -18,6 +19,14 @@ pub enum FocusArea {
     TaskInput,
     EffortSelector,
     ReportList,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LayoutAreas {
+    pub expert_list: Rect,
+    pub task_input: Rect,
+    pub effort_selector: Rect,
+    pub report_list: Rect,
 }
 
 pub struct TowerApp {
@@ -39,6 +48,7 @@ pub struct TowerApp {
     running: bool,
     message: Option<String>,
     poll_counter: u32,
+    layout_areas: LayoutAreas,
 }
 
 impl TowerApp {
@@ -66,6 +76,7 @@ impl TowerApp {
             running: true,
             message: None,
             poll_counter: 0,
+            layout_areas: LayoutAreas::default(),
         }
     }
 
@@ -116,6 +127,36 @@ impl TowerApp {
 
     pub fn help_modal(&mut self) -> &mut HelpModal {
         &mut self.help_modal
+    }
+
+    pub fn set_layout_areas(&mut self, areas: LayoutAreas) {
+        self.layout_areas = areas;
+    }
+
+    pub fn set_focus(&mut self, area: FocusArea) {
+        self.focus = area;
+        self.update_focus();
+    }
+
+    fn handle_mouse_click(&mut self, column: u16, row: u16) {
+        let pos = (column, row);
+
+        if Self::point_in_rect(pos, self.layout_areas.expert_list) {
+            self.set_focus(FocusArea::ExpertList);
+        } else if Self::point_in_rect(pos, self.layout_areas.task_input) {
+            self.set_focus(FocusArea::TaskInput);
+        } else if Self::point_in_rect(pos, self.layout_areas.effort_selector) {
+            self.set_focus(FocusArea::EffortSelector);
+        } else if Self::point_in_rect(pos, self.layout_areas.report_list) {
+            self.set_focus(FocusArea::ReportList);
+        }
+    }
+
+    fn point_in_rect(pos: (u16, u16), rect: Rect) -> bool {
+        pos.0 >= rect.x
+            && pos.0 < rect.x + rect.width
+            && pos.1 >= rect.y
+            && pos.1 < rect.y + rect.height
     }
 
     pub async fn refresh_status(&mut self) -> Result<()> {
@@ -186,7 +227,16 @@ impl TowerApp {
 
     pub async fn handle_events(&mut self) -> Result<()> {
         if event::poll(Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
+            match event::read()? {
+                Event::Mouse(mouse) => {
+                    if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+                        if !self.help_modal.is_visible() {
+                            self.handle_mouse_click(mouse.column, mouse.row);
+                        }
+                    }
+                    return Ok(());
+                }
+                Event::Key(key) => {
                 if key.kind != KeyEventKind::Press {
                     return Ok(());
                 }
@@ -248,6 +298,8 @@ impl TowerApp {
                 {
                     self.reset_expert().await?;
                 }
+                }
+                _ => {}
             }
         }
         Ok(())
@@ -505,5 +557,61 @@ mod tests {
 
         app.clear_message();
         assert!(app.message().is_none());
+    }
+
+    #[test]
+    fn tower_app_set_focus_changes_focus() {
+        let mut app = TowerApp::new(create_test_config());
+
+        assert_eq!(app.focus(), FocusArea::ExpertList);
+
+        app.set_focus(FocusArea::TaskInput);
+        assert_eq!(app.focus(), FocusArea::TaskInput);
+
+        app.set_focus(FocusArea::ReportList);
+        assert_eq!(app.focus(), FocusArea::ReportList);
+    }
+
+    #[test]
+    fn point_in_rect_detects_inside() {
+        let rect = Rect::new(10, 20, 30, 40);
+
+        assert!(TowerApp::point_in_rect((10, 20), rect));
+        assert!(TowerApp::point_in_rect((25, 35), rect));
+        assert!(TowerApp::point_in_rect((39, 59), rect));
+    }
+
+    #[test]
+    fn point_in_rect_detects_outside() {
+        let rect = Rect::new(10, 20, 30, 40);
+
+        assert!(!TowerApp::point_in_rect((9, 20), rect));
+        assert!(!TowerApp::point_in_rect((10, 19), rect));
+        assert!(!TowerApp::point_in_rect((40, 20), rect));
+        assert!(!TowerApp::point_in_rect((10, 60), rect));
+    }
+
+    #[test]
+    fn handle_mouse_click_sets_focus_based_on_area() {
+        let mut app = TowerApp::new(create_test_config());
+
+        app.set_layout_areas(LayoutAreas {
+            expert_list: Rect::new(0, 0, 100, 10),
+            task_input: Rect::new(0, 10, 100, 10),
+            effort_selector: Rect::new(0, 20, 100, 5),
+            report_list: Rect::new(0, 25, 100, 10),
+        });
+
+        app.handle_mouse_click(50, 5);
+        assert_eq!(app.focus(), FocusArea::ExpertList);
+
+        app.handle_mouse_click(50, 15);
+        assert_eq!(app.focus(), FocusArea::TaskInput);
+
+        app.handle_mouse_click(50, 22);
+        assert_eq!(app.focus(), FocusArea::EffortSelector);
+
+        app.handle_mouse_click(50, 30);
+        assert_eq!(app.focus(), FocusArea::ReportList);
     }
 }

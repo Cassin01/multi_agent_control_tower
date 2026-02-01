@@ -65,10 +65,11 @@ impl HelpModal {
 
     fn build_help_lines(&self) -> Vec<Line<'static>> {
         vec![
-            Self::section_title("⌨ Keyboard Shortcuts", Color::White),
+            Self::section_title("Keyboard Shortcuts", Color::Cyan),
             Line::from(""),
             Self::subsection_title("Global"),
             Self::key_line("Tab / Shift+Tab", "Switch focus between panels"),
+            Self::key_line("Mouse Click", "Focus clicked panel"),
             Self::key_line("Ctrl+C / Ctrl+Q", "Quit application"),
             Self::key_line("Ctrl+H", "Toggle this help"),
             Line::from(""),

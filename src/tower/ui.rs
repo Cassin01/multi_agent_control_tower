@@ -1,6 +1,7 @@
 use std::io::{self, Stdout};
 
 use crossterm::{
+    event::{DisableMouseCapture, EnableMouseCapture},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -13,7 +14,7 @@ use ratatui::{
     Frame, Terminal,
 };
 
-use super::app::{FocusArea, TowerApp};
+use super::app::{FocusArea, LayoutAreas, TowerApp};
 use super::widgets::ViewMode;
 
 pub struct UI;
@@ -22,14 +23,14 @@ impl UI {
     pub fn setup_terminal() -> io::Result<Terminal<CrosstermBackend<Stdout>>> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
-        execute!(stdout, EnterAlternateScreen)?;
+        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
         let backend = CrosstermBackend::new(stdout);
         Terminal::new(backend)
     }
 
     pub fn restore_terminal() -> io::Result<()> {
         disable_raw_mode()?;
-        execute!(io::stdout(), LeaveAlternateScreen)?;
+        execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture)?;
         Ok(())
     }
 
@@ -49,6 +50,13 @@ impl UI {
                 Constraint::Length(3),
             ])
             .split(frame.area());
+
+        app.set_layout_areas(LayoutAreas {
+            expert_list: chunks[1],
+            task_input: chunks[2],
+            effort_selector: chunks[3],
+            report_list: chunks[4],
+        });
 
         Self::render_header(frame, chunks[0], app);
         app.status_display().render(frame, chunks[1]);
