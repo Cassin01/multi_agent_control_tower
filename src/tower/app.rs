@@ -1,7 +1,7 @@
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
 use ratatui::layout::Rect;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::config::Config;
 use crate::context::{AvailableRoles, ContextStore, Decision, ExpertContext, SessionExpertRoles};
@@ -53,7 +53,8 @@ pub struct TowerApp {
     focus: FocusArea,
     running: bool,
     message: Option<String>,
-    poll_counter: u32,
+    last_status_poll: Instant,
+    last_report_poll: Instant,
     layout_areas: LayoutAreas,
 }
 
@@ -94,7 +95,8 @@ impl TowerApp {
             focus: FocusArea::ExpertList,
             running: true,
             message: None,
-            poll_counter: 0,
+            last_status_poll: Instant::now(),
+            last_report_poll: Instant::now(),
             layout_areas: LayoutAreas::default(),
             config,
         }
@@ -218,17 +220,20 @@ impl TowerApp {
     }
 
     async fn poll_status(&mut self) -> Result<()> {
-        if !self.poll_counter.is_multiple_of(5) {
+        const STATUS_POLL_INTERVAL: Duration = Duration::from_millis(500);
+        if self.last_status_poll.elapsed() < STATUS_POLL_INTERVAL {
             return Ok(());
         }
+        self.last_status_poll = Instant::now();
         self.refresh_status().await
     }
 
     async fn poll_reports(&mut self) -> Result<()> {
-        self.poll_counter += 1;
-        if !self.poll_counter.is_multiple_of(10) {
+        const REPORT_POLL_INTERVAL: Duration = Duration::from_millis(1000);
+        if self.last_report_poll.elapsed() < REPORT_POLL_INTERVAL {
             return Ok(());
         }
+        self.last_report_poll = Instant::now();
         self.refresh_reports().await
     }
 

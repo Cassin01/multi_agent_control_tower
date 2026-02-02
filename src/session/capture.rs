@@ -86,18 +86,27 @@ impl CaptureManager {
     }
 
     pub async fn capture_all(&self, experts: &[(u32, String)]) -> Vec<PaneCapture> {
-        let mut captures = Vec::new();
+        use futures::future::join_all;
 
-        for (id, name) in experts {
-            match self.capture_pane(*id, name).await {
-                Ok(capture) => captures.push(capture),
-                Err(e) => {
-                    tracing::warn!("Failed to capture pane {}: {}", id, e);
-                }
-            }
-        }
+        let futures: Vec<_> = experts
+            .iter()
+            .map(|(id, name)| self.capture_pane(*id, name))
+            .collect();
 
-        captures
+        let results: Vec<Result<PaneCapture>> = join_all(futures).await;
+
+        results
+            .into_iter()
+            .zip(experts.iter())
+            .filter_map(|(result, (id, _)): (Result<PaneCapture>, &(u32, String))| {
+                result
+                    .map_err(|e| {
+                        tracing::warn!("Failed to capture pane {}: {}", id, e);
+                        e
+                    })
+                    .ok()
+            })
+            .collect()
     }
 
     fn analyze_status(lines: &[String]) -> AgentStatus {
