@@ -76,6 +76,10 @@ impl UI {
             let modal_area = Self::centered_area(frame.area(), percent_x, percent_y);
             app.help_modal().render(frame, modal_area);
         }
+
+        if app.role_selector().is_visible() {
+            app.role_selector().render(frame, frame.area());
+        }
     }
 
     fn responsive_modal_size(area: Rect, base_x: u16, base_y: u16) -> (u16, u16) {
@@ -199,6 +203,8 @@ impl UI {
         }
 
         if app.focus() == FocusArea::ExpertList {
+            help_text.push(Span::styled("r", Style::default().fg(Color::Yellow)));
+            help_text.push(Span::raw(": Role "));
             help_text.push(Span::styled("Ctrl+R", Style::default().fg(Color::Yellow)));
             help_text.push(Span::raw(": Reset "));
         }

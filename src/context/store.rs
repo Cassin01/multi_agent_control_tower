@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use tokio::fs;
 
 use super::expert::ExpertContext;
+use super::role::SessionExpertRoles;
 use super::shared::{Decision, SharedContext};
 
 #[derive(Clone)]
@@ -124,6 +125,28 @@ impl ContextStore {
         if session_path.exists() {
             fs::remove_dir_all(&session_path).await?;
         }
+        Ok(())
+    }
+
+    pub async fn load_session_roles(
+        &self,
+        session_hash: &str,
+    ) -> Result<Option<SessionExpertRoles>> {
+        let path = self.session_path(session_hash).join("expert_roles.yaml");
+        if !path.exists() {
+            return Ok(None);
+        }
+        let content = fs::read_to_string(&path).await?;
+        let roles: SessionExpertRoles = serde_yaml::from_str(&content)?;
+        Ok(Some(roles))
+    }
+
+    pub async fn save_session_roles(&self, roles: &SessionExpertRoles) -> Result<()> {
+        let session_path = self.session_path(&roles.session_hash);
+        fs::create_dir_all(&session_path).await?;
+        let path = session_path.join("expert_roles.yaml");
+        let content = serde_yaml::to_string(roles)?;
+        fs::write(&path, content).await?;
         Ok(())
     }
 
@@ -282,5 +305,33 @@ mod tests {
         assert_eq!(sessions.len(), 2);
         assert!(sessions.contains(&"session1".to_string()));
         assert!(sessions.contains(&"session2".to_string()));
+    }
+
+    #[tokio::test]
+    async fn context_store_save_and_load_session_roles() {
+        let (store, _temp) = create_test_store().await;
+        store.init_session("abc123", 2).await.unwrap();
+
+        let mut roles = SessionExpertRoles::new("abc123".to_string());
+        roles.set_role(0, "architect".to_string());
+        roles.set_role(1, "frontend".to_string());
+
+        store.save_session_roles(&roles).await.unwrap();
+
+        let loaded = store.load_session_roles("abc123").await.unwrap();
+        assert!(loaded.is_some());
+
+        let loaded = loaded.unwrap();
+        assert_eq!(loaded.get_role(0), Some("architect"));
+        assert_eq!(loaded.get_role(1), Some("frontend"));
+    }
+
+    #[tokio::test]
+    async fn context_store_load_session_roles_returns_none_when_missing() {
+        let (store, _temp) = create_test_store().await;
+        store.init_session("abc123", 2).await.unwrap();
+
+        let loaded = store.load_session_roles("abc123").await.unwrap();
+        assert!(loaded.is_none());
     }
 }

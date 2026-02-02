@@ -1,6 +1,8 @@
+use std::collections::HashMap;
+
 use ratatui::{
     layout::Rect,
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState},
     Frame,
@@ -12,6 +14,7 @@ pub struct StatusDisplay {
     captures: Vec<PaneCapture>,
     state: ListState,
     focused: bool,
+    expert_roles: HashMap<u32, String>,
 }
 
 impl StatusDisplay {
@@ -20,11 +23,21 @@ impl StatusDisplay {
             captures: Vec::new(),
             state: ListState::default(),
             focused: false,
+            expert_roles: HashMap::new(),
         }
     }
 
     pub fn set_captures(&mut self, captures: Vec<PaneCapture>) {
         self.captures = captures;
+    }
+
+    #[allow(dead_code)]
+    pub fn set_expert_role(&mut self, expert_id: u32, role: String) {
+        self.expert_roles.insert(expert_id, role);
+    }
+
+    pub fn set_expert_roles(&mut self, roles: HashMap<u32, String>) {
+        self.expert_roles = roles;
     }
 
     pub fn set_focused(&mut self, focused: bool) {
@@ -89,6 +102,12 @@ impl StatusDisplay {
             .map(|capture| {
                 let status_style = Style::default().fg(capture.status.color());
 
+                let role = self.expert_roles.get(&capture.expert_id);
+                let role_display = match role {
+                    Some(r) => format!(" ({})", r),
+                    None => String::new(),
+                };
+
                 let spans = vec![
                     Span::styled(
                         format!("[{}] ", capture.expert_id),
@@ -100,6 +119,7 @@ impl StatusDisplay {
                         format!("{:<12}", capture.expert_name),
                         Style::default().add_modifier(Modifier::BOLD),
                     ),
+                    Span::styled(role_display, Style::default().fg(Color::Cyan)),
                     Span::raw(" - "),
                     Span::styled(&capture.last_activity, Style::default()),
                 ];
