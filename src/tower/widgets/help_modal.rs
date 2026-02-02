@@ -76,6 +76,7 @@ impl HelpModal {
             Self::subsection_title("Expert List"),
             Self::key_line("j / ↓", "Select next expert"),
             Self::key_line("k / ↑", "Select previous expert"),
+            Self::key_line("Ctrl+O", "Change expert role"),
             Self::key_line("Ctrl+R", "Reset selected expert"),
             Line::from(""),
             Self::subsection_title("Task Input"),

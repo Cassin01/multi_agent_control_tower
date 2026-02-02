@@ -348,7 +348,7 @@ impl TowerApp {
                 }
 
                 match self.focus {
-                    FocusArea::ExpertList => self.handle_expert_list_keys(key.code),
+                    FocusArea::ExpertList => self.handle_expert_list_keys(key.code, key.modifiers),
                     FocusArea::TaskInput => self.handle_task_input_keys(key.code, key.modifiers),
                     FocusArea::EffortSelector => self.handle_effort_selector_keys(key.code),
                     FocusArea::ReportList => self.handle_report_list_keys(key.code, key.modifiers),
@@ -395,11 +395,13 @@ impl TowerApp {
         Ok(())
     }
 
-    fn handle_expert_list_keys(&mut self, code: KeyCode) {
+    fn handle_expert_list_keys(&mut self, code: KeyCode, modifiers: KeyModifiers) {
         match code {
             KeyCode::Up | KeyCode::Char('k') => self.status_display.prev(),
             KeyCode::Down | KeyCode::Char('j') => self.status_display.next(),
-            KeyCode::Char('r') => self.open_role_selector(),
+            KeyCode::Char('o') if modifiers.contains(KeyModifiers::CONTROL) => {
+                self.open_role_selector()
+            }
             _ => {}
         }
     }

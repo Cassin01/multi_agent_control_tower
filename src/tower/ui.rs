@@ -203,7 +203,7 @@ impl UI {
         }
 
         if app.focus() == FocusArea::ExpertList {
-            help_text.push(Span::styled("r", Style::default().fg(Color::Yellow)));
+            help_text.push(Span::styled("Ctrl+O", Style::default().fg(Color::Yellow)));
             help_text.push(Span::raw(": Role "));
             help_text.push(Span::styled("Ctrl+R", Style::default().fg(Color::Yellow)));
             help_text.push(Span::raw(": Reset "));
