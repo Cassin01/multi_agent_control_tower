@@ -171,12 +171,7 @@ impl StatusDisplay {
 
 impl Default for StatusDisplay {
     fn default() -> Self {
-        Self {
-            captures: Vec::new(),
-            state: ListState::default(),
-            focused: false,
-            expert_roles: HashMap::new(),
-        }
+        Self::new()
     }
 }
 

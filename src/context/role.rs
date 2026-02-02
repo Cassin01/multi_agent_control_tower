@@ -91,10 +91,18 @@ impl AvailableRoles {
                         .to_string();
 
                     let display_name = name
-                        .chars()
-                        .next()
-                        .map(|c| c.to_uppercase().to_string() + &name[1..])
-                        .unwrap_or_else(|| name.to_string());
+                        .split(|c| c == '-' || c == '_')
+                        .map(|part| {
+                            let mut chars = part.chars();
+                            match chars.next() {
+                                Some(first) => {
+                                    first.to_uppercase().to_string() + chars.as_str()
+                                }
+                                None => String::new(),
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join(if name.contains('-') { "-" } else { " " });
 
                     roles.push(RoleInfo {
                         name: name.to_string(),
@@ -217,5 +225,28 @@ mod tests {
         let architect = roles.find_by_name("architect").unwrap();
 
         assert_eq!(architect.display_name, "Architect");
+    }
+
+    #[test]
+    fn role_info_display_name_title_case_with_separators() {
+        let temp_dir = TempDir::new().unwrap();
+        std::fs::write(
+            temp_dir.path().join("full-stack-dev.md"),
+            "# Full Stack Dev",
+        )
+        .unwrap();
+        std::fs::write(
+            temp_dir.path().join("backend_engineer.md"),
+            "# Backend Engineer",
+        )
+        .unwrap();
+
+        let roles = AvailableRoles::from_instructions_path(temp_dir.path()).unwrap();
+
+        let full_stack = roles.find_by_name("full-stack-dev").unwrap();
+        assert_eq!(full_stack.display_name, "Full-Stack-Dev");
+
+        let backend = roles.find_by_name("backend_engineer").unwrap();
+        assert_eq!(backend.display_name, "Backend Engineer");
     }
 }

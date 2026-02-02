@@ -66,7 +66,13 @@ impl TowerApp {
         let claude_manager = ClaudeManager::new(session_name.clone(), context_store.clone());
 
         let available_roles =
-            AvailableRoles::from_instructions_path(&config.instructions_path).unwrap_or_default();
+            match AvailableRoles::from_instructions_path(&config.instructions_path) {
+                Ok(roles) => roles,
+                Err(e) => {
+                    eprintln!("Warning: Failed to load available roles: {}", e);
+                    AvailableRoles::default()
+                }
+            };
 
         Self {
             tmux: TmuxManager::new(session_name.clone()),
@@ -518,11 +524,17 @@ impl TowerApp {
     pub async fn initialize_session_roles(&mut self) -> Result<()> {
         let session_hash = self.config.session_hash();
 
-        let mut roles = self
-            .context_store
-            .load_session_roles(&session_hash)
-            .await?
-            .unwrap_or_else(|| SessionExpertRoles::new(session_hash.clone()));
+        let mut roles = match self.context_store.load_session_roles(&session_hash).await {
+            Ok(Some(r)) => r,
+            Ok(None) => SessionExpertRoles::new(session_hash.clone()),
+            Err(e) => {
+                eprintln!(
+                    "Warning: Failed to load session roles, recreating with defaults: {}",
+                    e
+                );
+                SessionExpertRoles::new(session_hash.clone())
+            }
+        };
 
         for i in 0..self.config.num_experts() {
             if roles.get_role(i).is_none() {
@@ -542,6 +554,19 @@ impl TowerApp {
     }
 
     pub async fn change_expert_role(&mut self, expert_id: u32, new_role: &str) -> Result<()> {
+        if let Some(capture) = self.status_display.selected() {
+            use crate::session::AgentStatus;
+            if matches!(
+                capture.status,
+                AgentStatus::Executing | AgentStatus::Thinking
+            ) {
+                self.set_message(format!(
+                    "Warning: Expert {} is currently active. Role change may interrupt work.",
+                    expert_id
+                ));
+            }
+        }
+
         self.session_roles.set_role(expert_id, new_role.to_string());
         self.context_store
             .save_session_roles(&self.session_roles)
@@ -561,6 +586,11 @@ impl TowerApp {
     }
 
     fn open_role_selector(&mut self) {
+        if self.available_roles.roles.is_empty() {
+            self.set_message("No roles available".to_string());
+            return;
+        }
+
         if let Some(expert_id) = self.status_display.selected_expert_id() {
             let current_role = self
                 .session_roles

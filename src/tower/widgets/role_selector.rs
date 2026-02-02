@@ -202,11 +202,17 @@ fn centered_rect(width: u16, height: u16, r: Rect) -> Rect {
     Rect::new(x, y, width, height)
 }
 
-fn truncate_str(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
+fn truncate_str(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
         s.to_string()
     } else {
-        format!("{}...", &s[..max_len.saturating_sub(3)])
+        let truncate_at = max_chars.saturating_sub(3);
+        let byte_index = s
+            .char_indices()
+            .nth(truncate_at)
+            .map(|(i, _)| i)
+            .unwrap_or(s.len());
+        format!("{}...", &s[..byte_index])
     }
 }
 
@@ -298,5 +304,13 @@ mod tests {
     #[test]
     fn truncate_str_long_string() {
         assert_eq!(truncate_str("hello world", 8), "hello...");
+    }
+
+    #[test]
+    fn truncate_str_utf8_safe() {
+        // Japanese text: "こんにちは世界" (Hello World) = 7 characters
+        let japanese = "こんにちは世界";
+        assert_eq!(truncate_str(japanese, 10), japanese);
+        assert_eq!(truncate_str(japanese, 5), "こん...");
     }
 }
