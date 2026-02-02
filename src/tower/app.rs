@@ -220,6 +220,10 @@ impl TowerApp {
     }
 
     async fn poll_status(&mut self) -> Result<()> {
+        // Skip polling when user is actively typing to avoid input lag
+        if self.focus == FocusArea::TaskInput {
+            return Ok(());
+        }
         const STATUS_POLL_INTERVAL: Duration = Duration::from_millis(500);
         if self.last_status_poll.elapsed() < STATUS_POLL_INTERVAL {
             return Ok(());
@@ -229,6 +233,10 @@ impl TowerApp {
     }
 
     async fn poll_reports(&mut self) -> Result<()> {
+        // Skip polling when user is actively typing to avoid input lag
+        if self.focus == FocusArea::TaskInput {
+            return Ok(());
+        }
         const REPORT_POLL_INTERVAL: Duration = Duration::from_millis(1000);
         if self.last_report_poll.elapsed() < REPORT_POLL_INTERVAL {
             return Ok(());
@@ -269,7 +277,7 @@ impl TowerApp {
     }
 
     pub async fn handle_events(&mut self) -> Result<()> {
-        if event::poll(Duration::from_millis(100))? {
+        if event::poll(Duration::from_millis(8))? {
             match event::read()? {
                 Event::Mouse(mouse) => {
                     if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
