@@ -4,14 +4,16 @@ use ratatui::layout::Rect;
 use std::time::Duration;
 
 use crate::config::Config;
-use crate::context::{ContextStore, Decision, ExpertContext};
+use crate::context::{AvailableRoles, ContextStore, Decision, ExpertContext, SessionExpertRoles};
 use crate::instructions::load_instruction_with_template;
 use crate::models::{EffortConfig, Task};
 use crate::queue::QueueManager;
 use crate::session::{CaptureManager, ClaudeManager, TmuxManager};
 
 use super::ui::UI;
-use super::widgets::{EffortSelector, HelpModal, ReportDisplay, StatusDisplay, TaskInput, ViewMode};
+use super::widgets::{
+    EffortSelector, HelpModal, ReportDisplay, RoleSelector, StatusDisplay, TaskInput, ViewMode,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusArea {
@@ -43,6 +45,10 @@ pub struct TowerApp {
     effort_selector: EffortSelector,
     report_display: ReportDisplay,
     help_modal: HelpModal,
+    role_selector: RoleSelector,
+
+    session_roles: SessionExpertRoles,
+    available_roles: AvailableRoles,
 
     focus: FocusArea,
     running: bool,
@@ -54,9 +60,13 @@ pub struct TowerApp {
 impl TowerApp {
     pub fn new(config: Config) -> Self {
         let session_name = config.session_name();
+        let session_hash = config.session_hash();
         let queue_manager = QueueManager::new(config.queue_path.clone());
         let context_store = ContextStore::new(config.queue_path.clone());
         let claude_manager = ClaudeManager::new(session_name.clone(), context_store.clone());
+
+        let available_roles =
+            AvailableRoles::from_instructions_path(&config.instructions_path).unwrap_or_default();
 
         Self {
             tmux: TmuxManager::new(session_name.clone()),
@@ -64,19 +74,23 @@ impl TowerApp {
             claude: claude_manager,
             queue: queue_manager,
             context_store,
-            config,
 
             status_display: StatusDisplay::new(),
             task_input: TaskInput::new(),
             effort_selector: EffortSelector::new(),
             report_display: ReportDisplay::new(),
             help_modal: HelpModal::new(),
+            role_selector: RoleSelector::new(),
+
+            session_roles: SessionExpertRoles::new(session_hash),
+            available_roles,
 
             focus: FocusArea::ExpertList,
             running: true,
             message: None,
             poll_counter: 0,
             layout_areas: LayoutAreas::default(),
+            config,
         }
     }
 
@@ -129,6 +143,15 @@ impl TowerApp {
         &mut self.help_modal
     }
 
+    pub fn role_selector(&mut self) -> &mut RoleSelector {
+        &mut self.role_selector
+    }
+
+    #[allow(dead_code)]
+    pub fn get_expert_role(&self, expert_id: u32) -> Option<&str> {
+        self.session_roles.get_role(expert_id)
+    }
+
     pub fn set_layout_areas(&mut self, areas: LayoutAreas) {
         self.layout_areas = areas;
     }
@@ -170,6 +193,15 @@ impl TowerApp {
 
         let captures = self.capture.capture_all(&experts).await;
         self.status_display.set_captures(captures);
+
+        let roles: std::collections::HashMap<u32, String> = self
+            .session_roles
+            .assignments
+            .iter()
+            .map(|a| (a.expert_id, a.role.clone()))
+            .collect();
+        self.status_display.set_expert_roles(roles);
+
         Ok(())
     }
 
@@ -281,6 +313,21 @@ impl TowerApp {
                     return Ok(());
                 }
 
+                if self.role_selector.is_visible() {
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') => {
+                            self.role_selector.hide();
+                        }
+                        KeyCode::Enter => {
+                            self.confirm_role_selection().await?;
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => self.role_selector.prev(),
+                        KeyCode::Down | KeyCode::Char('j') => self.role_selector.next(),
+                        _ => {}
+                    }
+                    return Ok(());
+                }
+
                 match self.focus {
                     FocusArea::ExpertList => self.handle_expert_list_keys(key.code),
                     FocusArea::TaskInput => self.handle_task_input_keys(key.code, key.modifiers),
@@ -333,6 +380,7 @@ impl TowerApp {
         match code {
             KeyCode::Up | KeyCode::Char('k') => self.status_display.prev(),
             KeyCode::Down | KeyCode::Char('j') => self.status_display.next(),
+            KeyCode::Char('r') => self.open_role_selector(),
             _ => {}
         }
     }
@@ -467,6 +515,74 @@ impl TowerApp {
         Ok(())
     }
 
+    pub async fn initialize_session_roles(&mut self) -> Result<()> {
+        let session_hash = self.config.session_hash();
+
+        let mut roles = self
+            .context_store
+            .load_session_roles(&session_hash)
+            .await?
+            .unwrap_or_else(|| SessionExpertRoles::new(session_hash.clone()));
+
+        for i in 0..self.config.num_experts() {
+            if roles.get_role(i).is_none() {
+                let default_role = self
+                    .config
+                    .get_expert(i)
+                    .map(|e| e.name.clone())
+                    .unwrap_or_else(|| "general".to_string());
+                roles.set_role(i, default_role);
+            }
+        }
+
+        self.context_store.save_session_roles(&roles).await?;
+        self.session_roles = roles;
+
+        Ok(())
+    }
+
+    pub async fn change_expert_role(&mut self, expert_id: u32, new_role: &str) -> Result<()> {
+        self.session_roles.set_role(expert_id, new_role.to_string());
+        self.context_store
+            .save_session_roles(&self.session_roles)
+            .await?;
+
+        self.claude.send_clear(expert_id).await?;
+
+        let instruction =
+            load_instruction_with_template(&self.config.instructions_path, new_role)?;
+        if !instruction.is_empty() {
+            self.claude.send_instruction(expert_id, &instruction).await?;
+        }
+
+        self.set_message(format!("Expert {} role changed to {}", expert_id, new_role));
+
+        Ok(())
+    }
+
+    fn open_role_selector(&mut self) {
+        if let Some(expert_id) = self.status_display.selected_expert_id() {
+            let current_role = self
+                .session_roles
+                .get_role(expert_id)
+                .unwrap_or("general")
+                .to_string();
+            let roles = self.available_roles.roles.clone();
+            self.role_selector.show(expert_id, &current_role, roles);
+        }
+    }
+
+    async fn confirm_role_selection(&mut self) -> Result<()> {
+        if let (Some(expert_id), Some(new_role)) = (
+            self.role_selector.expert_id(),
+            self.role_selector.selected_role().map(|s| s.to_string()),
+        ) {
+            self.role_selector.hide();
+            self.change_expert_role(expert_id, &new_role).await?;
+        }
+        Ok(())
+    }
+
     pub async fn reset_expert(&mut self) -> Result<()> {
         let expert_id = match self.status_display.selected_expert_id() {
             Some(id) => id,
@@ -499,6 +615,7 @@ impl TowerApp {
     pub async fn run(&mut self) -> Result<()> {
         let mut terminal = UI::setup_terminal()?;
 
+        self.initialize_session_roles().await?;
         self.update_focus();
         self.refresh_status().await?;
         self.refresh_reports().await?;
