@@ -553,11 +553,7 @@ impl TowerApp {
 
         for i in 0..self.config.num_experts() {
             if roles.get_role(i).is_none() {
-                let default_role = self
-                    .config
-                    .get_expert(i)
-                    .map(|e| e.name.clone())
-                    .unwrap_or_else(|| "general".to_string());
+                let default_role = self.config.get_expert_role(i);
                 roles.set_role(i, default_role);
             }
         }
@@ -639,7 +635,14 @@ impl TowerApp {
 
         let expert_name = self.config.get_expert_name(expert_id);
 
-        self.set_message(format!("Resetting {}...", expert_name));
+        // Get current role for instruction loading (fallback to config role)
+        let instruction_role = self
+            .session_roles
+            .get_role(expert_id)
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| self.config.get_expert_role(expert_id));
+
+        self.set_message(format!("Resetting {} (role: {})...", expert_name, instruction_role));
 
         self.context_store
             .clear_expert_context(&self.config.session_hash(), expert_id)
@@ -648,7 +651,7 @@ impl TowerApp {
         self.claude.send_clear(expert_id).await?;
 
         let instruction =
-            load_instruction_with_template(&self.config.instructions_path, &expert_name)?;
+            load_instruction_with_template(&self.config.instructions_path, &instruction_role)?;
         if !instruction.is_empty() {
             self.claude.send_instruction(expert_id, &instruction).await?;
         }

@@ -87,6 +87,19 @@ async fn reset_expert(
     let context_store = ContextStore::new(config.queue_path.clone());
     let claude = ClaudeManager::new(session_name.clone(), context_store.clone());
 
+    // Load session roles to get current role for instruction loading
+    let instruction_role = match context_store.load_session_roles(session_hash).await {
+        Ok(Some(roles)) => roles
+            .get_role(expert_id)
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| config.get_expert_role(expert_id)),
+        Ok(None) => config.get_expert_role(expert_id), // No session roles file
+        Err(e) => {
+            eprintln!("Warning: Failed to load session roles: {}", e);
+            config.get_expert_role(expert_id)
+        }
+    };
+
     if full {
         println!("  Sending /exit to Claude...");
         claude.send_exit(expert_id).await?;
@@ -120,8 +133,8 @@ async fn reset_expert(
         claude.send_clear(expert_id).await?;
     }
 
-    println!("  Resending instructions...");
-    let instruction = load_instruction_with_template(&config.instructions_path, &expert_name)?;
+    println!("  Resending instructions (role: {})...", instruction_role);
+    let instruction = load_instruction_with_template(&config.instructions_path, &instruction_role)?;
     if !instruction.is_empty() {
         claude.send_instruction(expert_id, &instruction).await?;
     }

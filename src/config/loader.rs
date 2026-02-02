@@ -4,8 +4,10 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExpertConfig {
-    pub name: String,
+    pub name: String,   // Display name only
     pub color: String,
+    #[serde(default)]
+    pub role: String,   // Instruction file name (required for instruction loading)
 }
 
 impl Default for ExpertConfig {
@@ -13,6 +15,7 @@ impl Default for ExpertConfig {
         Self {
             name: "expert".to_string(),
             color: "white".to_string(),
+            role: "general".to_string(),
         }
     }
 }
@@ -56,18 +59,22 @@ impl Default for Config {
                 ExpertConfig {
                     name: "architect".to_string(),
                     color: "red".to_string(),
+                    role: "architect".to_string(),
                 },
                 ExpertConfig {
                     name: "frontend".to_string(),
                     color: "blue".to_string(),
+                    role: "frontend".to_string(),
                 },
                 ExpertConfig {
                     name: "backend".to_string(),
                     color: "green".to_string(),
+                    role: "backend".to_string(),
                 },
                 ExpertConfig {
                     name: "tester".to_string(),
                     color: "yellow".to_string(),
+                    role: "tester".to_string(),
                 },
             ],
             timeouts: TimeoutConfig::default(),
@@ -122,6 +129,7 @@ impl Config {
             self.experts.push(ExpertConfig {
                 name: format!("expert{}", idx),
                 color: "white".to_string(),
+                role: format!("expert{}", idx),
             });
         }
         self.experts.truncate(num_experts as usize);
@@ -186,6 +194,19 @@ impl Config {
     pub fn get_expert_name(&self, id: u32) -> String {
         self.get_expert(id)
             .map(|e| e.name.clone())
+            .unwrap_or_else(|| format!("expert{}", id))
+    }
+
+    /// Get default role for expert from config
+    pub fn get_expert_role(&self, id: u32) -> String {
+        self.get_expert(id)
+            .map(|e| {
+                if e.role.is_empty() {
+                    e.name.clone() // Fallback to name if role is empty
+                } else {
+                    e.role.clone()
+                }
+            })
             .unwrap_or_else(|| format!("expert{}", id))
     }
 }
@@ -360,5 +381,70 @@ timeouts:
     fn config_get_expert_name_fallback() {
         let config = Config::default();
         assert_eq!(config.get_expert_name(99), "expert99");
+    }
+
+    #[test]
+    fn config_expert_has_role_field() {
+        let config = Config::default();
+        assert_eq!(config.experts[0].role, "architect");
+        assert_eq!(config.experts[1].role, "frontend");
+        assert_eq!(config.experts[2].role, "backend");
+        assert_eq!(config.experts[3].role, "tester");
+    }
+
+    #[test]
+    fn config_get_expert_role_valid() {
+        let config = Config::default();
+        assert_eq!(config.get_expert_role(0), "architect");
+        assert_eq!(config.get_expert_role(1), "frontend");
+    }
+
+    #[test]
+    fn config_get_expert_role_fallback() {
+        let config = Config::default();
+        assert_eq!(config.get_expert_role(99), "expert99");
+    }
+
+    #[test]
+    fn config_expert_role_serde_with_role() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.yaml");
+
+        let yaml = r#"
+session_prefix: "test"
+experts:
+  - name: "Lead Architect"
+    color: "cyan"
+    role: "architect"
+  - name: "Frontend Dev"
+    color: "magenta"
+    role: "frontend"
+"#;
+        std::fs::write(&config_path, yaml).unwrap();
+
+        let config = Config::load(Some(config_path)).unwrap();
+        assert_eq!(config.experts[0].name, "Lead Architect");
+        assert_eq!(config.experts[0].role, "architect");
+        assert_eq!(config.experts[1].name, "Frontend Dev");
+        assert_eq!(config.experts[1].role, "frontend");
+    }
+
+    #[test]
+    fn config_expert_role_serde_without_role_defaults() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.yaml");
+
+        let yaml = r#"
+session_prefix: "test"
+experts:
+  - name: "lead"
+    color: "cyan"
+"#;
+        std::fs::write(&config_path, yaml).unwrap();
+
+        let config = Config::load(Some(config_path)).unwrap();
+        assert_eq!(config.experts[0].name, "lead");
+        // role defaults to empty string via serde(default), get_expert_role falls back to name
+        assert_eq!(config.get_expert_role(0), "lead");
     }
 }
