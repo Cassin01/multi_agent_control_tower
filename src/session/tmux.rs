@@ -125,6 +125,7 @@ impl TmuxManager {
     }
 
     pub async fn send_keys_with_enter(&self, pane_id: u32, keys: &str) -> Result<()> {
+        self.send_keys(pane_id, "C-u").await?; // Clear existing input
         self.send_keys(pane_id, keys).await?;
         self.send_keys(pane_id, "Enter").await?;
         Ok(())
