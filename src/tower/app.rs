@@ -506,7 +506,7 @@ impl TowerApp {
         self.context_store.save_expert_context(&expert_ctx).await?;
 
         let task_prompt = format!(
-            "New task assigned:\n{}\n\nEffort level: {:?}\nPlease read the task file at queue/tasks/expert{}.yaml",
+            "New task assigned:\n{}\n\nEffort level: {:?}\nPlease read the task file at .macot/tasks/expert{}.yaml",
             task.description,
             self.effort_selector.selected(),
             expert_id

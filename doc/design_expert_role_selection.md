@@ -45,7 +45,7 @@ This document describes the architecture for the Expert Role Selection feature, 
 
 ### SessionExpertRoles (New)
 
-**File Location**: `queue/sessions/{hash}/expert_roles.yaml`
+**File Location**: `.macot/sessions/{hash}/expert_roles.yaml`
 
 ```yaml
 # Session-level role assignments
@@ -325,7 +325,7 @@ src/
         ├── mod.rs      (add: pub mod role_selector)
         └── role_selector.rs  (NEW: RoleSelector widget)
 
-queue/sessions/{hash}/
+.macot/sessions/{hash}/
 └── expert_roles.yaml   (NEW: session role assignments)
 ```
 

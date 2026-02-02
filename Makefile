@@ -11,7 +11,7 @@ test:
 # Clean build artifacts
 clean:
 	cargo clean
-	rm -rf queue/tasks/*.yaml queue/reports/*.yaml
+	rm -rf .macot/tasks/*.yaml .macot/reports/*.yaml
 
 # Format code
 fmt:
@@ -51,7 +51,7 @@ down:
 
 # Create queue directories
 init-dirs:
-	mkdir -p queue/tasks queue/reports queue/sessions
+	mkdir -p .macot/tasks .macot/reports .macot/sessions
 	mkdir -p instructions
 
 # Development helpers

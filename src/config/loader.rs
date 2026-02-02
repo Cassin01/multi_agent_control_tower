@@ -105,7 +105,7 @@ impl Config {
     }
 
     pub fn with_project_path(mut self, project_path: PathBuf) -> Self {
-        self.queue_path = project_path.join("queue");
+        self.queue_path = project_path.join(".macot");
         self.instructions_path = project_path.join("instructions");
         self.project_path = project_path;
         self
@@ -311,7 +311,7 @@ timeouts:
         let config = Config::default().with_project_path(PathBuf::from("/tmp/project"));
 
         assert_eq!(config.project_path, PathBuf::from("/tmp/project"));
-        assert_eq!(config.queue_path, PathBuf::from("/tmp/project/queue"));
+        assert_eq!(config.queue_path, PathBuf::from("/tmp/project/.macot"));
         assert_eq!(
             config.instructions_path,
             PathBuf::from("/tmp/project/instructions")

@@ -11,18 +11,18 @@ You are an expert agent in a multi-agent development team managed by the MACOT (
 
 ## Task Workflow
 
-1. **Receive**: Read task from `queue/tasks/expert{ID}.yaml`
+1. **Receive**: Read task from `.macot/tasks/expert{ID}.yaml`
 2. **Acknowledge**: Update status to `in_progress`
 3. **Execute**: Complete the assigned task
-4. **Report**: Write report to `queue/reports/expert{ID}_report.yaml`
+4. **Report**: Write report to `.macot/reports/expert{ID}_report.yaml`
 5. **Notify**: Signal completion to control tower
 6. **Wait**: Return to idle state for next task
 
 ## File Locations
 
-- Your task file: `queue/tasks/expert{ID}.yaml`
-- Your report file: `queue/reports/expert{ID}_report.yaml`
-- Session context: `queue/sessions/{hash}/experts/expert{ID}/`
+- Your task file: `.macot/tasks/expert{ID}.yaml`
+- Your report file: `.macot/reports/expert{ID}_report.yaml`
+- Session context: `.macot/sessions/{hash}/experts/expert{ID}/`
 
 ## Report Format
 

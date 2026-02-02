@@ -63,8 +63,8 @@ Claude CLI instances running in tmux panes:
 
 ### Queue System
 File-based task and report exchange:
-- `queue/tasks/expert{ID}.yaml` - Task assignments per expert
-- `queue/reports/expert{ID}_report.yaml` - Completion reports per expert
+- `.macot/tasks/expert{ID}.yaml` - Task assignments per expert
+- `.macot/reports/expert{ID}_report.yaml` - Completion reports per expert
 
 ### tmux Session Manager
 Manages the underlying terminal sessions:
@@ -290,7 +290,7 @@ multi_agent_control_tower/
 │   ├── frontend.md
 │   ├── backend.md
 │   └── tester.md
-├── queue/
+├── .macot/
 │   ├── tasks/
 │   │   └── .gitkeep
 │   └── reports/
@@ -302,7 +302,7 @@ multi_agent_control_tower/
 
 ### Queue Directories
 ```
-queue/
+.macot/
 ├── tasks/
 │   ├── expert0.yaml
 │   ├── expert1.yaml
@@ -403,7 +403,7 @@ User in `macot tower`
          ▼
 ┌─────────────────────────────┐
 │ 3. Write task to            │
-│    queue/tasks/expert{ID}   │
+│    .macot/tasks/expert{ID}   │
 └─────────────────────────────┘
          │
          ▼
@@ -426,7 +426,7 @@ Expert completes task
          ▼
 ┌─────────────────────────────┐
 │ 1. Expert writes report to  │
-│    queue/reports/expert{ID} │
+│    .macot/reports/expert{ID} │
 └─────────────────────────────┘
          │
          ▼
@@ -494,7 +494,7 @@ User runs `macot down [session_name]`
 
 ## 7. File Formats
 
-### Task YAML Schema (`queue/tasks/expert{ID}.yaml`)
+### Task YAML Schema (`.macot/tasks/expert{ID}.yaml`)
 
 ```yaml
 task_id: "task-2024-01-15-001"
@@ -513,7 +513,7 @@ context:
 priority: "high"  # low | normal | high | critical
 ```
 
-### Report YAML Schema (`queue/reports/expert{ID}_report.yaml`)
+### Report YAML Schema (`.macot/reports/expert{ID}_report.yaml`)
 
 ```yaml
 task_id: "task-2024-01-15-001"
@@ -555,10 +555,10 @@ You are the {role_description} expert in a multi-agent development team.
 - {responsibility_2}
 
 ## Workflow
-1. Read task from `queue/tasks/expert{ID}.yaml`
+1. Read task from `.macot/tasks/expert{ID}.yaml`
 2. Update status to `in_progress`
 3. Execute the assigned task
-4. Write report to `queue/reports/expert{ID}_report.yaml`
+4. Write report to `.macot/reports/expert{ID}_report.yaml`
 5. Notify control tower upon completion
 6. Update status to `done`
 
@@ -568,8 +568,8 @@ You are the {role_description} expert in a multi-agent development team.
 - Use the report file for all outputs
 
 ## Task File Location
-Your task file: `queue/tasks/expert{ID}.yaml`
-Your report file: `queue/reports/expert{ID}_report.yaml`
+Your task file: `.macot/tasks/expert{ID}.yaml`
+Your report file: `.macot/reports/expert{ID}_report.yaml`
 ```
 
 ---
