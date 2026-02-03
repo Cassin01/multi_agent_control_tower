@@ -7,6 +7,7 @@ use ratatui::{
 };
 
 use crate::models::{Report, TaskStatus};
+use crate::utils::truncate_str;
 
 use super::report_detail_modal::ReportDetailModal;
 
@@ -127,12 +128,10 @@ impl ReportDisplay {
                 let (symbol, color) = Self::status_symbol(&report.status);
                 let status_style = Style::default().fg(color);
 
-                let summary = if report.summary.len() > 40 {
-                    format!("{}...", &report.summary[..37])
-                } else if report.summary.is_empty() {
+                let summary = if report.summary.is_empty() {
                     "In progress...".to_string()
                 } else {
-                    report.summary.clone()
+                    truncate_str(&report.summary, 40)
                 };
 
                 let spans = vec![

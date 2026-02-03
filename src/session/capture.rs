@@ -3,6 +3,7 @@ use chrono::{DateTime, Utc};
 use ratatui::style::Color;
 
 use super::TmuxManager;
+use crate::utils::truncate_str;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AgentStatus {
@@ -194,11 +195,7 @@ impl CaptureManager {
         }
         let line = &nlines[nlines_len - target_row];
         let trimmed = line.trim();
-        if trimmed.len() > 60 {
-            format!("{}...", &trimmed[..57])
-        } else {
-            trimmed.to_string()
-        }
+        truncate_str(trimmed, 60)
     }
 }
 
@@ -332,7 +329,24 @@ mod tests {
             "line 5".to_string(),
         ];
         let result = CaptureManager::extract_last_activity(&lines);
-        assert!(result.len() <= 60);
+        assert!(result.chars().count() <= 60);
+        assert!(result.ends_with("..."));
+    }
+
+    #[test]
+    fn extract_last_activity_truncates_japanese_text_safely() {
+        // 70+ characters of Japanese text to exceed the 60-char limit
+        let japanese_line = "日本語のテストテキストです。これは非常に長いテキストで、60文字を超えています。さらに追加のテキストを入れます。もっと長くします。".to_string();
+        assert!(japanese_line.chars().count() > 60, "Test string must be > 60 chars");
+        let lines = vec![
+            japanese_line,
+            "line 2".to_string(),
+            "line 3".to_string(),
+            "line 4".to_string(),
+            "line 5".to_string(),
+        ];
+        let result = CaptureManager::extract_last_activity(&lines);
+        assert!(result.chars().count() <= 60);
         assert!(result.ends_with("..."));
     }
 

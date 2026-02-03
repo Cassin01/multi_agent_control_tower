@@ -10,6 +10,7 @@ mod models;
 mod queue;
 mod session;
 mod tower;
+mod utils;
 
 use cli::{Cli, Commands};
 
