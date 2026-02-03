@@ -59,22 +59,22 @@ impl Default for Config {
             session_prefix: "macot".to_string(),
             experts: vec![
                 ExpertConfig {
-                    name: "architect".to_string(),
+                    name: "Alyosha".to_string(),
                     color: "red".to_string(),
                     role: "architect".to_string(),
                 },
                 ExpertConfig {
-                    name: "frontend".to_string(),
+                    name: "Ilyusha".to_string(),
                     color: "blue".to_string(),
                     role: "frontend".to_string(),
                 },
                 ExpertConfig {
-                    name: "backend".to_string(),
+                    name: "Grigory".to_string(),
                     color: "green".to_string(),
                     role: "backend".to_string(),
                 },
                 ExpertConfig {
-                    name: "tester".to_string(),
+                    name: "Katya".to_string(),
                     color: "yellow".to_string(),
                     role: "tester".to_string(),
                 },
@@ -232,8 +232,8 @@ mod tests {
         let config = Config::default();
         assert_eq!(config.num_experts(), 4);
         assert_eq!(config.experts.len(), 4);
-        assert_eq!(config.experts[0].name, "architect");
-        assert_eq!(config.experts[1].name, "frontend");
+        assert_eq!(config.experts[0].name, "Alyosha");
+        assert_eq!(config.experts[1].name, "Ilyusha");
     }
 
     #[test]
@@ -256,7 +256,7 @@ mod tests {
     fn config_get_expert_returns_correct_expert() {
         let config = Config::default();
         let expert = config.get_expert(0).unwrap();
-        assert_eq!(expert.name, "architect");
+        assert_eq!(expert.name, "Alyosha");
     }
 
     #[test]
@@ -269,11 +269,11 @@ mod tests {
     fn config_get_expert_by_name_case_insensitive() {
         let config = Config::default();
 
-        let (id, expert) = config.get_expert_by_name("ARCHITECT").unwrap();
+        let (id, expert) = config.get_expert_by_name("ALYOSHA").unwrap();
         assert_eq!(id, 0);
-        assert_eq!(expert.name, "architect");
+        assert_eq!(expert.name, "Alyosha");
 
-        let (id, _) = config.get_expert_by_name("Frontend").unwrap();
+        let (id, _) = config.get_expert_by_name("Ilyusha").unwrap();
         assert_eq!(id, 1);
     }
 
@@ -368,7 +368,7 @@ timeouts:
         // num_experts is no longer serialized; it's derived from experts.len()
         assert!(!yaml.contains("num_experts"));
         assert!(yaml.contains("session_prefix: macot"));
-        assert!(yaml.contains("name: architect"));
+        assert!(yaml.contains("name: Alyosha"));
     }
 
     #[test]
@@ -381,8 +381,8 @@ timeouts:
     #[test]
     fn config_resolve_expert_id_by_name() {
         let config = Config::default();
-        assert_eq!(config.resolve_expert_id("architect").unwrap(), 0);
-        assert_eq!(config.resolve_expert_id("FRONTEND").unwrap(), 1);
+        assert_eq!(config.resolve_expert_id("Alyosha").unwrap(), 0);
+        assert_eq!(config.resolve_expert_id("ILYUSHA").unwrap(), 1);
     }
 
     #[test]
@@ -395,7 +395,7 @@ timeouts:
     #[test]
     fn config_get_expert_name_valid() {
         let config = Config::default();
-        assert_eq!(config.get_expert_name(0), "architect");
+        assert_eq!(config.get_expert_name(0), "Alyosha");
     }
 
     #[test]

@@ -128,11 +128,8 @@ impl StatusDisplay {
             })
             .collect();
 
-        let border_style = if self.focused {
-            Style::default().fg(ratatui::style::Color::Cyan)
-        } else {
-            Style::default().fg(ratatui::style::Color::Gray)
-        };
+        // Use DarkGray consistently for display-only panel (non-interactive)
+        let border_style = Style::default().fg(ratatui::style::Color::DarkGray);
 
         let list = List::new(items)
             .block(
