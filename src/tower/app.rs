@@ -67,7 +67,7 @@ impl TowerApp {
         let claude_manager = ClaudeManager::new(session_name.clone(), context_store.clone());
 
         let available_roles =
-            match AvailableRoles::from_instructions_path(&config.instructions_path) {
+            match AvailableRoles::from_instructions_path(&config.role_instructions_path) {
                 Ok(roles) => roles,
                 Err(e) => {
                     eprintln!("Warning: Failed to load available roles: {}", e);
@@ -585,13 +585,25 @@ impl TowerApp {
 
         self.claude.send_clear(expert_id).await?;
 
-        let instruction =
-            load_instruction_with_template(&self.config.instructions_path, new_role)?;
-        if !instruction.is_empty() {
-            self.claude.send_instruction(expert_id, &instruction).await?;
+        let instruction_result = load_instruction_with_template(
+            &self.config.core_instructions_path,
+            &self.config.role_instructions_path,
+            new_role,
+        )?;
+        if !instruction_result.content.is_empty() {
+            self.claude
+                .send_instruction(expert_id, &instruction_result.content)
+                .await?;
         }
 
-        self.set_message(format!("Expert {} role changed to {}", expert_id, new_role));
+        if instruction_result.used_general_fallback {
+            self.set_message(format!(
+                "Role '{}' not found, using 'general'",
+                instruction_result.requested_role
+            ));
+        } else {
+            self.set_message(format!("Expert {} role changed to {}", expert_id, new_role));
+        }
 
         Ok(())
     }
@@ -650,13 +662,25 @@ impl TowerApp {
 
         self.claude.send_clear(expert_id).await?;
 
-        let instruction =
-            load_instruction_with_template(&self.config.instructions_path, &instruction_role)?;
-        if !instruction.is_empty() {
-            self.claude.send_instruction(expert_id, &instruction).await?;
+        let instruction_result = load_instruction_with_template(
+            &self.config.core_instructions_path,
+            &self.config.role_instructions_path,
+            &instruction_role,
+        )?;
+        if !instruction_result.content.is_empty() {
+            self.claude
+                .send_instruction(expert_id, &instruction_result.content)
+                .await?;
         }
 
-        self.set_message(format!("{} reset complete", expert_name));
+        if instruction_result.used_general_fallback {
+            self.set_message(format!(
+                "{} reset (role '{}' not found, using 'general')",
+                expert_name, instruction_result.requested_role
+            ));
+        } else {
+            self.set_message(format!("{} reset complete", expert_name));
+        }
         Ok(())
     }
 

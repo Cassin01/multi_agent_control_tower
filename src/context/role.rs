@@ -3,6 +3,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+use crate::instructions::defaults;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoleAssignment {
     pub expert_id: u32,
@@ -64,58 +66,78 @@ pub struct AvailableRoles {
 }
 
 impl AvailableRoles {
+    /// Load available roles from user's config folder and merge with embedded defaults.
+    /// User custom roles in the folder take precedence over embedded defaults.
     pub fn from_instructions_path(path: &Path) -> Result<Self> {
         let mut roles = Vec::new();
 
-        if !path.exists() {
-            return Ok(Self { roles });
+        // Scan user's config folder for custom roles
+        if path.exists() {
+            let entries = std::fs::read_dir(path)?;
+            for entry in entries.flatten() {
+                let file_path = entry.path();
+
+                if file_path.extension().map(|e| e == "md").unwrap_or(false) {
+                    let file_name = file_path.file_stem().and_then(|s| s.to_str());
+
+                    if let Some(name) = file_name {
+                        if name == "core" {
+                            continue;
+                        }
+
+                        let content = std::fs::read_to_string(&file_path).unwrap_or_default();
+                        let description = content
+                            .lines()
+                            .find(|line| !line.trim().is_empty() && !line.starts_with('#'))
+                            .unwrap_or("")
+                            .to_string();
+
+                        let display_name = Self::capitalize_name(name);
+
+                        roles.push(RoleInfo {
+                            name: name.to_string(),
+                            display_name,
+                            description,
+                        });
+                    }
+                }
+            }
         }
 
-        let entries = std::fs::read_dir(path)?;
-        for entry in entries.flatten() {
-            let file_path = entry.path();
+        // Merge with embedded defaults (always available)
+        for name in defaults::default_role_names() {
+            if !roles.iter().any(|r| r.name == *name) {
+                let default_content = defaults::get_default(name).unwrap_or("");
+                let description = default_content
+                    .lines()
+                    .find(|line| !line.trim().is_empty() && !line.starts_with('#'))
+                    .unwrap_or("")
+                    .to_string();
 
-            if file_path.extension().map(|e| e == "md").unwrap_or(false) {
-                let file_name = file_path.file_stem().and_then(|s| s.to_str());
-
-                if let Some(name) = file_name {
-                    if name == "core" {
-                        continue;
-                    }
-
-                    let content = std::fs::read_to_string(&file_path).unwrap_or_default();
-                    let description = content
-                        .lines()
-                        .find(|line| !line.trim().is_empty() && !line.starts_with('#'))
-                        .unwrap_or("")
-                        .to_string();
-
-                    let display_name = name
-                        .split(|c| c == '-' || c == '_')
-                        .map(|part| {
-                            let mut chars = part.chars();
-                            match chars.next() {
-                                Some(first) => {
-                                    first.to_uppercase().to_string() + chars.as_str()
-                                }
-                                None => String::new(),
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                        .join(if name.contains('-') { "-" } else { " " });
-
-                    roles.push(RoleInfo {
-                        name: name.to_string(),
-                        display_name,
-                        description,
-                    });
-                }
+                roles.push(RoleInfo {
+                    name: name.to_string(),
+                    display_name: Self::capitalize_name(name),
+                    description,
+                });
             }
         }
 
         roles.sort_by(|a, b| a.name.cmp(&b.name));
 
         Ok(Self { roles })
+    }
+
+    fn capitalize_name(name: &str) -> String {
+        name.split(|c| c == '-' || c == '_')
+            .map(|part| {
+                let mut chars = part.chars();
+                match chars.next() {
+                    Some(first) => first.to_uppercase().to_string() + chars.as_str(),
+                    None => String::new(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(if name.contains('-') { "-" } else { " " })
     }
 
     #[allow(dead_code)]
@@ -172,33 +194,43 @@ mod tests {
     }
 
     #[test]
-    fn available_roles_from_empty_path() {
+    fn available_roles_from_empty_path_includes_defaults() {
         let temp_dir = TempDir::new().unwrap();
         let roles = AvailableRoles::from_instructions_path(temp_dir.path()).unwrap();
-        assert!(roles.roles.is_empty());
+        // Even with empty path, should include embedded defaults
+        assert!(roles.find_by_name("architect").is_some());
+        assert!(roles.find_by_name("backend").is_some());
+        assert!(roles.find_by_name("frontend").is_some());
+        assert!(roles.find_by_name("tester").is_some());
+        assert!(roles.find_by_name("general").is_some());
     }
 
     #[test]
-    fn available_roles_from_instructions_path() {
+    fn available_roles_custom_overrides_default() {
         let temp_dir = TempDir::new().unwrap();
 
+        // Custom architect with different description
         std::fs::write(
             temp_dir.path().join("architect.md"),
-            "# Architect\n\nSystem design expert",
+            "# Architect\n\nCustom architect description",
         )
         .unwrap();
-        std::fs::write(
-            temp_dir.path().join("backend.md"),
-            "# Backend\n\nServer-side development",
-        )
-        .unwrap();
-        std::fs::write(temp_dir.path().join("core.md"), "# Core\n\nCore instructions").unwrap();
 
         let roles = AvailableRoles::from_instructions_path(temp_dir.path()).unwrap();
 
-        assert_eq!(roles.roles.len(), 2);
-        assert!(roles.find_by_name("architect").is_some());
+        let architect = roles.find_by_name("architect").unwrap();
+        assert_eq!(architect.description, "Custom architect description");
+        // Other defaults should still be present
         assert!(roles.find_by_name("backend").is_some());
+    }
+
+    #[test]
+    fn available_roles_core_excluded() {
+        let temp_dir = TempDir::new().unwrap();
+
+        std::fs::write(temp_dir.path().join("core.md"), "# Core\n\nCore instructions").unwrap();
+
+        let roles = AvailableRoles::from_instructions_path(temp_dir.path()).unwrap();
         assert!(roles.find_by_name("core").is_none());
     }
 
@@ -206,14 +238,15 @@ mod tests {
     fn available_roles_names() {
         let temp_dir = TempDir::new().unwrap();
 
-        std::fs::write(temp_dir.path().join("architect.md"), "# Architect").unwrap();
-        std::fs::write(temp_dir.path().join("frontend.md"), "# Frontend").unwrap();
-
         let roles = AvailableRoles::from_instructions_path(temp_dir.path()).unwrap();
         let names = roles.names();
 
+        // Should include all embedded defaults
         assert!(names.contains(&"architect"));
         assert!(names.contains(&"frontend"));
+        assert!(names.contains(&"backend"));
+        assert!(names.contains(&"tester"));
+        assert!(names.contains(&"general"));
     }
 
     #[test]

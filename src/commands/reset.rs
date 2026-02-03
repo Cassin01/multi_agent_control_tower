@@ -134,9 +134,19 @@ async fn reset_expert(
     }
 
     println!("  Resending instructions (role: {})...", instruction_role);
-    let instruction = load_instruction_with_template(&config.instructions_path, &instruction_role)?;
-    if !instruction.is_empty() {
-        claude.send_instruction(expert_id, &instruction).await?;
+    let instruction_result = load_instruction_with_template(
+        &config.core_instructions_path,
+        &config.role_instructions_path,
+        &instruction_role,
+    )?;
+    if !instruction_result.content.is_empty() {
+        claude.send_instruction(expert_id, &instruction_result.content).await?;
+    }
+    if instruction_result.used_general_fallback {
+        println!(
+            "  Warning: Role '{}' not found, using 'general' instructions",
+            instruction_result.requested_role
+        );
     }
 
     println!("Expert {} reset complete.", expert_id);

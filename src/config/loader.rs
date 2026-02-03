@@ -43,12 +43,14 @@ pub struct Config {
     pub experts: Vec<ExpertConfig>,
     #[serde(default)]
     pub timeouts: TimeoutConfig,
+    #[serde(default = "Config::default_role_instructions_path")]
+    pub role_instructions_path: PathBuf,
     #[serde(skip)]
     pub project_path: PathBuf,
     #[serde(skip)]
     pub queue_path: PathBuf,
     #[serde(skip)]
-    pub instructions_path: PathBuf,
+    pub core_instructions_path: PathBuf,
 }
 
 impl Default for Config {
@@ -78,9 +80,10 @@ impl Default for Config {
                 },
             ],
             timeouts: TimeoutConfig::default(),
+            role_instructions_path: Self::default_role_instructions_path(),
             project_path: PathBuf::new(),
             queue_path: PathBuf::new(),
-            instructions_path: PathBuf::new(),
+            core_instructions_path: PathBuf::new(),
         }
     }
 }
@@ -111,9 +114,17 @@ impl Config {
         }
     }
 
+    /// Default path for role instructions: ~/.config/macot/instructions/
+    pub fn default_role_instructions_path() -> PathBuf {
+        dirs::config_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("macot")
+            .join("instructions")
+    }
+
     pub fn with_project_path(mut self, project_path: PathBuf) -> Self {
         self.queue_path = project_path.join(".macot");
-        self.instructions_path = project_path.join("instructions");
+        self.core_instructions_path = project_path.join("instructions");
         self.project_path = project_path;
         self
     }
@@ -334,9 +345,19 @@ timeouts:
         assert_eq!(config.project_path, PathBuf::from("/tmp/project"));
         assert_eq!(config.queue_path, PathBuf::from("/tmp/project/.macot"));
         assert_eq!(
-            config.instructions_path,
+            config.core_instructions_path,
             PathBuf::from("/tmp/project/instructions")
         );
+    }
+
+    #[test]
+    fn config_role_instructions_path_defaults_to_config_dir() {
+        let config = Config::default();
+        let expected = dirs::config_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("macot")
+            .join("instructions");
+        assert_eq!(config.role_instructions_path, expected);
     }
 
     #[test]
