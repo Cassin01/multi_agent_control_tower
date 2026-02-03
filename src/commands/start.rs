@@ -128,5 +128,12 @@ pub async fn execute(args: Args) -> Result<()> {
 }
 
 fn load_instruction(config: &Config, expert_name: &str) -> Result<String> {
-    load_instruction_with_template(&config.instructions_path, expert_name)
+    let result = load_instruction_with_template(
+        &config.core_instructions_path,
+        &config.role_instructions_path,
+        expert_name,
+    )?;
+    // Note: In start command, we don't show toast for general fallback
+    // because the UI is not available yet
+    Ok(result.content)
 }

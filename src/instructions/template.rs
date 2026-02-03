@@ -2,7 +2,16 @@ use anyhow::{Context, Result};
 use minijinja::Environment;
 use std::path::Path;
 
+use super::defaults;
 use super::schema::generate_yaml_schema;
+
+/// Result of loading instructions, including fallback information.
+#[derive(Debug, Clone)]
+pub struct InstructionResult {
+    pub content: String,
+    pub requested_role: String,
+    pub used_general_fallback: bool,
+}
 
 /// Render a template file with the yaml_schema variable.
 pub fn render_template(template_content: &str) -> Result<String> {
@@ -22,38 +31,87 @@ pub fn render_template(template_content: &str) -> Result<String> {
     Ok(rendered)
 }
 
-/// Load instruction from templates directory if available, otherwise use legacy format.
+/// Load instruction with separate paths for core and role instructions.
+/// 
+/// - `core_path`: Project's instructions folder (for core.md and templates)
+/// - `role_instructions_path`: User's config folder (~/.config/macot/instructions/)
+/// - `role_name`: The role to load instructions for
+/// 
+/// Fallback chain for role instructions:
+/// 1. User custom: role_instructions_path/{role}.md
+/// 2. Embedded default for the requested role
+/// 3. "general" instructions (with toast notification)
 pub fn load_instruction_with_template(
-    instructions_path: &Path,
-    expert_name: &str,
-) -> Result<String> {
-    let templates_dir = instructions_path.join("templates");
-    let core_template_path = templates_dir.join("core.md.tmpl");
-    let core_legacy_path = instructions_path.join("core.md");
-    let expert_path = instructions_path.join(format!("{}.md", expert_name));
+    core_path: &Path,
+    role_instructions_path: &Path,
+    role_name: &str,
+) -> Result<InstructionResult> {
+    let mut content = String::new();
 
-    let mut instruction = String::new();
+    // Load core instructions (from project - unchanged)
+    let templates_dir = core_path.join("templates");
+    let core_template_path = templates_dir.join("core.md.tmpl");
+    let core_legacy_path = core_path.join("core.md");
 
     if core_template_path.exists() {
         let template_content =
             std::fs::read_to_string(&core_template_path).context("Failed to read core template")?;
-        instruction.push_str(&render_template(&template_content)?);
-        instruction.push_str("\n\n");
+        content.push_str(&render_template(&template_content)?);
+        content.push_str("\n\n");
     } else if core_legacy_path.exists() {
-        instruction.push_str(&std::fs::read_to_string(&core_legacy_path)?);
-        instruction.push_str("\n\n");
+        content.push_str(&std::fs::read_to_string(&core_legacy_path)?);
+        content.push_str("\n\n");
     }
 
-    if expert_path.exists() {
-        instruction.push_str(&std::fs::read_to_string(&expert_path)?);
+    // Load role instructions with fallback chain
+    let (role_content, used_general_fallback) =
+        load_role_instruction(role_instructions_path, role_name);
+
+    content.push_str(&role_content);
+
+    Ok(InstructionResult {
+        content,
+        requested_role: role_name.to_string(),
+        used_general_fallback,
+    })
+}
+
+/// Load role instruction with fallback chain.
+/// Returns (content, used_general_fallback)
+fn load_role_instruction(
+    role_instructions_path: &Path,
+    role_name: &str,
+) -> (String, bool) {
+    // 1. Try user custom instruction
+    let user_path = role_instructions_path.join(format!("{}.md", role_name));
+    if user_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&user_path) {
+            return (content, false);
+        }
     }
 
-    Ok(instruction)
+    // 2. Try embedded default for requested role
+    if let Some(default_content) = defaults::get_default(role_name) {
+        return (default_content.to_string(), false);
+    }
+
+    // 3. Fallback to "general" - first try user's general.md
+    let general_user_path = role_instructions_path.join("general.md");
+    if general_user_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&general_user_path) {
+            return (content, true);
+        }
+    }
+
+    // 4. Embedded general as last resort
+    let general_default = defaults::get_default("general").unwrap_or("");
+    (general_default.to_string(), true)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     #[test]
     fn render_template_replaces_yaml_schema() {
@@ -95,5 +153,79 @@ mod tests {
         assert!(rendered.contains("# Multi-Agent Control Tower"));
         assert!(rendered.contains("task_id:"));
         assert!(rendered.contains("**Critical Notes**"));
+    }
+
+    #[test]
+    fn load_instruction_uses_embedded_default() {
+        let core_dir = TempDir::new().unwrap();
+        let role_dir = TempDir::new().unwrap();
+
+        let result = load_instruction_with_template(
+            core_dir.path(),
+            role_dir.path(),
+            "architect",
+        )
+        .unwrap();
+
+        assert!(!result.content.is_empty());
+        assert_eq!(result.requested_role, "architect");
+        assert!(!result.used_general_fallback);
+    }
+
+    #[test]
+    fn load_instruction_uses_user_custom() {
+        let core_dir = TempDir::new().unwrap();
+        let role_dir = TempDir::new().unwrap();
+
+        std::fs::write(
+            role_dir.path().join("architect.md"),
+            "# Custom Architect\n\nCustom content",
+        )
+        .unwrap();
+
+        let result = load_instruction_with_template(
+            core_dir.path(),
+            role_dir.path(),
+            "architect",
+        )
+        .unwrap();
+
+        assert!(result.content.contains("Custom Architect"));
+        assert_eq!(result.requested_role, "architect");
+        assert!(!result.used_general_fallback);
+    }
+
+    #[test]
+    fn load_instruction_falls_back_to_general() {
+        let core_dir = TempDir::new().unwrap();
+        let role_dir = TempDir::new().unwrap();
+
+        let result = load_instruction_with_template(
+            core_dir.path(),
+            role_dir.path(),
+            "unknown-role",
+        )
+        .unwrap();
+
+        assert!(!result.content.is_empty());
+        assert_eq!(result.requested_role, "unknown-role");
+        assert!(result.used_general_fallback);
+    }
+
+    #[test]
+    fn load_instruction_includes_core() {
+        let core_dir = TempDir::new().unwrap();
+        let role_dir = TempDir::new().unwrap();
+
+        std::fs::write(core_dir.path().join("core.md"), "# Core Instructions").unwrap();
+
+        let result = load_instruction_with_template(
+            core_dir.path(),
+            role_dir.path(),
+            "architect",
+        )
+        .unwrap();
+
+        assert!(result.content.contains("Core Instructions"));
     }
 }
