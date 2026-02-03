@@ -73,18 +73,14 @@ impl HelpModal {
             Self::key_line("Ctrl+C / Ctrl+Q", "Quit application"),
             Self::key_line("Ctrl+H", "Toggle this help"),
             Line::from(""),
-            Self::subsection_title("Expert List"),
-            Self::key_line("j / ↓", "Select next expert"),
-            Self::key_line("k / ↑", "Select previous expert"),
-            Self::key_line("Ctrl+O", "Change expert role"),
-            Self::key_line("Ctrl+R", "Reset selected expert"),
-            Line::from(""),
             Self::subsection_title("Task Input"),
-            Self::key_line("Ctrl+S", "Assign task to selected expert"),
+            Self::nested_subsection_title("Expert Operations"),
             Self::key_line("Ctrl+P", "Select previous expert"),
             Self::key_line("Ctrl+N", "Select next expert"),
             Self::key_line("Ctrl+O", "Change expert role"),
             Self::key_line("Ctrl+R", "Reset selected expert"),
+            Self::nested_subsection_title("Submit / Cancel"),
+            Self::key_line("Ctrl+S", "Assign task to selected expert"),
             Self::key_line("Enter", "Insert newline"),
             Self::key_line("Esc", "Clear input"),
             Line::from(""),
@@ -127,6 +123,16 @@ impl HelpModal {
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ))
+    }
+
+    fn nested_subsection_title(title: &'static str) -> Line<'static> {
+        Line::from(vec![
+            Span::raw("  "),
+            Span::styled(
+                format!("── {} ──", title),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ])
     }
 
     fn key_line(key: &'static str, description: &'static str) -> Line<'static> {

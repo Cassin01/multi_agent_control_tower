@@ -93,7 +93,7 @@ impl TowerApp {
             session_roles: SessionExpertRoles::new(session_hash),
             available_roles,
 
-            focus: FocusArea::ExpertList,
+            focus: FocusArea::TaskInput,
             running: true,
             message: None,
             last_status_poll: Instant::now(),
@@ -174,9 +174,7 @@ impl TowerApp {
     fn handle_mouse_click(&mut self, column: u16, row: u16) {
         let pos = (column, row);
 
-        if Self::point_in_rect(pos, self.layout_areas.expert_list) {
-            self.set_focus(FocusArea::ExpertList);
-        } else if Self::point_in_rect(pos, self.layout_areas.task_input) {
+        if Self::point_in_rect(pos, self.layout_areas.task_input) {
             self.set_focus(FocusArea::TaskInput);
         } else if Self::point_in_rect(pos, self.layout_areas.effort_selector) {
             self.set_focus(FocusArea::EffortSelector);
@@ -256,8 +254,8 @@ impl TowerApp {
     }
 
     fn update_focus(&mut self) {
-        self.status_display
-            .set_focused(self.focus == FocusArea::ExpertList);
+        // status_display is always display-only (not focusable)
+        self.status_display.set_focused(false);
         self.task_input
             .set_focused(self.focus == FocusArea::TaskInput);
         self.effort_selector
@@ -271,15 +269,15 @@ impl TowerApp {
             FocusArea::ExpertList => FocusArea::TaskInput,
             FocusArea::TaskInput => FocusArea::EffortSelector,
             FocusArea::EffortSelector => FocusArea::ReportList,
-            FocusArea::ReportList => FocusArea::ExpertList,
+            FocusArea::ReportList => FocusArea::TaskInput,
         };
         self.update_focus();
     }
 
     pub fn prev_focus(&mut self) {
         self.focus = match self.focus {
-            FocusArea::ExpertList => FocusArea::ReportList,
-            FocusArea::TaskInput => FocusArea::ExpertList,
+            FocusArea::ExpertList => FocusArea::TaskInput,
+            FocusArea::TaskInput => FocusArea::ReportList,
             FocusArea::EffortSelector => FocusArea::TaskInput,
             FocusArea::ReportList => FocusArea::EffortSelector,
         };
@@ -358,7 +356,7 @@ impl TowerApp {
                 }
 
                 match self.focus {
-                    FocusArea::ExpertList => self.handle_expert_list_keys(key.code, key.modifiers),
+                    FocusArea::ExpertList => {} // Display only, not selectable
                     FocusArea::TaskInput => self.handle_task_input_keys(key.code, key.modifiers),
                     FocusArea::EffortSelector => self.handle_effort_selector_keys(key.code),
                     FocusArea::ReportList => self.handle_report_list_keys(key.code, key.modifiers),
@@ -395,7 +393,7 @@ impl TowerApp {
 
                 if key.code == KeyCode::Char('r')
                     && key.modifiers.contains(KeyModifiers::CONTROL)
-                    && (self.focus == FocusArea::ExpertList || self.focus == FocusArea::TaskInput)
+                    && self.focus == FocusArea::TaskInput
                 {
                     self.reset_expert().await?;
                 }
@@ -404,17 +402,6 @@ impl TowerApp {
             }
         }
         Ok(())
-    }
-
-    fn handle_expert_list_keys(&mut self, code: KeyCode, modifiers: KeyModifiers) {
-        match code {
-            KeyCode::Up | KeyCode::Char('k') => self.status_display.prev(),
-            KeyCode::Down | KeyCode::Char('j') => self.status_display.next(),
-            KeyCode::Char('o') if modifiers.contains(KeyModifiers::CONTROL) => {
-                self.open_role_selector()
-            }
-            _ => {}
-        }
     }
 
     fn handle_task_input_keys(&mut self, code: KeyCode, modifiers: KeyModifiers) {
@@ -750,9 +737,7 @@ mod tests {
     fn tower_app_focus_cycles() {
         let mut app = TowerApp::new(create_test_config());
 
-        assert_eq!(app.focus(), FocusArea::ExpertList);
-
-        app.next_focus();
+        // ExpertList is display-only, initial focus is TaskInput
         assert_eq!(app.focus(), FocusArea::TaskInput);
 
         app.next_focus();
@@ -762,12 +747,15 @@ mod tests {
         assert_eq!(app.focus(), FocusArea::ReportList);
 
         app.next_focus();
-        assert_eq!(app.focus(), FocusArea::ExpertList);
+        assert_eq!(app.focus(), FocusArea::TaskInput);
     }
 
     #[test]
     fn tower_app_focus_cycles_backwards() {
         let mut app = TowerApp::new(create_test_config());
+
+        // ExpertList is display-only, initial focus is TaskInput
+        assert_eq!(app.focus(), FocusArea::TaskInput);
 
         app.prev_focus();
         assert_eq!(app.focus(), FocusArea::ReportList);
@@ -796,10 +784,11 @@ mod tests {
     fn tower_app_set_focus_changes_focus() {
         let mut app = TowerApp::new(create_test_config());
 
-        assert_eq!(app.focus(), FocusArea::ExpertList);
-
-        app.set_focus(FocusArea::TaskInput);
+        // ExpertList is display-only, initial focus is TaskInput
         assert_eq!(app.focus(), FocusArea::TaskInput);
+
+        app.set_focus(FocusArea::EffortSelector);
+        assert_eq!(app.focus(), FocusArea::EffortSelector);
 
         app.set_focus(FocusArea::ReportList);
         assert_eq!(app.focus(), FocusArea::ReportList);
@@ -835,8 +824,9 @@ mod tests {
             report_list: Rect::new(0, 25, 100, 10),
         });
 
+        // ExpertList is display-only, clicking it doesn't change focus
         app.handle_mouse_click(50, 5);
-        assert_eq!(app.focus(), FocusArea::ExpertList);
+        assert_eq!(app.focus(), FocusArea::TaskInput); // Stays at TaskInput
 
         app.handle_mouse_click(50, 15);
         assert_eq!(app.focus(), FocusArea::TaskInput);
