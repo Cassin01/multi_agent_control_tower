@@ -55,6 +55,7 @@ pub struct TowerApp {
     message: Option<String>,
     last_status_poll: Instant,
     last_report_poll: Instant,
+    last_input_time: Instant,
     layout_areas: LayoutAreas,
 }
 
@@ -97,6 +98,7 @@ impl TowerApp {
             message: None,
             last_status_poll: Instant::now(),
             last_report_poll: Instant::now(),
+            last_input_time: Instant::now(),
             layout_areas: LayoutAreas::default(),
             config,
         }
@@ -220,10 +222,14 @@ impl TowerApp {
     }
 
     async fn poll_status(&mut self) -> Result<()> {
-        // Skip polling when user is actively typing to avoid input lag
-        if self.focus == FocusArea::TaskInput {
+        // Skip polling if user is actively typing (within 500ms of last input)
+        const INPUT_PAUSE_DURATION: Duration = Duration::from_millis(500);
+        if self.focus == FocusArea::TaskInput
+            && self.last_input_time.elapsed() < INPUT_PAUSE_DURATION
+        {
             return Ok(());
         }
+
         const STATUS_POLL_INTERVAL: Duration = Duration::from_millis(500);
         if self.last_status_poll.elapsed() < STATUS_POLL_INTERVAL {
             return Ok(());
@@ -233,10 +239,14 @@ impl TowerApp {
     }
 
     async fn poll_reports(&mut self) -> Result<()> {
-        // Skip polling when user is actively typing to avoid input lag
-        if self.focus == FocusArea::TaskInput {
+        // Skip polling if user is actively typing (within 500ms of last input)
+        const INPUT_PAUSE_DURATION: Duration = Duration::from_millis(500);
+        if self.focus == FocusArea::TaskInput
+            && self.last_input_time.elapsed() < INPUT_PAUSE_DURATION
+        {
             return Ok(());
         }
+
         const REPORT_POLL_INTERVAL: Duration = Duration::from_millis(1000);
         if self.last_report_poll.elapsed() < REPORT_POLL_INTERVAL {
             return Ok(());
@@ -378,13 +388,14 @@ impl TowerApp {
                     match key.code {
                         KeyCode::Char('p') => self.status_display.prev(),
                         KeyCode::Char('n') => self.status_display.next(),
+                        KeyCode::Char('o') => self.open_role_selector(),
                         _ => {}
                     }
                 }
 
                 if key.code == KeyCode::Char('r')
                     && key.modifiers.contains(KeyModifiers::CONTROL)
-                    && self.focus == FocusArea::ExpertList
+                    && (self.focus == FocusArea::ExpertList || self.focus == FocusArea::TaskInput)
                 {
                     self.reset_expert().await?;
                 }
@@ -413,19 +424,28 @@ impl TowerApp {
                     && !modifiers.contains(KeyModifiers::ALT)
                 {
                     self.task_input.insert_char(c);
+                    self.last_input_time = Instant::now();
                 }
             }
-            KeyCode::Backspace => self.task_input.delete_char(),
-            KeyCode::Delete => self.task_input.delete_forward(),
+            KeyCode::Backspace => {
+                self.task_input.delete_char();
+                self.last_input_time = Instant::now();
+            }
+            KeyCode::Delete => {
+                self.task_input.delete_forward();
+                self.last_input_time = Instant::now();
+            }
             KeyCode::Left => self.task_input.move_cursor_left(),
             KeyCode::Right => self.task_input.move_cursor_right(),
             KeyCode::Home => self.task_input.move_cursor_start(),
             KeyCode::End => self.task_input.move_cursor_end(),
             KeyCode::Enter => {
                 self.task_input.insert_newline();
+                self.last_input_time = Instant::now();
             }
             KeyCode::Esc => {
                 self.task_input.clear();
+                self.last_input_time = Instant::now();
             }
             _ => {}
         }
