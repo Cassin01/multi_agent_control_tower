@@ -220,35 +220,37 @@ impl TowerApp {
     }
 
     async fn poll_status(&mut self) -> Result<()> {
-        // Skip polling if user is actively typing (within 500ms of last input)
+        // Skip polling if user is actively interacting (within 500ms of last input)
         const INPUT_PAUSE_DURATION: Duration = Duration::from_millis(500);
-        if self.focus == FocusArea::TaskInput
-            && self.last_input_time.elapsed() < INPUT_PAUSE_DURATION
-        {
+        if self.last_input_time.elapsed() < INPUT_PAUSE_DURATION {
+            tracing::trace!("poll_status: skipped (input debounce)");
             return Ok(());
         }
 
         const STATUS_POLL_INTERVAL: Duration = Duration::from_millis(500);
         if self.last_status_poll.elapsed() < STATUS_POLL_INTERVAL {
+            tracing::trace!("poll_status: skipped (interval)");
             return Ok(());
         }
+        tracing::debug!("poll_status: executing refresh_status");
         self.last_status_poll = Instant::now();
         self.refresh_status().await
     }
 
     async fn poll_reports(&mut self) -> Result<()> {
-        // Skip polling if user is actively typing (within 500ms of last input)
+        // Skip polling if user is actively interacting (within 500ms of last input)
         const INPUT_PAUSE_DURATION: Duration = Duration::from_millis(500);
-        if self.focus == FocusArea::TaskInput
-            && self.last_input_time.elapsed() < INPUT_PAUSE_DURATION
-        {
+        if self.last_input_time.elapsed() < INPUT_PAUSE_DURATION {
+            tracing::trace!("poll_reports: skipped (input debounce)");
             return Ok(());
         }
 
         const REPORT_POLL_INTERVAL: Duration = Duration::from_millis(1000);
         if self.last_report_poll.elapsed() < REPORT_POLL_INTERVAL {
+            tracing::trace!("poll_reports: skipped (interval)");
             return Ok(());
         }
+        tracing::debug!("poll_reports: executing refresh_reports");
         self.last_report_poll = Instant::now();
         self.refresh_reports().await
     }
@@ -285,9 +287,12 @@ impl TowerApp {
     }
 
     pub async fn handle_events(&mut self) -> Result<()> {
-        if event::poll(Duration::from_millis(8))? {
+        if event::poll(Duration::from_millis(1))? {
             match event::read()? {
                 Event::Mouse(mouse) => {
+                    // Update input time for mouse events to pause polling during interaction
+                    self.last_input_time = Instant::now();
+
                     if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
                         if !self.help_modal.is_visible()
                             && self.report_display.view_mode() != ViewMode::Detail
@@ -301,6 +306,10 @@ impl TowerApp {
                 if key.kind != KeyEventKind::Press {
                     return Ok(());
                 }
+
+                // Update input time for all key presses to pause polling during interaction
+                self.last_input_time = Instant::now();
+                tracing::debug!("Key pressed: {:?}, last_input_time updated", key.code);
 
                 self.clear_message();
 
@@ -700,10 +709,35 @@ impl TowerApp {
         self.refresh_reports().await?;
 
         while self.is_running() {
+            let loop_start = Instant::now();
+
+            let draw_start = Instant::now();
             terminal.draw(|frame| UI::render(frame, self))?;
+            let draw_elapsed = draw_start.elapsed();
+
+            let events_start = Instant::now();
             self.handle_events().await?;
+            let events_elapsed = events_start.elapsed();
+
+            let poll_status_start = Instant::now();
             self.poll_status().await?;
+            let poll_status_elapsed = poll_status_start.elapsed();
+
+            let poll_reports_start = Instant::now();
             self.poll_reports().await?;
+            let poll_reports_elapsed = poll_reports_start.elapsed();
+
+            let loop_elapsed = loop_start.elapsed();
+            if loop_elapsed.as_millis() > 20 {
+                tracing::debug!(
+                    "Loop: {}ms (draw: {}ms, events: {}ms, poll_status: {}ms, poll_reports: {}ms)",
+                    loop_elapsed.as_millis(),
+                    draw_elapsed.as_millis(),
+                    events_elapsed.as_millis(),
+                    poll_status_elapsed.as_millis(),
+                    poll_reports_elapsed.as_millis()
+                );
+            }
         }
 
         UI::restore_terminal()?;

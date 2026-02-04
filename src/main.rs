@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
+use tracing_subscriber::fmt::format::FmtSpan;
 
 mod cli;
 mod commands;
@@ -16,7 +17,13 @@ use cli::{Cli, Commands};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt::init();
+    // Log to file for debugging TUI
+    let file_appender = tracing_appender::rolling::never("/tmp", "macot-debug.log");
+    tracing_subscriber::fmt()
+        .with_writer(file_appender)
+        .with_span_events(FmtSpan::CLOSE)
+        .with_max_level(tracing::Level::DEBUG)
+        .init();
 
     let cli = Cli::parse();
 
