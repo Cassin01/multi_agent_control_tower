@@ -1,3 +1,3 @@
 mod loader;
 
-pub use loader::Config;
+pub use loader::{Config, ExpertConfig};
