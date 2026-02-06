@@ -95,6 +95,11 @@ impl StatusDisplay {
         self.captures.len()
     }
 
+    /// Get a capture by expert ID
+    pub fn get_capture(&self, expert_id: u32) -> Option<&PaneCapture> {
+        self.captures.iter().find(|c| c.expert_id == expert_id)
+    }
+
     pub fn render(&mut self, frame: &mut Frame, area: Rect) {
         let items: Vec<ListItem> = self
             .captures

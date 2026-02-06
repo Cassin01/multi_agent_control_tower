@@ -5,14 +5,19 @@ use std::time::{Duration, Instant};
 
 use crate::config::Config;
 use crate::context::{AvailableRoles, ContextStore, Decision, ExpertContext, SessionExpertRoles};
+use crate::experts::ExpertRegistry;
 use crate::instructions::load_instruction_with_template;
-use crate::models::{EffortConfig, Task};
-use crate::queue::QueueManager;
-use crate::session::{CaptureManager, ClaudeManager, TmuxManager};
+use crate::models::{EffortConfig, ExpertInfo, ExpertState, Role, Task};
+use crate::queue::{MessageRouter, QueueManager};
+use crate::session::{AgentStatus, CaptureManager, ClaudeManager, TmuxManager};
+
+/// Message polling interval for the messaging system (1 second)
+const MESSAGE_POLL_INTERVAL: Duration = Duration::from_millis(1000);
 
 use super::ui::UI;
 use super::widgets::{
-    EffortSelector, HelpModal, ReportDisplay, RoleSelector, StatusDisplay, TaskInput, ViewMode,
+    EffortSelector, HelpModal, MessagingDisplay, ReportDisplay, RoleSelector, StatusDisplay,
+    TaskInput, ViewMode,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,12 +45,17 @@ pub struct TowerApp {
     queue: QueueManager,
     context_store: ContextStore,
 
+    // Messaging system components
+    message_router: Option<MessageRouter>,
+    expert_registry: ExpertRegistry,
+
     status_display: StatusDisplay,
     task_input: TaskInput,
     effort_selector: EffortSelector,
     report_display: ReportDisplay,
     help_modal: HelpModal,
     role_selector: RoleSelector,
+    messaging_display: MessagingDisplay,
 
     session_roles: SessionExpertRoles,
     available_roles: AvailableRoles,
@@ -55,6 +65,7 @@ pub struct TowerApp {
     message: Option<String>,
     last_status_poll: Instant,
     last_report_poll: Instant,
+    last_message_poll: Instant,
     last_input_time: Instant,
     layout_areas: LayoutAreas,
 }
@@ -66,6 +77,7 @@ impl TowerApp {
         let queue_manager = QueueManager::new(config.queue_path.clone());
         let context_store = ContextStore::new(config.queue_path.clone());
         let claude_manager = ClaudeManager::new(session_name.clone(), context_store.clone());
+        let tmux_manager = TmuxManager::new(session_name.clone());
 
         let available_roles =
             match AvailableRoles::from_instructions_path(&config.role_instructions_path) {
@@ -76,12 +88,48 @@ impl TowerApp {
                 }
             };
 
+        // Initialize expert registry with configured experts
+        // Note: Expert IDs start from 1 to avoid auto-assignment issues in registry
+        // (registry treats ID 0 as "auto-assign")
+        let mut expert_registry = ExpertRegistry::new();
+        for (i, expert_config) in config.experts.iter().enumerate() {
+            let role_name = if expert_config.role.is_empty() {
+                "general".to_string()
+            } else {
+                expert_config.role.clone()
+            };
+            let expert_info = ExpertInfo::new(
+                (i + 1) as u32, // IDs start from 1
+                expert_config.name.clone(),
+                Role::specialist(role_name),
+                session_name.clone(),
+                i.to_string(), // pane index still starts from 0
+            );
+            if let Err(e) = expert_registry.register_expert(expert_info) {
+                tracing::warn!("Failed to register expert {}: {}", i, e);
+            }
+        }
+
+        // Create message queue manager for messaging system
+        let message_queue_manager = QueueManager::new(config.queue_path.clone());
+
+        // Create message router with dependencies
+        let message_router = MessageRouter::new(
+            message_queue_manager,
+            expert_registry.clone(),
+            tmux_manager.clone(),
+        );
+
         Self {
-            tmux: TmuxManager::new(session_name.clone()),
+            tmux: tmux_manager,
             capture: CaptureManager::new(session_name),
             claude: claude_manager,
             queue: queue_manager,
             context_store,
+
+            // Messaging system
+            message_router: Some(message_router),
+            expert_registry,
 
             status_display: StatusDisplay::new(),
             task_input: TaskInput::new(),
@@ -89,6 +137,7 @@ impl TowerApp {
             report_display: ReportDisplay::new(),
             help_modal: HelpModal::new(),
             role_selector: RoleSelector::new(),
+            messaging_display: MessagingDisplay::new(),
 
             session_roles: SessionExpertRoles::new(session_hash),
             available_roles,
@@ -98,6 +147,7 @@ impl TowerApp {
             message: None,
             last_status_poll: Instant::now(),
             last_report_poll: Instant::now(),
+            last_message_poll: Instant::now(),
             last_input_time: Instant::now(),
             layout_areas: LayoutAreas::default(),
             config,
@@ -253,6 +303,92 @@ impl TowerApp {
         tracing::debug!("poll_reports: executing refresh_reports");
         self.last_report_poll = Instant::now();
         self.refresh_reports().await
+    }
+
+    /// Poll and process the inter-expert message queue
+    ///
+    /// This method:
+    /// 1. Updates expert registry states from capture status
+    /// 2. Processes the outbox for new messages
+    /// 3. Processes the queue for message delivery
+    /// 4. Updates the messaging display with current queue state
+    async fn poll_messages(&mut self) -> Result<()> {
+        // Skip polling if user is actively interacting (within 500ms of last input)
+        const INPUT_PAUSE_DURATION: Duration = Duration::from_millis(500);
+        if self.last_input_time.elapsed() < INPUT_PAUSE_DURATION {
+            tracing::trace!("poll_messages: skipped (input debounce)");
+            return Ok(());
+        }
+
+        if self.last_message_poll.elapsed() < MESSAGE_POLL_INTERVAL {
+            tracing::trace!("poll_messages: skipped (interval)");
+            return Ok(());
+        }
+        self.last_message_poll = Instant::now();
+
+        if let Some(ref mut router) = self.message_router {
+            // Update expert states from current capture status
+            // Note: status_display uses config indices (0,1,2,3) while registry uses IDs (1,2,3,4)
+            for (i, _) in self.config.experts.iter().enumerate() {
+                let config_idx = i as u32;
+                let registry_id = (i + 1) as u32; // Registry IDs start from 1 (see TowerApp::new)
+                if let Some(capture) = self.status_display.get_capture(config_idx) {
+                    let expert_state = match capture.status {
+                        AgentStatus::Idle => ExpertState::Idle,
+                        AgentStatus::Executing | AgentStatus::Thinking => ExpertState::Busy,
+                        AgentStatus::Error | AgentStatus::Unknown => ExpertState::Offline,
+                    };
+                    if let Err(e) = router.expert_registry_mut().update_expert_state(registry_id, expert_state) {
+                        tracing::warn!("Failed to update expert {} state: {}", registry_id, e);
+                    }
+                }
+            }
+
+            // Process outbox for new messages
+            if let Err(e) = router.process_outbox().await {
+                tracing::warn!("Failed to process outbox: {}", e);
+            }
+
+            // Process the queue
+            match router.process_queue().await {
+                Ok(stats) => {
+                    if stats.messages_delivered > 0 || stats.messages_failed > 0 || stats.messages_expired > 0 {
+                        tracing::info!(
+                            "Message queue processed: {} delivered, {} failed, {} expired",
+                            stats.messages_delivered,
+                            stats.messages_failed,
+                            stats.messages_expired
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to process message queue: {}", e);
+                }
+            }
+
+            // Update messaging display with current queue state
+            match router.queue_manager().get_pending_messages().await {
+                Ok(messages) => {
+                    self.messaging_display.set_messages(messages);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to get pending messages for display: {}", e);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Get the messaging display widget
+    pub fn messaging_display(&mut self) -> &mut MessagingDisplay {
+        &mut self.messaging_display
+    }
+
+    /// Get the expert registry
+    #[allow(dead_code)]
+    pub fn expert_registry(&self) -> &ExpertRegistry {
+        &self.expert_registry
     }
 
     fn update_focus(&mut self) {
@@ -727,15 +863,20 @@ impl TowerApp {
             self.poll_reports().await?;
             let poll_reports_elapsed = poll_reports_start.elapsed();
 
+            let poll_messages_start = Instant::now();
+            self.poll_messages().await?;
+            let poll_messages_elapsed = poll_messages_start.elapsed();
+
             let loop_elapsed = loop_start.elapsed();
             if loop_elapsed.as_millis() > 20 {
                 tracing::debug!(
-                    "Loop: {}ms (draw: {}ms, events: {}ms, poll_status: {}ms, poll_reports: {}ms)",
+                    "Loop: {}ms (draw: {}ms, events: {}ms, poll_status: {}ms, poll_reports: {}ms, poll_messages: {}ms)",
                     loop_elapsed.as_millis(),
                     draw_elapsed.as_millis(),
                     events_elapsed.as_millis(),
                     poll_status_elapsed.as_millis(),
-                    poll_reports_elapsed.as_millis()
+                    poll_reports_elapsed.as_millis(),
+                    poll_messages_elapsed.as_millis()
                 );
             }
         }
@@ -870,5 +1011,163 @@ mod tests {
 
         app.handle_mouse_click(50, 30);
         assert_eq!(app.focus(), FocusArea::ReportList);
+    }
+
+    #[test]
+    fn tower_app_initializes_messaging_system() {
+        let app = TowerApp::new(create_test_config());
+
+        // Verify messaging system components are initialized
+        assert!(app.message_router.is_some());
+        assert!(app.expert_registry.len() > 0 || app.config.experts.is_empty());
+    }
+
+    #[test]
+    fn tower_app_expert_registry_matches_config() {
+        let config = create_test_config();
+        let expected_experts = config.experts.len();
+        let app = TowerApp::new(config);
+
+        // Verify expert registry has correct number of experts
+        assert_eq!(app.expert_registry.len(), expected_experts);
+    }
+}
+
+#[cfg(test)]
+mod property_tests {
+    use super::*;
+    use proptest::prelude::*;
+    use std::path::PathBuf;
+
+    fn arbitrary_num_experts() -> impl Strategy<Value = usize> {
+        1usize..10
+    }
+
+    fn create_config_with_experts(num_experts: usize) -> Config {
+        let mut config = Config::default().with_project_path(PathBuf::from("/tmp/test"));
+        config.experts = (0..num_experts)
+            .map(|i| crate::config::ExpertConfig {
+                name: format!("expert{}", i),
+                color: "white".to_string(),
+                role: format!("role{}", i % 4),
+            })
+            .collect();
+        config
+    }
+
+    // Feature: inter-expert-messaging, Property 13: System Initialization Consistency
+    // **Validates: Requirements 11.5, 4.2**
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(100))]
+
+        #[test]
+        fn system_initialization_consistency(
+            num_experts in arbitrary_num_experts()
+        ) {
+            let config = create_config_with_experts(num_experts);
+            let app = TowerApp::new(config.clone());
+
+            // Requirement 11.5: System should initialize with correct components
+            // Verify message router is initialized
+            assert!(
+                app.message_router.is_some(),
+                "Message router should be initialized"
+            );
+
+            // Verify expert registry is initialized with correct count
+            assert_eq!(
+                app.expert_registry.len(),
+                num_experts,
+                "Expert registry should have {} experts, but has {}",
+                num_experts,
+                app.expert_registry.len()
+            );
+
+            // Verify each expert is registered correctly by name
+            // Note: Expert IDs may not be sequential starting from 0 due to registry auto-assignment
+            for expert_config in &config.experts {
+                let expert_id = app.expert_registry.find_by_name(&expert_config.name);
+                assert!(
+                    expert_id.is_some(),
+                    "Expert '{}' should be registered",
+                    expert_config.name
+                );
+
+                let expert = app.expert_registry.get_expert(expert_id.unwrap());
+                assert!(
+                    expert.is_some(),
+                    "Expert '{}' should have valid info",
+                    expert_config.name
+                );
+
+                let expert = expert.unwrap();
+                assert_eq!(
+                    expert.name,
+                    expert_config.name,
+                    "Expert name should match config"
+                );
+            }
+
+            // Verify messaging display is initialized
+            assert_eq!(
+                app.messaging_display.total_count(),
+                0,
+                "Messaging display should start empty"
+            );
+
+            // Requirement 4.2: Queue directory structure should be consistent
+            // (verified by successful initialization without errors)
+        }
+
+        #[test]
+        fn system_initialization_expert_state_consistency(
+            num_experts in arbitrary_num_experts()
+        ) {
+            let config = create_config_with_experts(num_experts);
+            let app = TowerApp::new(config.clone());
+
+            // All experts should start in Offline state
+            // Get all expert IDs from the registry
+            let all_experts = app.expert_registry.get_all_experts();
+            assert_eq!(
+                all_experts.len(),
+                num_experts,
+                "Should have {} experts registered",
+                num_experts
+            );
+
+            for expert in all_experts {
+                let is_idle = app.expert_registry.is_expert_idle(expert.id);
+
+                // Initially experts are offline (not idle)
+                assert_eq!(
+                    is_idle,
+                    Some(false),
+                    "Expert '{}' (id={}) should not be idle initially",
+                    expert.name,
+                    expert.id
+                );
+            }
+        }
+
+        #[test]
+        fn system_initialization_message_router_consistency(
+            num_experts in arbitrary_num_experts()
+        ) {
+            let config = create_config_with_experts(num_experts);
+            let app = TowerApp::new(config);
+
+            // Verify message router has access to expert registry
+            if let Some(ref router) = app.message_router {
+                // Router's expert registry should match app's expert registry
+                assert_eq!(
+                    router.expert_registry().len(),
+                    app.expert_registry.len(),
+                    "Router's expert registry should match app's"
+                );
+            } else {
+                panic!("Message router should be initialized");
+            }
+        }
     }
 }

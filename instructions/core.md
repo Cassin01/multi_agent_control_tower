@@ -68,6 +68,74 @@ Tasks may specify an effort level that indicates expected scope:
 
 Respect these boundaries unless absolutely necessary to exceed them.
 
+## Inter-Expert Messaging
+
+You can send messages to other experts through the messaging system. Messages are delivered asynchronously when the recipient becomes idle.
+
+### Sending a Message
+
+Write a YAML file to `.macot/messages/outbox/` with the following format:
+
+```yaml
+message_id: "msg-YYYYMMDD-HHMMSSmmm"  # Unique ID with timestamp
+from_expert_id: 1                      # Your expert ID
+to:
+  expert_name: "Alyosha"               # Target by name, ID, or role
+message_type: query                    # query | response | notify | delegate
+priority: normal                       # low | normal | high
+created_at: "2024-01-15T10:30:00Z"    # ISO 8601 timestamp
+content:
+  subject: "Brief subject line"
+  body: |
+    Detailed message content.
+reply_to: null                         # Set to original message_id for responses
+```
+
+### Recipient Targeting
+
+Three ways to specify the recipient:
+
+```yaml
+# By expert name (case-insensitive)
+to:
+  expert_name: "Alyosha"
+
+# By expert ID
+to:
+  expert_id: 0
+
+# By role (any idle expert with that role)
+to:
+  role: "backend"
+```
+
+### Message Types
+
+| Type | Purpose |
+|------|---------|
+| `query` | Request information, expect a response |
+| `response` | Reply to a previous query (set `reply_to`) |
+| `notify` | Send information, no response expected |
+| `delegate` | Hand off a task to another expert |
+
+### Example: Query Message
+
+```yaml
+message_id: "msg-20240115-103000001"
+from_expert_id: 1
+to:
+  expert_name: "Alyosha"
+message_type: query
+priority: normal
+created_at: "2024-01-15T10:30:00Z"
+content:
+  subject: "API Schema Question"
+  body: |
+    What format should we use for date fields in the API?
+    Options: ISO 8601 or Unix timestamp?
+reply_to: null
+```
+
 ## Best Practices
 
 1. Always read the full task description before starting

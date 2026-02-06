@@ -2,6 +2,7 @@ pub mod cli;
 pub mod commands;
 pub mod config;
 pub mod context;
+pub mod experts;
 pub mod instructions;
 pub mod models;
 pub mod queue;

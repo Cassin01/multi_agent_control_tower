@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc ade6d5a24eebe9777c42aa099721ae2ae3159349171fd181010c611b8c284b8a # shrinks to experts = [ExpertInfo { id: 0, name: "-", role: Analyst, tmux_session: "A", tmux_pane: "0", state: Offline, last_activity: 2026-02-04T16:55:40.248228Z }, ExpertInfo { id: 0, name: "-", role: Analyst, tmux_session: "a", tmux_pane: "0", state: Offline, last_activity: 2026-02-04T16:55:40.248229Z }], state_changes = [(0, Idle)]
