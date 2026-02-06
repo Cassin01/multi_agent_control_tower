@@ -136,8 +136,6 @@ content:
 reply_to: null
 ```
 
-For detailed documentation, see `instructions/messaging.md`.
-
 ## Best Practices
 
 1. Always read the full task description before starting
