@@ -138,6 +138,8 @@ async fn reset_expert(
         &config.core_instructions_path,
         &config.role_instructions_path,
         &instruction_role,
+        expert_id,
+        &expert_name,
     )?;
     if !instruction_result.content.is_empty() {
         claude.send_instruction(expert_id, &instruction_result.content).await?;

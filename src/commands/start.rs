@@ -80,7 +80,7 @@ pub async fn execute(args: Args) -> Result<()> {
         let session_hash = config.session_hash();
         let working_dir = project_path.to_str().unwrap().to_string();
         let timeout = config.timeouts.agent_ready;
-        let instruction = load_instruction(&config, &expert.name)?;
+        let instruction = load_instruction(&config, expert_id, &expert.name)?;
 
         tasks.spawn(async move {
             tmux.set_pane_title(expert_id, &expert_name).await?;
@@ -127,10 +127,12 @@ pub async fn execute(args: Args) -> Result<()> {
     Ok(())
 }
 
-fn load_instruction(config: &Config, expert_name: &str) -> Result<String> {
+fn load_instruction(config: &Config, expert_id: u32, expert_name: &str) -> Result<String> {
     let result = load_instruction_with_template(
         &config.core_instructions_path,
         &config.role_instructions_path,
+        expert_name,
+        expert_id,
         expert_name,
     )?;
     // Note: In start command, we don't show toast for general fallback
