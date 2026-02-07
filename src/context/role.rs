@@ -201,6 +201,7 @@ mod tests {
         assert!(roles.find_by_name("architect").is_some());
         assert!(roles.find_by_name("backend").is_some());
         assert!(roles.find_by_name("frontend").is_some());
+        assert!(roles.find_by_name("planner").is_some());
         assert!(roles.find_by_name("tester").is_some());
         assert!(roles.find_by_name("general").is_some());
     }
@@ -245,6 +246,7 @@ mod tests {
         assert!(names.contains(&"architect"));
         assert!(names.contains(&"frontend"));
         assert!(names.contains(&"backend"));
+        assert!(names.contains(&"planner"));
         assert!(names.contains(&"tester"));
         assert!(names.contains(&"general"));
     }
