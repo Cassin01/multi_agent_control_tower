@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use thiserror::Error;
 use tokio::fs;
 
-use crate::models::{Message, MessageId, QueuedMessage, Report, Task};
+use crate::models::{Message, MessageId, QueuedMessage, Report};
 
 /// Comprehensive error types for message queue operations
 ///
@@ -103,10 +103,6 @@ impl QueueManager {
         }
     }
 
-    fn tasks_path(&self) -> PathBuf {
-        self.base_path.join("tasks")
-    }
-
     fn reports_path(&self) -> PathBuf {
         self.base_path.join("reports")
     }
@@ -123,10 +119,6 @@ impl QueueManager {
         self.messages_path().join("outbox")
     }
 
-    fn task_file(&self, expert_id: u32) -> PathBuf {
-        self.tasks_path().join(format!("expert{}.yaml", expert_id))
-    }
-
     #[allow(dead_code)]
     fn report_file(&self, expert_id: u32) -> PathBuf {
         self.reports_path()
@@ -138,7 +130,6 @@ impl QueueManager {
     }
 
     pub async fn init(&self) -> Result<()> {
-        fs::create_dir_all(self.tasks_path()).await?;
         fs::create_dir_all(self.reports_path()).await?;
         self.init_message_queue().await?;
         Ok(())
@@ -148,39 +139,6 @@ impl QueueManager {
     pub async fn init_message_queue(&self) -> Result<()> {
         fs::create_dir_all(self.queue_path()).await?;
         fs::create_dir_all(self.outbox_path()).await?;
-        Ok(())
-    }
-
-    pub async fn write_task(&self, task: &Task) -> Result<()> {
-        let path = self.task_file(task.expert_id);
-        let content = serde_yaml::to_string(task)?;
-        fs::write(&path, content)
-            .await
-            .context("Failed to write task file")?;
-        Ok(())
-    }
-
-    #[allow(dead_code)]
-    pub async fn read_task(&self, expert_id: u32) -> Result<Option<Task>> {
-        let path = self.task_file(expert_id);
-
-        if !path.exists() {
-            return Ok(None);
-        }
-
-        let content = fs::read_to_string(&path)
-            .await
-            .context("Failed to read task file")?;
-        let task: Task = serde_yaml::from_str(&content)?;
-        Ok(Some(task))
-    }
-
-    #[allow(dead_code)]
-    pub async fn clear_task(&self, expert_id: u32) -> Result<()> {
-        let path = self.task_file(expert_id);
-        if path.exists() {
-            fs::remove_file(&path).await?;
-        }
         Ok(())
     }
 
@@ -216,45 +174,6 @@ impl QueueManager {
             fs::remove_file(&path).await?;
         }
         Ok(())
-    }
-
-    #[allow(dead_code)]
-    pub async fn list_pending_tasks(&self) -> Result<Vec<Task>> {
-        let mut tasks = Vec::new();
-        let tasks_path = self.tasks_path();
-
-        if !tasks_path.exists() {
-            return Ok(tasks);
-        }
-
-        let mut entries = fs::read_dir(&tasks_path).await?;
-        while let Some(entry) = entries.next_entry().await? {
-            let path = entry.path();
-            if path.extension().is_some_and(|e| e == "yaml") {
-                match fs::read_to_string(&path).await {
-                    Ok(content) => match serde_yaml::from_str::<Task>(&content) {
-                        Ok(task) => tasks.push(task),
-                        Err(e) => {
-                            tracing::error!(
-                                "Failed to parse task file {}: {}",
-                                path.display(),
-                                e
-                            );
-                        }
-                    },
-                    Err(e) => {
-                        tracing::error!(
-                            "Failed to read task file {}: {}",
-                            path.display(),
-                            e
-                        );
-                    }
-                }
-            }
-        }
-
-        tasks.sort_by(|a, b| a.created_at.cmp(&b.created_at));
-        Ok(tasks)
     }
 
     pub async fn list_reports(&self) -> Result<Vec<Report>> {
@@ -561,9 +480,6 @@ impl QueueManager {
 
     #[allow(dead_code)]
     pub async fn cleanup(&self) -> Result<()> {
-        if self.tasks_path().exists() {
-            fs::remove_dir_all(self.tasks_path()).await?;
-        }
         if self.reports_path().exists() {
             fs::remove_dir_all(self.reports_path()).await?;
         }
@@ -591,42 +507,7 @@ mod tests {
     #[tokio::test]
     async fn queue_manager_init_creates_directories() {
         let (manager, _temp) = create_test_manager().await;
-        assert!(manager.tasks_path().exists());
         assert!(manager.reports_path().exists());
-    }
-
-    #[tokio::test]
-    async fn queue_manager_write_and_read_task() {
-        let (manager, _temp) = create_test_manager().await;
-
-        let task = Task::new(0, "architect".to_string(), "Review code".to_string());
-        manager.write_task(&task).await.unwrap();
-
-        let loaded = manager.read_task(0).await.unwrap();
-        assert!(loaded.is_some());
-
-        let loaded = loaded.unwrap();
-        assert_eq!(loaded.expert_id, 0);
-        assert_eq!(loaded.description, "Review code");
-    }
-
-    #[tokio::test]
-    async fn queue_manager_read_task_returns_none_when_missing() {
-        let (manager, _temp) = create_test_manager().await;
-        let loaded = manager.read_task(99).await.unwrap();
-        assert!(loaded.is_none());
-    }
-
-    #[tokio::test]
-    async fn queue_manager_clear_task_removes_file() {
-        let (manager, _temp) = create_test_manager().await;
-
-        let task = Task::new(0, "architect".to_string(), "Test".to_string());
-        manager.write_task(&task).await.unwrap();
-        assert!(manager.read_task(0).await.unwrap().is_some());
-
-        manager.clear_task(0).await.unwrap();
-        assert!(manager.read_task(0).await.unwrap().is_none());
     }
 
     #[tokio::test]
@@ -643,20 +524,6 @@ mod tests {
         let loaded = loaded.unwrap();
         assert_eq!(loaded.task_id, "task-001");
         assert_eq!(loaded.status, TaskStatus::Done);
-    }
-
-    #[tokio::test]
-    async fn queue_manager_list_pending_tasks_returns_all() {
-        let (manager, _temp) = create_test_manager().await;
-
-        let task1 = Task::new(0, "architect".to_string(), "Task 1".to_string());
-        let task2 = Task::new(1, "frontend".to_string(), "Task 2".to_string());
-
-        manager.write_task(&task1).await.unwrap();
-        manager.write_task(&task2).await.unwrap();
-
-        let tasks = manager.list_pending_tasks().await.unwrap();
-        assert_eq!(tasks.len(), 2);
     }
 
     #[tokio::test]
@@ -677,13 +544,13 @@ mod tests {
     async fn queue_manager_cleanup_removes_all() {
         let (manager, _temp) = create_test_manager().await;
 
-        let task = Task::new(0, "architect".to_string(), "Test".to_string());
-        manager.write_task(&task).await.unwrap();
+        let report = Report::new("task-001".to_string(), 0, "architect".to_string());
+        manager.write_report(&report).await.unwrap();
 
         manager.cleanup().await.unwrap();
 
-        let tasks = manager.list_pending_tasks().await.unwrap();
-        assert!(tasks.is_empty());
+        let reports = manager.list_reports().await.unwrap();
+        assert!(reports.is_empty());
     }
 
     // Message queue tests
