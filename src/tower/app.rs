@@ -734,10 +734,13 @@ impl TowerApp {
 
         self.claude.send_clear(expert_id).await?;
 
+        let expert_name = self.config.get_expert_name(expert_id);
         let instruction_result = load_instruction_with_template(
             &self.config.core_instructions_path,
             &self.config.role_instructions_path,
             new_role,
+            expert_id,
+            &expert_name,
         )?;
         if !instruction_result.content.is_empty() {
             self.claude
@@ -815,6 +818,8 @@ impl TowerApp {
             &self.config.core_instructions_path,
             &self.config.role_instructions_path,
             &instruction_role,
+            expert_id,
+            &expert_name,
         )?;
         if !instruction_result.content.is_empty() {
             self.claude

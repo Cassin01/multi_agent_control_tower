@@ -13,8 +13,8 @@ pub struct InstructionResult {
     pub used_general_fallback: bool,
 }
 
-/// Render a template file with the yaml_schema variable.
-pub fn render_template(template_content: &str) -> Result<String> {
+/// Render a template file with the yaml_schema, expert_id, and expert_name variables.
+pub fn render_template(template_content: &str, expert_id: u32, expert_name: &str) -> Result<String> {
     let mut env = Environment::new();
     env.add_template("core", template_content)
         .context("Failed to add template")?;
@@ -24,7 +24,9 @@ pub fn render_template(template_content: &str) -> Result<String> {
     let yaml_schema = generate_yaml_schema();
     let rendered = template
         .render(minijinja::context! {
-            yaml_schema => yaml_schema
+            yaml_schema => yaml_schema,
+            expert_id => expert_id,
+            expert_name => expert_name,
         })
         .context("Failed to render template")?;
 
@@ -45,6 +47,8 @@ pub fn load_instruction_with_template(
     core_path: &Path,
     role_instructions_path: &Path,
     role_name: &str,
+    expert_id: u32,
+    expert_name: &str,
 ) -> Result<InstructionResult> {
     let mut content = String::new();
 
@@ -56,7 +60,7 @@ pub fn load_instruction_with_template(
     if core_template_path.exists() {
         let template_content =
             std::fs::read_to_string(&core_template_path).context("Failed to read core template")?;
-        content.push_str(&render_template(&template_content)?);
+        content.push_str(&render_template(&template_content, expert_id, expert_name)?);
         content.push_str("\n\n");
     } else if core_legacy_path.exists() {
         content.push_str(&std::fs::read_to_string(&core_legacy_path)?);
@@ -116,7 +120,7 @@ mod tests {
     #[test]
     fn render_template_replaces_yaml_schema() {
         let template = "## Report Format\n\n```yaml\n{{ yaml_schema }}```\n";
-        let rendered = render_template(template).unwrap();
+        let rendered = render_template(template, 0, "test").unwrap();
 
         assert!(rendered.contains("task_id:"));
         assert!(rendered.contains("expert_id:"));
@@ -127,7 +131,7 @@ mod tests {
     #[test]
     fn render_template_preserves_surrounding_text() {
         let template = "# Header\n\nSome text before.\n\n{{ yaml_schema }}\n\nSome text after.";
-        let rendered = render_template(template).unwrap();
+        let rendered = render_template(template, 0, "test").unwrap();
 
         assert!(rendered.contains("# Header"));
         assert!(rendered.contains("Some text before."));
@@ -148,7 +152,7 @@ mod tests {
 **Critical Notes**:
 - `status` must be exactly `done`
 "#;
-        let rendered = render_template(template).unwrap();
+        let rendered = render_template(template, 0, "test").unwrap();
 
         assert!(rendered.contains("# Multi-Agent Control Tower"));
         assert!(rendered.contains("task_id:"));
@@ -164,6 +168,8 @@ mod tests {
             core_dir.path(),
             role_dir.path(),
             "architect",
+            0,
+            "test",
         )
         .unwrap();
 
@@ -187,6 +193,8 @@ mod tests {
             core_dir.path(),
             role_dir.path(),
             "architect",
+            0,
+            "test",
         )
         .unwrap();
 
@@ -204,6 +212,8 @@ mod tests {
             core_dir.path(),
             role_dir.path(),
             "unknown-role",
+            0,
+            "test",
         )
         .unwrap();
 
@@ -223,9 +233,21 @@ mod tests {
             core_dir.path(),
             role_dir.path(),
             "architect",
+            0,
+            "test",
         )
         .unwrap();
 
         assert!(result.content.contains("Core Instructions"));
+    }
+
+    #[test]
+    fn render_template_replaces_expert_identity() {
+        let template = "You are **{{ expert_name }}** (Expert ID: {{ expert_id }}).";
+        let rendered = render_template(template, 3, "Alyosha").unwrap();
+
+        assert!(rendered.contains("You are **Alyosha** (Expert ID: 3)."));
+        assert!(!rendered.contains("{{ expert_name }}"));
+        assert!(!rendered.contains("{{ expert_id }}"));
     }
 }
