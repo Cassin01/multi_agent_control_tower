@@ -642,8 +642,6 @@ impl TowerApp {
         )
         .with_effort(EffortConfig::from_level(self.effort_selector.selected()));
 
-        self.queue.write_task(&task).await?;
-
         let decision = Decision::new(
             expert_id,
             format!("Task Assignment to {}", expert_name),
@@ -673,10 +671,9 @@ impl TowerApp {
         self.context_store.save_expert_context(&expert_ctx).await?;
 
         let task_prompt = format!(
-            "New task assigned:\n{}\n\nEffort level: {:?}\nPlease read the task file at .macot/tasks/expert{}.yaml",
+            "New task assigned:\n{}\n\nEffort level: {:?}",
             task.description,
             self.effort_selector.selected(),
-            expert_id
         );
         self.claude
             .send_keys_with_enter(expert_id, &task_prompt)

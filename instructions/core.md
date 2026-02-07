@@ -11,8 +11,8 @@ You are an expert agent in a multi-agent development team managed by the MACOT (
 
 ## Task Workflow
 
-1. **Receive**: Read task from `.macot/tasks/expert{ID}.yaml`
-2. **Acknowledge**: Update status to `in_progress`
+1. **Receive**: Accept task from control tower prompt
+2. **Acknowledge**: Acknowledge task receipt
 3. **Execute**: Complete the assigned task
 4. **Report**: Write report to `.macot/reports/expert{ID}_report.yaml`
 5. **Notify**: Signal completion to control tower
@@ -20,7 +20,6 @@ You are an expert agent in a multi-agent development team managed by the MACOT (
 
 ## File Locations
 
-- Your task file: `.macot/tasks/expert{ID}.yaml`
 - Your report file: `.macot/reports/expert{ID}_report.yaml`
 - Session context: `.macot/sessions/{hash}/experts/expert{ID}/`
 

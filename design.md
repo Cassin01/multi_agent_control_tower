@@ -57,13 +57,12 @@ The central coordination UI that provides:
 ### Expert Agents
 Claude CLI instances running in tmux panes:
 - Each expert has a unique ID and name
-- Experts read tasks from their designated queue file
+- Experts receive tasks directly via the control tower prompt
 - Experts write reports upon task completion
 - Experts follow instructions from their instruction file
 
 ### Queue System
-File-based task and report exchange:
-- `.macot/tasks/expert{ID}.yaml` - Task assignments per expert
+File-based report exchange:
 - `.macot/reports/expert{ID}_report.yaml` - Completion reports per expert
 
 ### tmux Session Manager
@@ -291,8 +290,6 @@ multi_agent_control_tower/
 │   ├── backend.md
 │   └── tester.md
 ├── .macot/
-│   ├── tasks/
-│   │   └── .gitkeep
 │   └── reports/
 │       └── .gitkeep
 ├── design.md
@@ -303,10 +300,6 @@ multi_agent_control_tower/
 ### Queue Directories
 ```
 .macot/
-├── tasks/
-│   ├── expert0.yaml
-│   ├── expert1.yaml
-│   └── ...
 └── reports/
     ├── expert0_report.yaml
     ├── expert1_report.yaml
@@ -402,19 +395,13 @@ User in `macot tower`
          │
          ▼
 ┌─────────────────────────────┐
-│ 3. Write task to            │
-│    .macot/tasks/expert{ID}   │
-└─────────────────────────────┘
-         │
-         ▼
-┌─────────────────────────────┐
-│ 4. Send wakeup signal       │
+│ 3. Send task description    │
 │    via tmux send-keys       │
 └─────────────────────────────┘
          │
          ▼
 ┌─────────────────────────────┐
-│ 5. Expert reads task file   │
+│ 4. Expert receives task     │
 │    and begins execution     │
 └─────────────────────────────┘
 ```
@@ -494,25 +481,6 @@ User runs `macot down [session_name]`
 
 ## 7. File Formats
 
-### Task YAML Schema (`.macot/tasks/expert{ID}.yaml`)
-
-```yaml
-task_id: "task-2024-01-15-001"
-expert_id: 0
-expert_name: "architect"
-status: "pending"  # pending | in_progress | done | failed
-created_at: "2024-01-15T10:30:00Z"
-description: |
-  Review the authentication module and propose improvements
-  for better security and maintainability.
-context:
-  files:
-    - "internal/auth/handler.go"
-    - "internal/auth/middleware.go"
-  notes: "Focus on JWT token validation"
-priority: "high"  # low | normal | high | critical
-```
-
 ### Report YAML Schema (`.macot/reports/expert{ID}_report.yaml`)
 
 ```yaml
@@ -555,8 +523,8 @@ You are the {role_description} expert in a multi-agent development team.
 - {responsibility_2}
 
 ## Workflow
-1. Read task from `.macot/tasks/expert{ID}.yaml`
-2. Update status to `in_progress`
+1. Accept task from control tower prompt
+2. Acknowledge task receipt
 3. Execute the assigned task
 4. Write report to `.macot/reports/expert{ID}_report.yaml`
 5. Notify control tower upon completion
@@ -567,8 +535,7 @@ You are the {role_description} expert in a multi-agent development team.
 - All coordination goes through the control tower
 - Use the report file for all outputs
 
-## Task File Location
-Your task file: `.macot/tasks/expert{ID}.yaml`
+## Report File Location
 Your report file: `.macot/reports/expert{ID}_report.yaml`
 ```
 
