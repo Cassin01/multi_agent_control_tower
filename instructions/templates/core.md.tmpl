@@ -23,16 +23,16 @@ You are an expert agent in a multi-agent development team managed by the MACOT (
 
 **IMPORTANT**: You MUST report your status to the control tower by writing to your status file.
 
-- When you **start working** on a task or any processing:
+- At the **very beginning of every agent run** (each time you receive a prompt and start processing):
   ```bash
   echo -n "processing" > "{{ status_file_path }}"
   ```
-- When you **finish** a task and return to idle:
+- At the **very end of every agent run** (when you finish processing and return to waiting for the next prompt):
   ```bash
   echo -n "pending" > "{{ status_file_path }}"
   ```
 
-Always update your status file at the beginning and end of every task.
+Always update your status file at the beginning and end of every agent run.
 
 ## File Locations
 
