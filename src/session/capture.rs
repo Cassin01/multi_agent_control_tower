@@ -2,7 +2,7 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use ratatui::style::Color;
 
-use super::TmuxManager;
+use super::{TmuxManager, TmuxSender};
 use crate::utils::truncate_str;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

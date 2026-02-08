@@ -101,6 +101,10 @@ impl TaskInput {
         self.cursor_position = self.content.chars().count();
     }
 
+    pub fn cursor_position(&self) -> usize {
+        self.cursor_position
+    }
+
     pub fn is_empty(&self) -> bool {
         self.content.trim().is_empty()
     }

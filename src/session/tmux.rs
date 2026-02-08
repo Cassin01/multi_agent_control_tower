@@ -5,6 +5,53 @@ use tokio::process::Command;
 
 use crate::config::Config;
 
+/// Trait for sending keys to and capturing output from tmux panes.
+/// Extracted to allow mocking in tests.
+#[async_trait::async_trait]
+pub trait TmuxSender: Send + Sync {
+    async fn send_keys(&self, pane_id: u32, keys: &str) -> Result<()>;
+    async fn capture_pane(&self, pane_id: u32) -> Result<String>;
+
+    async fn send_keys_with_enter(&self, pane_id: u32, keys: &str) -> Result<()> {
+        self.send_keys(pane_id, "C-u").await?;
+        self.send_keys(pane_id, keys).await?;
+        self.send_keys(pane_id, "Enter").await?;
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl TmuxSender for TmuxManager {
+    async fn send_keys(&self, pane_id: u32, keys: &str) -> Result<()> {
+        Command::new("tmux")
+            .args([
+                "send-keys",
+                "-t",
+                &format!("{}:0.{}", self.session_name, pane_id),
+                keys,
+            ])
+            .output()
+            .await
+            .context(format!("Failed to send keys to pane {}", pane_id))?;
+        Ok(())
+    }
+
+    async fn capture_pane(&self, pane_id: u32) -> Result<String> {
+        let output = Command::new("tmux")
+            .args([
+                "capture-pane",
+                "-t",
+                &format!("{}:0.{}", self.session_name, pane_id),
+                "-p",
+            ])
+            .output()
+            .await
+            .context(format!("Failed to capture pane {}", pane_id))?;
+
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SessionInfo {
     pub session_name: String,
@@ -108,42 +155,6 @@ impl TmuxManager {
         }
 
         Ok(None)
-    }
-
-    pub async fn send_keys(&self, pane_id: u32, keys: &str) -> Result<()> {
-        Command::new("tmux")
-            .args([
-                "send-keys",
-                "-t",
-                &format!("{}:0.{}", self.session_name, pane_id),
-                keys,
-            ])
-            .output()
-            .await
-            .context(format!("Failed to send keys to pane {}", pane_id))?;
-        Ok(())
-    }
-
-    pub async fn send_keys_with_enter(&self, pane_id: u32, keys: &str) -> Result<()> {
-        self.send_keys(pane_id, "C-u").await?; // Clear existing input
-        self.send_keys(pane_id, keys).await?;
-        self.send_keys(pane_id, "Enter").await?;
-        Ok(())
-    }
-
-    pub async fn capture_pane(&self, pane_id: u32) -> Result<String> {
-        let output = Command::new("tmux")
-            .args([
-                "capture-pane",
-                "-t",
-                &format!("{}:0.{}", self.session_name, pane_id),
-                "-p",
-            ])
-            .output()
-            .await
-            .context(format!("Failed to capture pane {}", pane_id))?;
-
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
     }
 
     pub async fn kill_session(&self) -> Result<()> {

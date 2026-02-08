@@ -79,6 +79,7 @@ impl HelpModal {
             Self::key_line("Ctrl+N", "Select next expert"),
             Self::key_line("Ctrl+O", "Change expert role"),
             Self::key_line("Ctrl+R", "Reset selected expert"),
+            Self::key_line("Ctrl+W", "Launch expert in worktree branch"),
             Self::nested_subsection_title("Submit / Cancel"),
             Self::key_line("Ctrl+S", "Assign task to selected expert"),
             Self::key_line("Enter", "Insert newline"),
@@ -188,5 +189,23 @@ mod tests {
 
         modal.toggle();
         assert!(!modal.is_visible());
+    }
+
+    #[test]
+    fn help_text_includes_worktree_shortcut() {
+        let modal = HelpModal::new();
+        let lines = modal.build_help_lines();
+        let text: String = lines
+            .iter()
+            .flat_map(|line| line.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(
+            text.contains("Ctrl+W"),
+            "build_help_lines: should contain Ctrl+W shortcut"
+        );
+        assert!(
+            text.contains("worktree"),
+            "build_help_lines: should describe worktree functionality"
+        );
     }
 }

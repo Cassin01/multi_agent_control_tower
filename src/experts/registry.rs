@@ -662,7 +662,8 @@ mod property_tests {
             let mut expert_ids = Vec::new();
 
             // Register experts and set their final states
-            for (expert, final_state) in experts.into_iter().zip(final_states.into_iter()) {
+            for (index, (mut expert, final_state)) in experts.into_iter().zip(final_states.into_iter()).enumerate() {
+                expert.name = format!("{}-{}", expert.name, index);
                 let expert_id = registry.register_expert(expert).unwrap();
                 registry.update_expert_state(expert_id, final_state).unwrap();
                 expert_ids.push(expert_id);
