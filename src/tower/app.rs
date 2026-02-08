@@ -78,7 +78,7 @@ pub struct TowerApp {
 }
 
 impl TowerApp {
-    pub fn new(config: Config) -> Self {
+    pub fn new(config: Config, worktree_manager: WorktreeManager) -> Self {
         let session_name = config.session_name();
         let session_hash = config.session_hash();
         let queue_manager = QueueManager::new(config.queue_path.clone());
@@ -126,8 +126,6 @@ impl TowerApp {
             expert_registry.clone(),
             tmux_manager.clone(),
         );
-
-        let worktree_manager = WorktreeManager::new(config.project_path.clone());
 
         Self {
             tmux: tmux_manager,
@@ -1078,22 +1076,28 @@ mod tests {
         Config::default().with_project_path(PathBuf::from("/tmp/test"))
     }
 
+    fn create_test_app() -> TowerApp {
+        let config = create_test_config();
+        let wm = WorktreeManager::new(config.project_path.clone());
+        TowerApp::new(config, wm)
+    }
+
     #[test]
     fn tower_app_starts_running() {
-        let app = TowerApp::new(create_test_config());
+        let app = create_test_app();
         assert!(app.is_running());
     }
 
     #[test]
     fn tower_app_quit_stops_running() {
-        let mut app = TowerApp::new(create_test_config());
+        let mut app = create_test_app();
         app.quit();
         assert!(!app.is_running());
     }
 
     #[test]
     fn tower_app_focus_cycles() {
-        let mut app = TowerApp::new(create_test_config());
+        let mut app = create_test_app();
 
         // ExpertList is display-only, initial focus is TaskInput
         assert_eq!(app.focus(), FocusArea::TaskInput);
@@ -1110,7 +1114,7 @@ mod tests {
 
     #[test]
     fn tower_app_focus_cycles_backwards() {
-        let mut app = TowerApp::new(create_test_config());
+        let mut app = create_test_app();
 
         // ExpertList is display-only, initial focus is TaskInput
         assert_eq!(app.focus(), FocusArea::TaskInput);
@@ -1127,7 +1131,7 @@ mod tests {
 
     #[test]
     fn tower_app_message_management() {
-        let mut app = TowerApp::new(create_test_config());
+        let mut app = create_test_app();
 
         assert!(app.message().is_none());
 
@@ -1140,7 +1144,7 @@ mod tests {
 
     #[test]
     fn tower_app_set_focus_changes_focus() {
-        let mut app = TowerApp::new(create_test_config());
+        let mut app = create_test_app();
 
         // ExpertList is display-only, initial focus is TaskInput
         assert_eq!(app.focus(), FocusArea::TaskInput);
@@ -1173,7 +1177,7 @@ mod tests {
 
     #[test]
     fn handle_mouse_click_sets_focus_based_on_area() {
-        let mut app = TowerApp::new(create_test_config());
+        let mut app = create_test_app();
 
         app.set_layout_areas(LayoutAreas {
             expert_list: Rect::new(0, 0, 100, 10),
@@ -1198,7 +1202,7 @@ mod tests {
 
     #[test]
     fn tower_app_initializes_messaging_system() {
-        let app = TowerApp::new(create_test_config());
+        let app = create_test_app();
 
         // Verify messaging system components are initialized
         assert!(app.message_router.is_some());
@@ -1209,7 +1213,8 @@ mod tests {
     fn tower_app_expert_registry_matches_config() {
         let config = create_test_config();
         let expected_experts = config.experts.len();
-        let app = TowerApp::new(config);
+        let wm = WorktreeManager::new(config.project_path.clone());
+        let app = TowerApp::new(config, wm);
 
         // Verify expert registry has correct number of experts
         assert_eq!(app.expert_registry.len(), expected_experts);
@@ -1217,7 +1222,7 @@ mod tests {
 
     #[test]
     fn handle_task_input_keys_ctrl_b_moves_cursor_left() {
-        let mut app = TowerApp::new(create_test_config());
+        let mut app = create_test_app();
         app.task_input.set_content("hello".to_string());
 
         app.handle_task_input_keys(KeyCode::Char('b'), KeyModifiers::CONTROL);
@@ -1231,7 +1236,7 @@ mod tests {
 
     #[test]
     fn handle_task_input_keys_ctrl_f_moves_cursor_right() {
-        let mut app = TowerApp::new(create_test_config());
+        let mut app = create_test_app();
         app.task_input.set_content("hello".to_string());
         app.task_input.move_cursor_start();
 
@@ -1246,7 +1251,7 @@ mod tests {
 
     #[test]
     fn handle_task_input_keys_arrow_keys_no_longer_move_cursor() {
-        let mut app = TowerApp::new(create_test_config());
+        let mut app = create_test_app();
         app.task_input.set_content("hello".to_string());
 
         let pos_before = app.task_input.cursor_position();
@@ -1279,7 +1284,7 @@ mod tests {
 
     #[tokio::test]
     async fn launch_expert_in_worktree_returns_early_when_in_progress() {
-        let mut app = TowerApp::new(create_test_config());
+        let mut app = create_test_app();
 
         let handle = tokio::spawn(async {
             Ok(WorktreeLaunchResult {
@@ -1307,7 +1312,7 @@ mod tests {
 
     #[tokio::test]
     async fn launch_expert_in_worktree_rejects_empty_feature_name() {
-        let mut app = TowerApp::new(create_test_config());
+        let mut app = create_test_app();
 
         app.launch_expert_in_worktree().await.unwrap();
 
@@ -1320,7 +1325,7 @@ mod tests {
 
     #[tokio::test]
     async fn poll_worktree_launch_idle_stays_idle() {
-        let mut app = TowerApp::new(create_test_config());
+        let mut app = create_test_app();
 
         app.poll_worktree_launch().await.unwrap();
 
@@ -1336,7 +1341,7 @@ mod tests {
 
     #[tokio::test]
     async fn poll_worktree_launch_success_transitions_to_idle() {
-        let mut app = TowerApp::new(create_test_config());
+        let mut app = create_test_app();
 
         let handle = tokio::spawn(async {
             Ok(WorktreeLaunchResult {
@@ -1370,7 +1375,7 @@ mod tests {
 
     #[tokio::test]
     async fn poll_worktree_launch_claude_not_ready_message() {
-        let mut app = TowerApp::new(create_test_config());
+        let mut app = create_test_app();
 
         let handle = tokio::spawn(async {
             Ok(WorktreeLaunchResult {
@@ -1406,7 +1411,7 @@ mod tests {
 
     #[tokio::test]
     async fn poll_worktree_launch_failure_transitions_to_idle() {
-        let mut app = TowerApp::new(create_test_config());
+        let mut app = create_test_app();
 
         let handle = tokio::spawn(async { Err(anyhow::anyhow!("git worktree failed")) });
         wait_for_handle(&handle).await;
@@ -1432,7 +1437,7 @@ mod tests {
 
     #[tokio::test]
     async fn poll_worktree_launch_not_finished_stays_in_progress() {
-        let mut app = TowerApp::new(create_test_config());
+        let mut app = create_test_app();
 
         let handle = tokio::spawn(async {
             tokio::time::sleep(std::time::Duration::from_secs(60)).await;
@@ -1485,6 +1490,13 @@ mod property_tests {
         config
     }
 
+    fn create_app_with_experts(num_experts: usize) -> (Config, TowerApp) {
+        let config = create_config_with_experts(num_experts);
+        let wm = WorktreeManager::new(config.project_path.clone());
+        let app = TowerApp::new(config.clone(), wm);
+        (config, app)
+    }
+
     // Feature: inter-expert-messaging, Property 13: System Initialization Consistency
     // **Validates: Requirements 11.5, 4.2**
     proptest! {
@@ -1494,8 +1506,7 @@ mod property_tests {
         fn system_initialization_consistency(
             num_experts in arbitrary_num_experts()
         ) {
-            let config = create_config_with_experts(num_experts);
-            let app = TowerApp::new(config.clone());
+            let (config, app) = create_app_with_experts(num_experts);
 
             // Requirement 11.5: System should initialize with correct components
             // Verify message router is initialized
@@ -1553,8 +1564,7 @@ mod property_tests {
         fn system_initialization_expert_state_consistency(
             num_experts in arbitrary_num_experts()
         ) {
-            let config = create_config_with_experts(num_experts);
-            let app = TowerApp::new(config.clone());
+            let (_config, app) = create_app_with_experts(num_experts);
 
             // All experts should start in Offline state
             // Get all expert IDs from the registry
@@ -1584,8 +1594,7 @@ mod property_tests {
         fn system_initialization_message_router_consistency(
             num_experts in arbitrary_num_experts()
         ) {
-            let config = create_config_with_experts(num_experts);
-            let app = TowerApp::new(config);
+            let (_config, app) = create_app_with_experts(num_experts);
 
             // Verify message router has access to expert registry
             if let Some(ref router) = app.message_router {

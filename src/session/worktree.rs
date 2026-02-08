@@ -31,19 +31,46 @@ impl Default for WorktreeLaunchState {
     }
 }
 
+async fn resolve_git_root(project_path: &Path) -> Result<PathBuf> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
+        .current_dir(project_path)
+        .output()
+        .await
+        .context("Failed to resolve git root — is this a git repository?")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!(
+            "Failed to resolve git root — is this a git repository? {}",
+            stderr.trim()
+        );
+    }
+
+    let common_dir = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+    // --git-common-dir returns the .git directory (e.g. /project/.git)
+    // Its parent is the working tree root
+    Ok(common_dir
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| project_path.to_path_buf()))
+}
+
 #[derive(Clone)]
 pub struct WorktreeManager {
-    project_path: PathBuf,
+    git_root: PathBuf,
     macot_path: PathBuf,
 }
 
 impl WorktreeManager {
-    pub fn new(project_path: PathBuf) -> Self {
-        let macot_path = project_path.join(".macot");
-        Self {
-            project_path,
-            macot_path,
-        }
+    pub fn new(git_root: PathBuf) -> Self {
+        let macot_path = git_root.join(".macot");
+        Self { git_root, macot_path }
+    }
+
+    pub async fn resolve(project_path: PathBuf) -> Result<Self> {
+        let git_root = resolve_git_root(&project_path).await?;
+        Ok(Self::new(git_root))
     }
 
     pub fn worktree_dir(&self) -> PathBuf {
@@ -69,7 +96,7 @@ impl WorktreeManager {
 
         let output = Command::new("git")
             .args(["worktree", "add", wt_path_str, branch_name])
-            .current_dir(&self.project_path)
+            .current_dir(&self.git_root)
             .output()
             .await
             .context("Failed to run git worktree add")?;
@@ -80,7 +107,7 @@ impl WorktreeManager {
 
         let output = Command::new("git")
             .args(["worktree", "add", wt_path_str, "-b", branch_name])
-            .current_dir(&self.project_path)
+            .current_dir(&self.git_root)
             .output()
             .await
             .context("Failed to run git worktree add -b")?;
@@ -123,7 +150,7 @@ impl WorktreeManager {
 
         let output = Command::new("git")
             .args(["worktree", "remove", wt_path_str])
-            .current_dir(&self.project_path)
+            .current_dir(&self.git_root)
             .output()
             .await
             .context("Failed to remove git worktree")?;
@@ -187,6 +214,143 @@ mod tests {
         assert_ne!(
             path_a, path_b,
             "worktree_path: different branches should produce different paths"
+        );
+    }
+}
+
+#[cfg(test)]
+mod resolve_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn resolve_from_main_repo_returns_same_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo_path = tmp.path().canonicalize().unwrap();
+
+        // Initialize a git repo
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(&repo_path)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "--allow-empty", "-m", "init"])
+            .current_dir(&repo_path)
+            .output()
+            .unwrap();
+
+        let mgr = WorktreeManager::resolve(repo_path.clone()).await.unwrap();
+        assert_eq!(
+            mgr.git_root, repo_path,
+            "resolve: from main repo should return the same path as git_root"
+        );
+        assert_eq!(
+            mgr.macot_path,
+            repo_path.join(".macot"),
+            "resolve: macot_path should be git_root/.macot"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_from_worktree_returns_main_repo_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo_path = tmp.path().to_path_buf();
+
+        // Initialize a git repo with a commit
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(&repo_path)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "--allow-empty", "-m", "init"])
+            .current_dir(&repo_path)
+            .output()
+            .unwrap();
+
+        // Create a worktree
+        let wt_path = tmp.path().join("worktree-branch");
+        std::process::Command::new("git")
+            .args([
+                "worktree",
+                "add",
+                wt_path.to_str().unwrap(),
+                "-b",
+                "test-wt-branch",
+            ])
+            .current_dir(&repo_path)
+            .output()
+            .unwrap();
+
+        // Resolve from inside the worktree
+        let mgr = WorktreeManager::resolve(wt_path.clone()).await.unwrap();
+
+        let canonical_repo = repo_path.canonicalize().unwrap();
+        assert_eq!(
+            mgr.git_root, canonical_repo,
+            "resolve: from worktree should return main repo root as git_root"
+        );
+        assert_eq!(
+            mgr.macot_path,
+            canonical_repo.join(".macot"),
+            "resolve: macot_path should be under main repo root"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_idempotent_across_worktrees() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo_path = tmp.path().to_path_buf();
+
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(&repo_path)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "--allow-empty", "-m", "init"])
+            .current_dir(&repo_path)
+            .output()
+            .unwrap();
+
+        let wt1 = tmp.path().join("wt1");
+        let wt2 = tmp.path().join("wt2");
+        std::process::Command::new("git")
+            .args(["worktree", "add", wt1.to_str().unwrap(), "-b", "branch1"])
+            .current_dir(&repo_path)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["worktree", "add", wt2.to_str().unwrap(), "-b", "branch2"])
+            .current_dir(&repo_path)
+            .output()
+            .unwrap();
+
+        let mgr1 = WorktreeManager::resolve(wt1).await.unwrap();
+        let mgr2 = WorktreeManager::resolve(wt2).await.unwrap();
+        let mgr_main = WorktreeManager::resolve(repo_path).await.unwrap();
+
+        assert_eq!(
+            mgr1.git_root, mgr2.git_root,
+            "resolve: different worktrees should produce the same git_root"
+        );
+        assert_eq!(
+            mgr1.git_root, mgr_main.git_root,
+            "resolve: worktree and main repo should produce the same git_root"
+        );
+        assert_eq!(
+            mgr1.macot_path, mgr2.macot_path,
+            "resolve: different worktrees should produce the same macot_path"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_fails_for_non_git_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = WorktreeManager::resolve(tmp.path().to_path_buf()).await;
+        assert!(
+            result.is_err(),
+            "resolve: should fail for non-git directory"
         );
     }
 }
