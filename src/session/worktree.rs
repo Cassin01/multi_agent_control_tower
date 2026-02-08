@@ -3,6 +3,11 @@ use std::path::{Path, PathBuf};
 use tokio::process::Command;
 use tokio::task::JoinHandle;
 
+fn path_to_str(path: &Path) -> Result<&str> {
+    path.to_str()
+        .ok_or_else(|| anyhow::anyhow!("Path contains non-UTF8 characters: {:?}", path))
+}
+
 pub struct WorktreeLaunchResult {
     pub expert_id: u32,
     pub expert_name: String,
@@ -60,13 +65,10 @@ impl WorktreeManager {
             .await
             .context("Failed to create worktrees directory")?;
 
+        let wt_path_str = path_to_str(&wt_path)?;
+
         let output = Command::new("git")
-            .args([
-                "worktree",
-                "add",
-                wt_path.to_str().unwrap(),
-                branch_name,
-            ])
+            .args(["worktree", "add", wt_path_str, branch_name])
             .current_dir(&self.project_path)
             .output()
             .await
@@ -77,13 +79,7 @@ impl WorktreeManager {
         }
 
         let output = Command::new("git")
-            .args([
-                "worktree",
-                "add",
-                wt_path.to_str().unwrap(),
-                "-b",
-                branch_name,
-            ])
+            .args(["worktree", "add", wt_path_str, "-b", branch_name])
             .current_dir(&self.project_path)
             .output()
             .await
@@ -114,18 +110,28 @@ impl WorktreeManager {
             .await
             .context("Failed to create .macot symlink")?;
 
+        #[cfg(not(unix))]
+        anyhow::bail!("Worktree symlink creation is only supported on Unix platforms");
+
+        #[cfg(unix)]
         Ok(())
     }
 
     pub async fn remove_worktree(&self, branch_name: &str) -> Result<()> {
         let wt_path = self.worktree_path(branch_name);
+        let wt_path_str = path_to_str(&wt_path)?;
 
-        Command::new("git")
-            .args(["worktree", "remove", wt_path.to_str().unwrap()])
+        let output = Command::new("git")
+            .args(["worktree", "remove", wt_path_str])
             .current_dir(&self.project_path)
             .output()
             .await
             .context("Failed to remove git worktree")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("git worktree remove failed: {}", stderr);
+        }
 
         Ok(())
     }

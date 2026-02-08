@@ -125,12 +125,6 @@ impl ExpertContext {
         self.touch();
     }
 
-    #[allow(dead_code)]
-    pub fn clear_worktree(&mut self) {
-        self.worktree_branch = None;
-        self.worktree_path = None;
-        self.touch();
-    }
 }
 
 #[cfg(test)]
@@ -230,23 +224,6 @@ mod tests {
             ctx.worktree_path,
             Some("/tmp/worktrees/expert-architect-20260207-120000".to_string()),
             "set_worktree: should store worktree path"
-        );
-    }
-
-    #[test]
-    fn expert_context_clear_worktree_resets_to_none() {
-        let mut ctx = ExpertContext::new(0, "architect".to_string(), "abc123".to_string());
-        ctx.set_worktree("branch".to_string(), "/tmp/wt".to_string());
-
-        ctx.clear_worktree();
-
-        assert!(
-            ctx.worktree_branch.is_none(),
-            "clear_worktree: branch should be None"
-        );
-        assert!(
-            ctx.worktree_path.is_none(),
-            "clear_worktree: path should be None"
         );
     }
 

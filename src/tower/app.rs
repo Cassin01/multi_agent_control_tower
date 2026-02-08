@@ -913,7 +913,10 @@ impl TowerApp {
                 .setup_macot_symlink(&worktree_path)
                 .await?;
 
-            let wt_path_str = worktree_path.to_str().unwrap().to_string();
+            let wt_path_str = worktree_path
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("Worktree path contains non-UTF8 characters: {:?}", worktree_path))?
+                .to_string();
 
             let mut expert_ctx = context_store
                 .load_expert_context(&session_hash, expert_id)
