@@ -36,6 +36,7 @@ pub enum FocusArea {
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct LayoutAreas {
+    #[allow(dead_code)]
     pub expert_list: Rect,
     pub task_input: Rect,
     pub effort_selector: Rect,
@@ -407,6 +408,7 @@ impl TowerApp {
     }
 
     /// Get the messaging display widget
+    #[allow(dead_code)]
     pub fn messaging_display(&mut self) -> &mut MessagingDisplay {
         &mut self.messaging_display
     }
@@ -455,12 +457,11 @@ impl TowerApp {
                     // Update input time for mouse events to pause polling during interaction
                     self.last_input_time = Instant::now();
 
-                    if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
-                        if !self.help_modal.is_visible()
-                            && self.report_display.view_mode() != ViewMode::Detail
-                        {
-                            self.handle_mouse_click(mouse.column, mouse.row);
-                        }
+                    if mouse.kind == MouseEventKind::Down(MouseButton::Left)
+                        && !self.help_modal.is_visible()
+                        && self.report_display.view_mode() != ViewMode::Detail
+                    {
+                        self.handle_mouse_click(mouse.column, mouse.row);
                     }
                     return Ok(());
                 }

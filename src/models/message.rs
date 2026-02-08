@@ -6,6 +6,7 @@ use std::collections::HashMap;
 pub const MAX_DELIVERY_ATTEMPTS: u32 = 100;
 
 /// Default message TTL in seconds (24 hours)
+#[allow(dead_code)]
 pub const DEFAULT_MESSAGE_TTL_SECS: u64 = 86400;
 
 /// Unique identifier for messages
@@ -26,6 +27,7 @@ pub enum MessageRecipient {
     Role { role: String },
 }
 
+#[allow(dead_code)]
 impl MessageRecipient {
     pub fn expert_id(id: u32) -> Self {
         Self::ExpertId { expert_id: id }
@@ -84,6 +86,7 @@ pub struct Message {
     pub metadata: HashMap<String, String>,
 }
 
+#[allow(dead_code)]
 impl Message {
     pub fn new(
         from_expert_id: ExpertId,

@@ -9,26 +9,24 @@ fn path_to_str(path: &Path) -> Result<&str> {
 }
 
 pub struct WorktreeLaunchResult {
+    #[allow(dead_code)]
     pub expert_id: u32,
     pub expert_name: String,
     pub branch_name: String,
+    #[allow(dead_code)]
     pub worktree_path: String,
     pub claude_ready: bool,
 }
 
+#[derive(Default)]
 pub enum WorktreeLaunchState {
+    #[default]
     Idle,
     InProgress {
         handle: JoinHandle<Result<WorktreeLaunchResult>>,
         expert_name: String,
         branch_name: String,
     },
-}
-
-impl Default for WorktreeLaunchState {
-    fn default() -> Self {
-        Self::Idle
-    }
 }
 
 async fn resolve_git_root(project_path: &Path) -> Result<PathBuf> {
@@ -144,6 +142,7 @@ impl WorktreeManager {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub async fn remove_worktree(&self, branch_name: &str) -> Result<()> {
         let wt_path = self.worktree_path(branch_name);
         let wt_path_str = path_to_str(&wt_path)?;

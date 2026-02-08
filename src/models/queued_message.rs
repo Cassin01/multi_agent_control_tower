@@ -3,19 +3,14 @@ use serde::{Deserialize, Serialize};
 
 use super::message::Message;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum MessageStatus {
+    #[default]
     Pending,
     Delivering,
     Failed { reason: String },
     Expired,
-}
-
-impl Default for MessageStatus {
-    fn default() -> Self {
-        Self::Pending
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -58,14 +53,17 @@ impl QueuedMessage {
         matches!(self.status, MessageStatus::Pending)
     }
 
+    #[allow(dead_code)]
     pub fn is_delivering(&self) -> bool {
         matches!(self.status, MessageStatus::Delivering)
     }
 
+    #[allow(dead_code)]
     pub fn is_failed(&self) -> bool {
         matches!(self.status, MessageStatus::Failed { .. })
     }
 
+    #[allow(dead_code)]
     pub fn is_expired(&self) -> bool {
         matches!(self.status, MessageStatus::Expired)
     }
@@ -74,6 +72,7 @@ impl QueuedMessage {
         self.is_pending() && !self.message.is_expired() && !self.message.has_exceeded_max_attempts()
     }
 
+    #[allow(dead_code)]
     pub fn get_failure_reason(&self) -> Option<&str> {
         match &self.status {
             MessageStatus::Failed { reason } => Some(reason),

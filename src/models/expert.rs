@@ -4,11 +4,12 @@ use serde::{Deserialize, Serialize};
 
 use super::message::ExpertId;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ExpertState {
     Idle,
     Busy,
+    #[default]
     Offline,
 }
 
@@ -35,12 +36,6 @@ impl ExpertState {
             ExpertState::Busy => "Working",
             ExpertState::Offline => "Offline",
         }
-    }
-}
-
-impl Default for ExpertState {
-    fn default() -> Self {
-        Self::Offline
     }
 }
 
@@ -125,22 +120,27 @@ impl ExpertInfo {
         matches!(self.state, ExpertState::Idle)
     }
 
+    #[allow(dead_code)]
     pub fn is_busy(&self) -> bool {
         matches!(self.state, ExpertState::Busy)
     }
 
+    #[allow(dead_code)]
     pub fn is_offline(&self) -> bool {
         matches!(self.state, ExpertState::Offline)
     }
 
+    #[allow(dead_code)]
     pub fn matches_name(&self, name: &str) -> bool {
         self.name.eq_ignore_ascii_case(name)
     }
 
+    #[allow(dead_code)]
     pub fn matches_role(&self, role: &str) -> bool {
         self.role.matches(role)
     }
 
+    #[allow(dead_code)]
     pub fn update_activity(&mut self) {
         self.last_activity = Utc::now();
     }

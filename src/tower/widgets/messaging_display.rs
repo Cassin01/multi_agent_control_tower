@@ -26,6 +26,7 @@ pub struct MessagingDisplay {
     messages: Vec<QueuedMessage>,
     filtered_indices: Vec<usize>,
     state: ListState,
+    #[allow(dead_code)]
     focused: bool,
     filter: MessageFilter,
 }
@@ -48,33 +49,39 @@ impl MessagingDisplay {
     }
 
     /// Get all messages currently in the display
+    #[allow(dead_code)]
     pub fn messages(&self) -> &[QueuedMessage] {
         &self.messages
     }
 
     /// Get the number of visible (filtered) messages
+    #[allow(dead_code)]
     pub fn visible_count(&self) -> usize {
         self.filtered_indices.len()
     }
 
     /// Get the total number of messages
+    #[allow(dead_code)]
     pub fn total_count(&self) -> usize {
         self.messages.len()
     }
 
     /// Set the filter for message display
+    #[allow(dead_code)]
     pub fn set_filter(&mut self, filter: MessageFilter) {
         self.filter = filter;
         self.apply_filter();
     }
 
     /// Clear all filters
+    #[allow(dead_code)]
     pub fn clear_filter(&mut self) {
         self.filter = MessageFilter::default();
         self.apply_filter();
     }
 
     /// Get current filter
+    #[allow(dead_code)]
     pub fn filter(&self) -> &MessageFilter {
         &self.filter
     }
@@ -125,16 +132,19 @@ impl MessagingDisplay {
     }
 
     /// Set focused state
+    #[allow(dead_code)]
     pub fn set_focused(&mut self, focused: bool) {
         self.focused = focused;
     }
 
     /// Get focused state
+    #[allow(dead_code)]
     pub fn is_focused(&self) -> bool {
         self.focused
     }
 
     /// Navigate to next message
+    #[allow(dead_code)]
     pub fn next(&mut self) {
         if self.filtered_indices.is_empty() {
             return;
@@ -153,6 +163,7 @@ impl MessagingDisplay {
     }
 
     /// Navigate to previous message
+    #[allow(dead_code)]
     pub fn prev(&mut self) {
         if self.filtered_indices.is_empty() {
             return;
@@ -171,6 +182,7 @@ impl MessagingDisplay {
     }
 
     /// Get the currently selected message
+    #[allow(dead_code)]
     pub fn selected_message(&self) -> Option<&QueuedMessage> {
         self.state
             .selected()
@@ -179,6 +191,7 @@ impl MessagingDisplay {
     }
 
     /// Get symbol for message type
+    #[allow(dead_code)]
     fn type_symbol(message_type: &MessageType) -> (&'static str, Color) {
         match message_type {
             MessageType::Query => ("?", Color::Cyan),
@@ -189,6 +202,7 @@ impl MessagingDisplay {
     }
 
     /// Get symbol for priority
+    #[allow(dead_code)]
     fn priority_symbol(priority: &MessagePriority) -> (&'static str, Color) {
         match priority {
             MessagePriority::High => ("⬆", Color::Red),
@@ -198,6 +212,7 @@ impl MessagingDisplay {
     }
 
     /// Get recipient display string
+    #[allow(dead_code)]
     fn recipient_display(recipient: &crate::models::MessageRecipient) -> String {
         match recipient {
             crate::models::MessageRecipient::ExpertId { expert_id } => format!("→{}", expert_id),
@@ -211,6 +226,7 @@ impl MessagingDisplay {
     }
 
     /// Render the messaging display widget
+    #[allow(dead_code)]
     pub fn render(&mut self, frame: &mut Frame, area: Rect) {
         let items: Vec<ListItem> = self
             .filtered_indices
