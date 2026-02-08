@@ -876,7 +876,7 @@ impl TowerApp {
         let expert_name = self.config.get_expert_name(expert_id);
         let branch_name = format!(
             "expert-{}-{}",
-            expert_name.to_lowercase(),
+            expert_id,
             chrono::Utc::now().format("%Y%m%d-%H%M%S")
         );
 
@@ -1268,6 +1268,16 @@ mod tests {
         );
     }
 
+    async fn wait_for_handle<T>(handle: &tokio::task::JoinHandle<T>) {
+        let start = std::time::Instant::now();
+        while !handle.is_finished() {
+            if start.elapsed() > std::time::Duration::from_secs(1) {
+                panic!("timed out waiting for spawned task to complete");
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    }
+
     #[tokio::test]
     async fn launch_expert_in_worktree_returns_early_when_in_progress() {
         let mut app = TowerApp::new(create_test_config());
@@ -1320,17 +1330,17 @@ mod tests {
             Ok(WorktreeLaunchResult {
                 expert_id: 1,
                 expert_name: "architect".to_string(),
-                branch_name: "expert-architect-20260208-120000".to_string(),
+                branch_name: "expert-1-20260208-120000".to_string(),
                 worktree_path: "/tmp/wt".to_string(),
                 claude_ready: true,
             })
         });
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        wait_for_handle(&handle).await;
 
         app.worktree_launch_state = WorktreeLaunchState::InProgress {
             handle,
             expert_name: "architect".to_string(),
-            branch_name: "expert-architect-20260208-120000".to_string(),
+            branch_name: "expert-1-20260208-120000".to_string(),
         };
 
         app.poll_worktree_launch().await.unwrap();
@@ -1341,7 +1351,7 @@ mod tests {
         );
         assert_eq!(
             app.message(),
-            Some("architect launched in worktree 'expert-architect-20260208-120000'"),
+            Some("architect launched in worktree 'expert-1-20260208-120000'"),
             "poll_worktree_launch: should set success message"
         );
     }
@@ -1352,19 +1362,19 @@ mod tests {
 
         let handle = tokio::spawn(async {
             Ok(WorktreeLaunchResult {
-                expert_id: 1,
+                expert_id: 2,
                 expert_name: "backend".to_string(),
-                branch_name: "expert-backend-20260208-130000".to_string(),
+                branch_name: "expert-2-20260208-130000".to_string(),
                 worktree_path: "/tmp/wt".to_string(),
                 claude_ready: false,
             })
         });
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        wait_for_handle(&handle).await;
 
         app.worktree_launch_state = WorktreeLaunchState::InProgress {
             handle,
             expert_name: "backend".to_string(),
-            branch_name: "expert-backend-20260208-130000".to_string(),
+            branch_name: "expert-2-20260208-130000".to_string(),
         };
 
         app.poll_worktree_launch().await.unwrap();
@@ -1387,12 +1397,12 @@ mod tests {
         let mut app = TowerApp::new(create_test_config());
 
         let handle = tokio::spawn(async { Err(anyhow::anyhow!("git worktree failed")) });
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        wait_for_handle(&handle).await;
 
         app.worktree_launch_state = WorktreeLaunchState::InProgress {
             handle,
             expert_name: "backend".to_string(),
-            branch_name: "expert-backend-20260208-130000".to_string(),
+            branch_name: "expert-2-20260208-130000".to_string(),
         };
 
         app.poll_worktree_launch().await.unwrap();
@@ -1580,18 +1590,17 @@ mod property_tests {
 
         #[test]
         fn branch_name_format_matches_expected_pattern(
-            name in "[a-zA-Z]{3,15}"
+            id in 0u32..100
         ) {
             let branch = format!(
                 "expert-{}-{}",
-                name.to_lowercase(),
+                id,
                 chrono::Utc::now().format("%Y%m%d-%H%M%S")
             );
-            let lower = name.to_lowercase();
-            let prefix = format!("expert-{}-", lower);
+            let prefix = format!("expert-{}-", id);
             prop_assert!(
                 branch.starts_with(&prefix),
-                "branch_name: should start with expert-<name>-"
+                "branch_name: should start with expert-<id>-"
             );
             let suffix = &branch[prefix.len()..];
             prop_assert_eq!(

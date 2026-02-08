@@ -211,18 +211,18 @@ mod tests {
         let mut ctx = ExpertContext::new(0, "architect".to_string(), "abc123".to_string());
 
         ctx.set_worktree(
-            "expert-architect-20260207-120000".to_string(),
-            "/tmp/worktrees/expert-architect-20260207-120000".to_string(),
+            "expert-0-20260207-120000".to_string(),
+            "/tmp/worktrees/expert-0-20260207-120000".to_string(),
         );
 
         assert_eq!(
             ctx.worktree_branch,
-            Some("expert-architect-20260207-120000".to_string()),
+            Some("expert-0-20260207-120000".to_string()),
             "set_worktree: should store branch name"
         );
         assert_eq!(
             ctx.worktree_path,
-            Some("/tmp/worktrees/expert-architect-20260207-120000".to_string()),
+            Some("/tmp/worktrees/expert-0-20260207-120000".to_string()),
             "set_worktree: should store worktree path"
         );
     }

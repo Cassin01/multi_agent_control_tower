@@ -288,7 +288,7 @@ pub async fn launch_expert_in_worktree(&mut self) -> Result<()> {
     let expert_name = self.config.get_expert_name(expert_id);
     let branch_name = format!(
         "expert-{}-{}",
-        expert_name.to_lowercase(),
+        expert_id,
         chrono::Utc::now().format("%Y%m%d-%H%M%S")
     );
 
@@ -492,7 +492,7 @@ User presses Ctrl+W
   ┌──────────────────────────────┐
   │ Concurrency guard            │   if not Idle → return
   │ Get selected expert_id       │
-  │ Generate branch name         │   "expert-katya-20260207-120000"
+  │ Generate branch name         │   "expert-3-20260207-120000"
   │ Clone shared state           │   (claude, context_store, worktree_manager, config)
   └──────────┬───────────────────┘
              │ tokio::spawn

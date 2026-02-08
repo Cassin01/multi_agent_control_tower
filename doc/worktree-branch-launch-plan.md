@@ -76,7 +76,7 @@ This plan decomposes the Worktree Branch Launch feature into incremental tasks f
 
 - [x] 8. Implement `launch_expert_in_worktree()` method on `TowerApp`
   - Add concurrency guard: return early if not `Idle`
-  - Get selected expert ID, generate branch name with format `expert-<name>-<YYYYMMDD-HHMMSS>`
+  - Get selected expert ID, generate branch name with format `expert-<id>-<YYYYMMDD-HHMMSS>`
   - Check `worktree_exists()`, return early if already exists
   - Clone all needed shared state (`claude`, `context_store`, `worktree_manager`, `config`, etc.)
   - Spawn `tokio::spawn` background task that performs the 8-step sequence:
@@ -95,7 +95,7 @@ This plan decomposes the Worktree Branch Launch feature into incremental tasks f
   - **Property: Concurrency Guard**
     - Verify that calling `launch_expert_in_worktree()` when state is `InProgress` returns early with message
   - **Property: Branch Name Format**
-    - Verify branch name follows `expert-<name>-<YYYYMMDD-HHMMSS>` pattern
+    - Verify branch name follows `expert-<id>-<YYYYMMDD-HHMMSS>` pattern
   - **Validates: Requirements 1, 2**
 
 - [x] 9. Implement `poll_worktree_launch()` method on `TowerApp`
