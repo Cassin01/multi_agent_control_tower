@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use crate::models::ExpertState;
 
-const STALE_THRESHOLD: Duration = Duration::from_secs(300); // 5 minutes
+const STALE_THRESHOLD: Duration = Duration::from_secs(3 * 24 * 60 * 60); // 3 days
 
 pub struct ExpertStateDetector {
     status_dir: PathBuf,
@@ -114,13 +114,13 @@ mod tests {
         let path = _tmp.path().join("expert0");
         std::fs::write(&path, "pending").unwrap();
 
-        // Set mtime to 10 minutes ago
+        // Set mtime to 4 days ago
         let old_time = filetime::FileTime::from_unix_time(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs() as i64
-                - 600,
+                - 4 * 24 * 60 * 60,
             0,
         );
         filetime::set_file_mtime(&path, old_time).unwrap();
@@ -128,7 +128,7 @@ mod tests {
         assert_eq!(
             detector.detect_state(0),
             ExpertState::Offline,
-            "detect_state: stale pending (>5min) should return Offline"
+            "detect_state: stale pending (>3 days) should return Offline"
         );
     }
 
