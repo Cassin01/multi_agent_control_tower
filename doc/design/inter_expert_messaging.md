@@ -182,10 +182,8 @@ priority: high
 created_at: "2024-01-15T10:30:00.123Z"
 content:
   subject: "Implement User API"
-  body: |
-    Please implement the user CRUD endpoints.
-    See doc/api-design.md for details.
-reply_to: null
+      body: |
+      Please implement the user CRUD endpoints.reply_to: null
 
 ---
 # Example 2: Send to expert by name

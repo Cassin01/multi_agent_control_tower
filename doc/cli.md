@@ -169,10 +169,23 @@ macot tower --config ./custom-config.yaml
 
 | Key | Action |
 |-----|--------|
-| `Tab` | Switch focus between panels |
-| `Enter` | Assign task to selected expert |
-| `Ctrl+R` | Refresh status |
-| `Ctrl+Q` / `q` | Quit |
+| **Global** | |
+| `Tab` / `Shift+Tab` | Switch focus between panels |
+| `Ctrl+H` | Toggle help |
+| `Ctrl+C` / `Ctrl+Q` | Quit application |
+| **Task Input** | |
+| `Ctrl+S` | Assign task to selected expert |
+| `Ctrl+P` / `Ctrl+N` | Select previous/next expert |
+| `Ctrl+O` | Change expert role |
+| `Ctrl+R` | Reset selected expert |
+| `Ctrl+W` | Launch expert in worktree |
+| `Esc` | Clear input |
+| **Report List** | |
+| `j` / `↓` | Select next report |
+| `k` / `↑` | Select previous report |
+| `Enter` | Open report detail |
+| **Report Detail** | |
+| `Esc` / `q` | Close detail |
 
 ### Interface
 
