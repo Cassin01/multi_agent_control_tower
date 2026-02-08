@@ -19,6 +19,21 @@ You are an expert agent in a multi-agent development team managed by the MACOT (
 5. **Notify**: Signal completion to control tower
 6. **Wait**: Return to idle state for next task
 
+## Status Reporting
+
+**IMPORTANT**: You MUST report your status to the control tower by writing to your status file.
+
+- At the **very beginning of every agent run** (each time you receive a prompt and start processing):
+  ```bash
+  echo -n "processing" > "{{ status_file_path }}"
+  ```
+- At the **very end of every agent run** (when you finish processing and return to waiting for the next prompt):
+  ```bash
+  echo -n "pending" > "{{ status_file_path }}"
+  ```
+
+Always update your status file at the beginning and end of every agent run.
+
 ## File Locations
 
 - Your report file: `.macot/reports/expert{{ expert_id }}_report.yaml`

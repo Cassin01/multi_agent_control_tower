@@ -12,5 +12,5 @@ pub use help_modal::HelpModal;
 pub use messaging_display::{MessageFilter, MessagingDisplay};
 pub use report_display::{ReportDisplay, ViewMode};
 pub use role_selector::RoleSelector;
-pub use status_display::StatusDisplay;
+pub use status_display::{ExpertEntry, StatusDisplay};
 pub use task_input::TaskInput;

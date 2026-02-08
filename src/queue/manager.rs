@@ -119,6 +119,10 @@ impl QueueManager {
         self.messages_path().join("outbox")
     }
 
+    fn status_path(&self) -> PathBuf {
+        self.base_path.join("status")
+    }
+
     #[allow(dead_code)]
     fn report_file(&self, expert_id: u32) -> PathBuf {
         self.reports_path()
@@ -131,6 +135,7 @@ impl QueueManager {
 
     pub async fn init(&self) -> Result<()> {
         fs::create_dir_all(self.reports_path()).await?;
+        fs::create_dir_all(self.status_path()).await?;
         self.init_message_queue().await?;
         Ok(())
     }
@@ -508,6 +513,7 @@ mod tests {
     async fn queue_manager_init_creates_directories() {
         let (manager, _temp) = create_test_manager().await;
         assert!(manager.reports_path().exists());
+        assert!(manager.status_path().exists());
     }
 
     #[tokio::test]

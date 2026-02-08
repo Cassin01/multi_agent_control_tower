@@ -134,6 +134,7 @@ fn load_instruction(config: &Config, expert_id: u32, expert_name: &str) -> Resul
         expert_name,
         expert_id,
         expert_name,
+        &config.status_file_path(expert_id),
     )?;
     // Note: In start command, we don't show toast for general fallback
     // because the UI is not available yet

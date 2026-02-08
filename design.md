@@ -242,7 +242,7 @@ Launch the control tower UI.
 **UI Features:**
 - Expert selection menu (numbered list)
 - Task input field (multi-line supported)
-- Status display per expert (idle/in_progress/done)
+- Status display per expert (idle/busy/offline)
 - Report viewer for completed tasks
 
 ### `macot status [session_name]`
@@ -259,9 +259,9 @@ Session: macot-a1b2c3d4 (running)
 Project: /Users/user/myproject
 Experts:
   [0] architect  - idle
-  [1] frontend   - in_progress
-  [2] backend    - done
-  [3] tester     - idle
+  [1] frontend   - busy
+  [2] backend    - idle
+  [3] tester     - offline
 ```
 
 ---
@@ -271,29 +271,63 @@ Experts:
 ### Project Layout
 ```
 multi_agent_control_tower/
-├── cmd/
-│   └── macot/
-│       └── main.go
-├── internal/
+├── src/
+│   ├── main.rs
+│   ├── lib.rs
+│   ├── cli.rs
+│   ├── utils.rs
+│   ├── commands/
+│   │   ├── start.rs
+│   │   ├── down.rs
+│   │   ├── tower.rs
+│   │   ├── status.rs
+│   │   ├── sessions.rs
+│   │   └── reset.rs
 │   ├── config/
-│   │   └── config.go
+│   │   └── loader.rs
 │   ├── session/
-│   │   └── tmux.go
+│   │   ├── tmux.rs
+│   │   ├── detector.rs
+│   │   ├── claude.rs
+│   │   └── worktree.rs
 │   ├── tower/
-│   │   └── ui.go
-│   └── queue/
-│       └── queue.go
+│   │   ├── app.rs
+│   │   └── ui.rs
+│   ├── queue/
+│   │   ├── manager.rs
+│   │   └── router.rs
+│   ├── models/
+│   │   ├── expert.rs
+│   │   ├── message.rs
+│   │   ├── queued_message.rs
+│   │   ├── report.rs
+│   │   └── effort.rs
+│   ├── experts/
+│   │   └── registry.rs
+│   ├── instructions/
+│   │   ├── template.rs
+│   │   ├── defaults.rs
+│   │   └── schema.rs
+│   └── context/
+│       ├── expert.rs
+│       ├── role.rs
+│       ├── shared.rs
+│       └── store.rs
 ├── instructions/
-│   ├── core.md
+│   ├── templates/
+│   │   └── core.md.tmpl
 │   ├── architect.md
 │   ├── frontend.md
 │   ├── backend.md
-│   └── tester.md
+│   ├── tester.md
+│   ├── planner.md
+│   └── general.md
+├── doc/
 ├── .macot/
-│   └── reports/
-│       └── .gitkeep
+│   ├── reports/
+│   └── status/
 ├── design.md
-├── go.mod
+├── Cargo.toml
 └── Makefile
 ```
 
