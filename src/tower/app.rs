@@ -7,7 +7,7 @@ use crate::config::Config;
 use crate::context::{AvailableRoles, ContextStore, Decision, ExpertContext, SessionExpertRoles};
 use crate::experts::ExpertRegistry;
 use crate::instructions::load_instruction_with_template;
-use crate::models::{EffortConfig, ExpertInfo, ExpertState, Role, Task};
+use crate::models::{ExpertInfo, ExpertState, Role};
 use crate::queue::{MessageRouter, QueueManager};
 use crate::session::{
     AgentStatus, CaptureManager, ClaudeManager, TmuxManager, WorktreeLaunchResult,
@@ -656,45 +656,36 @@ impl TowerApp {
             .map(|e| e.name.clone())
             .unwrap_or_else(|| format!("expert{}", expert_id));
 
-        let task = Task::new(
-            expert_id,
-            expert_name.clone(),
-            self.task_input.content().to_string(),
-        )
-        .with_effort(EffortConfig::from_level(self.effort_selector.selected()));
+        let description = self.task_input.content().to_string();
+        let effort_level = self.effort_selector.selected();
 
         let decision = Decision::new(
             expert_id,
             format!("Task Assignment to {}", expert_name),
             format!(
                 "Assigned: {}",
-                task.description.chars().take(100).collect::<String>()
+                description.chars().take(100).collect::<String>()
             ),
-            format!("Effort: {:?}", self.effort_selector.selected()),
+            format!("Effort: {:?}", effort_level),
         );
         self.context_store
             .add_decision(&self.config.session_hash(), decision)
             .await?;
 
         let session_hash = self.config.session_hash();
-        let mut expert_ctx = self
+        let expert_ctx = self
             .context_store
             .load_expert_context(&session_hash, expert_id)
             .await?
             .unwrap_or_else(|| {
                 ExpertContext::new(expert_id, expert_name.clone(), session_hash.clone())
             });
-        expert_ctx.add_task_history(
-            task.task_id.clone(),
-            "assigned".to_string(),
-            task.description.chars().take(100).collect(),
-        );
         self.context_store.save_expert_context(&expert_ctx).await?;
 
         let task_prompt = format!(
             "New task assigned:\n{}\n\nEffort level: {:?}",
-            task.description,
-            self.effort_selector.selected(),
+            description,
+            effort_level,
         );
         self.claude
             .send_keys_with_enter(expert_id, &task_prompt)

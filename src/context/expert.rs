@@ -37,13 +37,6 @@ pub struct Knowledge {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TaskHistoryEntry {
-    pub task_id: String,
-    pub status: String,
-    pub summary: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExpertContext {
     pub expert_id: u32,
     pub expert_name: String,
@@ -54,8 +47,6 @@ pub struct ExpertContext {
     pub claude_session: ClaudeSession,
     #[serde(default)]
     pub knowledge: Knowledge,
-    #[serde(default)]
-    pub task_history: Vec<TaskHistoryEntry>,
     #[serde(default)]
     pub worktree_branch: Option<String>,
     #[serde(default)]
@@ -73,7 +64,6 @@ impl ExpertContext {
             updated_at: now,
             claude_session: ClaudeSession::default(),
             knowledge: Knowledge::default(),
-            task_history: Vec::new(),
             worktree_branch: None,
             worktree_path: None,
         }
@@ -95,15 +85,6 @@ impl ExpertContext {
             path,
             summary,
             last_read: Utc::now(),
-        });
-        self.touch();
-    }
-
-    pub fn add_task_history(&mut self, task_id: String, status: String, summary: String) {
-        self.task_history.push(TaskHistoryEntry {
-            task_id,
-            status,
-            summary,
         });
         self.touch();
     }
@@ -140,7 +121,6 @@ mod tests {
         assert_eq!(ctx.session_hash, "abc123");
         assert!(ctx.claude_session.session_id.is_none());
         assert!(ctx.knowledge.files_analyzed.is_empty());
-        assert!(ctx.task_history.is_empty());
     }
 
     #[test]
@@ -168,21 +148,6 @@ mod tests {
         assert_eq!(ctx.knowledge.files_analyzed.len(), 2);
         assert_eq!(ctx.knowledge.files_analyzed[0].path, "src/main.rs");
         assert_eq!(ctx.knowledge.files_analyzed[1].path, "src/lib.rs");
-    }
-
-    #[test]
-    fn expert_context_add_task_history_appends() {
-        let mut ctx = ExpertContext::new(0, "architect".to_string(), "abc123".to_string());
-
-        ctx.add_task_history(
-            "task-001".to_string(),
-            "done".to_string(),
-            "Completed review".to_string(),
-        );
-
-        assert_eq!(ctx.task_history.len(), 1);
-        assert_eq!(ctx.task_history[0].task_id, "task-001");
-        assert_eq!(ctx.task_history[0].status, "done");
     }
 
     #[test]
@@ -345,6 +310,5 @@ task_history:
             Some("session-abc".to_string())
         );
         assert_eq!(ctx.knowledge.files_analyzed.len(), 1);
-        assert_eq!(ctx.task_history.len(), 1);
     }
 }
