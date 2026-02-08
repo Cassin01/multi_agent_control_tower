@@ -2,10 +2,15 @@
 name = "macot"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.74"
 description = "Multi Agent Control Tower - CLI for orchestrating Claude CLI instances"
-license = "MIT"
+license = "Apache-2.0"
 authors = ["Cassin01"]
 repository = "https://github.com/Cassin01/multi_agent_control_tower"
+homepage = "https://github.com/Cassin01/multi_agent_control_tower"
+readme = "README.md"
+keywords = ["cli", "ai", "agents", "orchestration", "tmux"]
+categories = ["command-line-utilities", "development-tools"]
 
 [[bin]]
 name = "macot"
