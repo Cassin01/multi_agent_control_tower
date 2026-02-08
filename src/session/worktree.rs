@@ -199,14 +199,14 @@ mod property_tests {
     proptest! {
         #[test]
         fn worktree_path_uniqueness(
-            id1 in 0u32..100,
+            name1 in "[a-z]{1,20}",
             ts1 in "[0-9]{8}-[0-9]{6}",
-            id2 in 0u32..100,
+            name2 in "[a-z]{1,20}",
             ts2 in "[0-9]{8}-[0-9]{6}",
         ) {
             let mgr = WorktreeManager::new(PathBuf::from("/project"));
-            let branch1 = format!("expert-{}-{}", id1, ts1);
-            let branch2 = format!("expert-{}-{}", id2, ts2);
+            let branch1 = format!("{}-{}", name1, ts1);
+            let branch2 = format!("{}-{}", name2, ts2);
 
             if branch1 != branch2 {
                 prop_assert_ne!(

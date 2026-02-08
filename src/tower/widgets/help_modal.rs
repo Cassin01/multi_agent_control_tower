@@ -79,7 +79,7 @@ impl HelpModal {
             Self::key_line("Ctrl+N", "Select next expert"),
             Self::key_line("Ctrl+O", "Change expert role"),
             Self::key_line("Ctrl+R", "Reset selected expert"),
-            Self::key_line("Ctrl+W", "Launch expert in worktree branch"),
+            Self::key_line("Ctrl+W", "Launch expert in worktree (uses task input as branch name)"),
             Self::nested_subsection_title("Submit / Cancel"),
             Self::key_line("Ctrl+S", "Assign task to selected expert"),
             Self::key_line("Enter", "Insert newline"),

@@ -8,6 +8,7 @@ use crate::context::{AvailableRoles, ContextStore, Decision, ExpertContext, Sess
 use crate::experts::ExpertRegistry;
 use crate::instructions::load_instruction_with_template;
 use crate::models::{ExpertInfo, ExpertState, Role};
+use crate::utils::sanitize_branch_name;
 use crate::queue::{MessageRouter, QueueManager};
 use crate::session::{
     AgentStatus, CaptureManager, ClaudeManager, TmuxManager, WorktreeLaunchResult,
@@ -856,6 +857,12 @@ impl TowerApp {
             return Ok(());
         }
 
+        let feature_input = self.task_input.content().trim().to_string();
+        if feature_input.is_empty() {
+            self.set_message("Enter a feature name in the task input before launching worktree".to_string());
+            return Ok(());
+        }
+
         let expert_id = match self.status_display.selected_expert_id() {
             Some(id) => id,
             None => {
@@ -865,9 +872,10 @@ impl TowerApp {
         };
 
         let expert_name = self.config.get_expert_name(expert_id);
+        let sanitized = sanitize_branch_name(&feature_input);
         let branch_name = format!(
-            "expert-{}-{}",
-            expert_id,
+            "{}-{}",
+            sanitized,
             chrono::Utc::now().format("%Y%m%d-%H%M%S")
         );
 
@@ -1298,6 +1306,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn launch_expert_in_worktree_rejects_empty_feature_name() {
+        let mut app = TowerApp::new(create_test_config());
+
+        app.launch_expert_in_worktree().await.unwrap();
+
+        assert_eq!(
+            app.message(),
+            Some("Enter a feature name in the task input before launching worktree"),
+            "launch_expert_in_worktree: should reject empty task input"
+        );
+    }
+
+    #[tokio::test]
     async fn poll_worktree_launch_idle_stays_idle() {
         let mut app = TowerApp::new(create_test_config());
 
@@ -1321,7 +1342,7 @@ mod tests {
             Ok(WorktreeLaunchResult {
                 expert_id: 1,
                 expert_name: "architect".to_string(),
-                branch_name: "expert-1-20260208-120000".to_string(),
+                branch_name: "add-auth-20260208-120000".to_string(),
                 worktree_path: "/tmp/wt".to_string(),
                 claude_ready: true,
             })
@@ -1331,7 +1352,7 @@ mod tests {
         app.worktree_launch_state = WorktreeLaunchState::InProgress {
             handle,
             expert_name: "architect".to_string(),
-            branch_name: "expert-1-20260208-120000".to_string(),
+            branch_name: "add-auth-20260208-120000".to_string(),
         };
 
         app.poll_worktree_launch().await.unwrap();
@@ -1342,7 +1363,7 @@ mod tests {
         );
         assert_eq!(
             app.message(),
-            Some("architect launched in worktree 'expert-1-20260208-120000'"),
+            Some("architect launched in worktree 'add-auth-20260208-120000'"),
             "poll_worktree_launch: should set success message"
         );
     }
@@ -1355,7 +1376,7 @@ mod tests {
             Ok(WorktreeLaunchResult {
                 expert_id: 2,
                 expert_name: "backend".to_string(),
-                branch_name: "expert-2-20260208-130000".to_string(),
+                branch_name: "fix-login-20260208-130000".to_string(),
                 worktree_path: "/tmp/wt".to_string(),
                 claude_ready: false,
             })
@@ -1365,7 +1386,7 @@ mod tests {
         app.worktree_launch_state = WorktreeLaunchState::InProgress {
             handle,
             expert_name: "backend".to_string(),
-            branch_name: "expert-2-20260208-130000".to_string(),
+            branch_name: "fix-login-20260208-130000".to_string(),
         };
 
         app.poll_worktree_launch().await.unwrap();
@@ -1393,7 +1414,7 @@ mod tests {
         app.worktree_launch_state = WorktreeLaunchState::InProgress {
             handle,
             expert_name: "backend".to_string(),
-            branch_name: "expert-2-20260208-130000".to_string(),
+            branch_name: "fix-login-20260208-130000".to_string(),
         };
 
         app.poll_worktree_launch().await.unwrap();
@@ -1581,29 +1602,31 @@ mod property_tests {
 
         #[test]
         fn branch_name_format_matches_expected_pattern(
-            id in 0u32..100
+            feature_name in "[a-zA-Z][a-zA-Z0-9 _-]{0,30}"
         ) {
-            let branch = format!(
-                "expert-{}-{}",
-                id,
-                chrono::Utc::now().format("%Y%m%d-%H%M%S")
-            );
-            let prefix = format!("expert-{}-", id);
+            let sanitized = crate::utils::sanitize_branch_name(&feature_name);
+            let ts = chrono::Utc::now().format("%Y%m%d-%H%M%S").to_string();
+            let branch = format!("{}-{}", sanitized, ts);
+
+            // Branch should have format: {sanitized}-{YYYYMMDD-HHMMSS}
+            let expected_suffix_len = 15; // YYYYMMDD-HHMMSS
             prop_assert!(
-                branch.starts_with(&prefix),
-                "branch_name: should start with expert-<id>-"
+                branch.len() > expected_suffix_len,
+                "branch_name: should be longer than timestamp suffix"
             );
-            let suffix = &branch[prefix.len()..];
-            prop_assert_eq!(
-                suffix.len(),
-                15,
-                "branch_name: timestamp suffix should be 15 chars (YYYYMMDD-HHMMSS)"
-            );
+            let timestamp_suffix = &branch[branch.len() - expected_suffix_len..];
             prop_assert!(
-                suffix.chars().enumerate().all(|(i, c)| {
+                timestamp_suffix.chars().enumerate().all(|(i, c)| {
                     if i == 8 { c == '-' } else { c.is_ascii_digit() }
                 }),
                 "branch_name: timestamp should follow YYYYMMDD-HHMMSS format"
+            );
+            // Separator between sanitized name and timestamp
+            let separator_pos = branch.len() - expected_suffix_len - 1;
+            prop_assert_eq!(
+                branch.as_bytes()[separator_pos],
+                b'-',
+                "branch_name: should have hyphen separator before timestamp"
             );
         }
     }
