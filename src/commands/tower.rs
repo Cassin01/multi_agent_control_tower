@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use crate::commands::common;
 use crate::config::Config;
-use crate::session::TmuxManager;
+use crate::session::{TmuxManager, WorktreeManager};
 use crate::tower::TowerApp;
 
 #[derive(ClapArgs)]
@@ -46,11 +46,15 @@ pub async fn execute(args: Args) -> Result<()> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(4);
 
+    let project_path_buf = PathBuf::from(&project_path);
+
+    let worktree_manager = WorktreeManager::resolve(project_path_buf.clone()).await?;
+
     let config = Config::load(args.config)?
-        .with_project_path(PathBuf::from(project_path))
+        .with_project_path(project_path_buf)
         .with_num_experts(num_experts);
 
-    let mut app = TowerApp::new(config);
+    let mut app = TowerApp::new(config, worktree_manager);
     app.run().await?;
 
     Ok(())
