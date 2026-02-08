@@ -2,7 +2,7 @@ use anyhow::Result;
 use regex::Regex;
 use tokio::time::{sleep, Duration};
 
-use super::TmuxManager;
+use super::{TmuxManager, TmuxSender};
 use crate::context::ContextStore;
 
 #[derive(Clone)]

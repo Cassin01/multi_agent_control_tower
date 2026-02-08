@@ -9,7 +9,10 @@ use crate::experts::ExpertRegistry;
 use crate::instructions::load_instruction_with_template;
 use crate::models::{EffortConfig, ExpertInfo, ExpertState, Role, Task};
 use crate::queue::{MessageRouter, QueueManager};
-use crate::session::{AgentStatus, CaptureManager, ClaudeManager, TmuxManager};
+use crate::session::{
+    AgentStatus, CaptureManager, ClaudeManager, TmuxManager, WorktreeLaunchResult,
+    WorktreeLaunchState, WorktreeManager,
+};
 
 /// Message polling interval for the messaging system (1 second)
 const MESSAGE_POLL_INTERVAL: Duration = Duration::from_millis(1000);
@@ -68,6 +71,9 @@ pub struct TowerApp {
     last_message_poll: Instant,
     last_input_time: Instant,
     layout_areas: LayoutAreas,
+
+    worktree_manager: WorktreeManager,
+    worktree_launch_state: WorktreeLaunchState,
 }
 
 impl TowerApp {
@@ -120,6 +126,8 @@ impl TowerApp {
             tmux_manager.clone(),
         );
 
+        let worktree_manager = WorktreeManager::new(config.project_path.clone());
+
         Self {
             tmux: tmux_manager,
             capture: CaptureManager::new(session_name),
@@ -150,6 +158,10 @@ impl TowerApp {
             last_message_poll: Instant::now(),
             last_input_time: Instant::now(),
             layout_areas: LayoutAreas::default(),
+
+            worktree_manager,
+            worktree_launch_state: WorktreeLaunchState::default(),
+
             config,
         }
     }
@@ -542,6 +554,13 @@ impl TowerApp {
                 {
                     self.reset_expert().await?;
                 }
+
+                if key.code == KeyCode::Char('w')
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                    && self.focus == FocusArea::TaskInput
+                {
+                    self.launch_expert_in_worktree().await?;
+                }
                 }
                 _ => {}
             }
@@ -552,9 +571,13 @@ impl TowerApp {
     fn handle_task_input_keys(&mut self, code: KeyCode, modifiers: KeyModifiers) {
         match code {
             KeyCode::Char(c) => {
-                if !modifiers.contains(KeyModifiers::CONTROL)
-                    && !modifiers.contains(KeyModifiers::ALT)
-                {
+                if modifiers.contains(KeyModifiers::CONTROL) {
+                    match c {
+                        'b' => self.task_input.move_cursor_left(),
+                        'f' => self.task_input.move_cursor_right(),
+                        _ => {}
+                    }
+                } else if !modifiers.contains(KeyModifiers::ALT) {
                     self.task_input.insert_char(c);
                     self.last_input_time = Instant::now();
                 }
@@ -567,8 +590,6 @@ impl TowerApp {
                 self.task_input.delete_forward();
                 self.last_input_time = Instant::now();
             }
-            KeyCode::Left => self.task_input.move_cursor_left(),
-            KeyCode::Right => self.task_input.move_cursor_right(),
             KeyCode::Home => self.task_input.move_cursor_start(),
             KeyCode::End => self.task_input.move_cursor_end(),
             KeyCode::Enter => {
@@ -838,6 +859,162 @@ impl TowerApp {
         Ok(())
     }
 
+    pub async fn launch_expert_in_worktree(&mut self) -> Result<()> {
+        if !matches!(self.worktree_launch_state, WorktreeLaunchState::Idle) {
+            self.set_message("Worktree launch already in progress".to_string());
+            return Ok(());
+        }
+
+        let expert_id = match self.status_display.selected_expert_id() {
+            Some(id) => id,
+            None => {
+                self.set_message("No expert selected".to_string());
+                return Ok(());
+            }
+        };
+
+        let expert_name = self.config.get_expert_name(expert_id);
+        let branch_name = format!(
+            "expert-{}-{}",
+            expert_name.to_lowercase(),
+            chrono::Utc::now().format("%Y%m%d-%H%M%S")
+        );
+
+        if self.worktree_manager.worktree_exists(&branch_name) {
+            self.set_message(format!("Worktree '{}' already exists", branch_name));
+            return Ok(());
+        }
+
+        self.set_message(format!("Creating worktree '{}'...", branch_name));
+
+        let claude = self.claude.clone();
+        let context_store = self.context_store.clone();
+        let worktree_manager = self.worktree_manager.clone();
+        let config = self.config.clone();
+        let session_hash = config.session_hash();
+        let instruction_role = self
+            .session_roles
+            .get_role(expert_id)
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| config.get_expert_role(expert_id));
+        let core_path = config.core_instructions_path.clone();
+        let role_path = config.role_instructions_path.clone();
+        let expert_name_clone = expert_name.clone();
+        let branch_clone = branch_name.clone();
+        let ready_timeout = config.timeouts.agent_ready;
+
+        let handle = tokio::spawn(async move {
+            claude.send_exit(expert_id).await?;
+            tokio::time::sleep(Duration::from_secs(3)).await;
+
+            let worktree_path = worktree_manager.create_worktree(&branch_clone).await?;
+
+            worktree_manager
+                .setup_macot_symlink(&worktree_path)
+                .await?;
+
+            let wt_path_str = worktree_path.to_str().unwrap().to_string();
+
+            let mut expert_ctx = context_store
+                .load_expert_context(&session_hash, expert_id)
+                .await?
+                .unwrap_or_else(|| {
+                    ExpertContext::new(
+                        expert_id,
+                        expert_name_clone.clone(),
+                        session_hash.clone(),
+                    )
+                });
+            expert_ctx.clear_session();
+            expert_ctx.set_worktree(branch_clone.clone(), wt_path_str.clone());
+            context_store.save_expert_context(&expert_ctx).await?;
+
+            claude
+                .launch_claude(expert_id, &session_hash, &wt_path_str)
+                .await?;
+
+            let ready = claude.wait_for_ready(expert_id, ready_timeout).await?;
+
+            if ready {
+                let instruction_result = load_instruction_with_template(
+                    &core_path,
+                    &role_path,
+                    &instruction_role,
+                    expert_id,
+                    &expert_name_clone,
+                )?;
+                if !instruction_result.content.is_empty() {
+                    claude
+                        .send_instruction(expert_id, &instruction_result.content)
+                        .await?;
+                }
+            }
+
+            Ok(WorktreeLaunchResult {
+                expert_id,
+                expert_name: expert_name_clone,
+                branch_name: branch_clone,
+                worktree_path: wt_path_str,
+                claude_ready: ready,
+            })
+        });
+
+        self.worktree_launch_state = WorktreeLaunchState::InProgress {
+            handle,
+            expert_name,
+            branch_name,
+        };
+
+        Ok(())
+    }
+
+    pub async fn poll_worktree_launch(&mut self) -> Result<()> {
+        let state = std::mem::take(&mut self.worktree_launch_state);
+        match state {
+            WorktreeLaunchState::InProgress {
+                handle,
+                expert_name,
+                branch_name,
+            } => {
+                if handle.is_finished() {
+                    match handle.await {
+                        Ok(Ok(result)) => {
+                            let msg = if result.claude_ready {
+                                format!(
+                                    "{} launched in worktree '{}'",
+                                    result.expert_name, result.branch_name
+                                )
+                            } else {
+                                format!(
+                                    "Worktree '{}' created but Claude may still be starting",
+                                    result.branch_name
+                                )
+                            };
+                            self.set_message(msg);
+                        }
+                        Ok(Err(e)) => {
+                            self.set_message(format!("Worktree launch failed: {}", e));
+                        }
+                        Err(e) => {
+                            self.set_message(format!("Worktree launch panicked: {}", e));
+                        }
+                    }
+                    self.worktree_launch_state = WorktreeLaunchState::Idle;
+                } else {
+                    self.worktree_launch_state = WorktreeLaunchState::InProgress {
+                        handle,
+                        expert_name,
+                        branch_name,
+                    };
+                }
+            }
+            WorktreeLaunchState::Idle => {
+                self.worktree_launch_state = WorktreeLaunchState::Idle;
+            }
+        }
+        Ok(())
+    }
+
     pub async fn run(&mut self) -> Result<()> {
         let mut terminal = UI::setup_terminal()?;
 
@@ -868,6 +1045,8 @@ impl TowerApp {
             let poll_messages_start = Instant::now();
             self.poll_messages().await?;
             let poll_messages_elapsed = poll_messages_start.elapsed();
+
+            self.poll_worktree_launch().await?;
 
             let loop_elapsed = loop_start.elapsed();
             if loop_elapsed.as_millis() > 20 {
@@ -1033,6 +1212,230 @@ mod tests {
         // Verify expert registry has correct number of experts
         assert_eq!(app.expert_registry.len(), expected_experts);
     }
+
+    #[test]
+    fn handle_task_input_keys_ctrl_b_moves_cursor_left() {
+        let mut app = TowerApp::new(create_test_config());
+        app.task_input.set_content("hello".to_string());
+
+        app.handle_task_input_keys(KeyCode::Char('b'), KeyModifiers::CONTROL);
+        assert_eq!(app.task_input.content(), "hello");
+        assert_eq!(
+            app.task_input.cursor_position(),
+            4,
+            "handle_task_input_keys: Ctrl-b should move cursor left"
+        );
+    }
+
+    #[test]
+    fn handle_task_input_keys_ctrl_f_moves_cursor_right() {
+        let mut app = TowerApp::new(create_test_config());
+        app.task_input.set_content("hello".to_string());
+        app.task_input.move_cursor_start();
+
+        app.handle_task_input_keys(KeyCode::Char('f'), KeyModifiers::CONTROL);
+        assert_eq!(app.task_input.content(), "hello");
+        assert_eq!(
+            app.task_input.cursor_position(),
+            1,
+            "handle_task_input_keys: Ctrl-f should move cursor right"
+        );
+    }
+
+    #[test]
+    fn handle_task_input_keys_arrow_keys_no_longer_move_cursor() {
+        let mut app = TowerApp::new(create_test_config());
+        app.task_input.set_content("hello".to_string());
+
+        let pos_before = app.task_input.cursor_position();
+        app.handle_task_input_keys(KeyCode::Left, KeyModifiers::NONE);
+        assert_eq!(
+            app.task_input.cursor_position(),
+            pos_before,
+            "handle_task_input_keys: Left arrow should no longer move cursor"
+        );
+
+        app.task_input.move_cursor_start();
+        let pos_before = app.task_input.cursor_position();
+        app.handle_task_input_keys(KeyCode::Right, KeyModifiers::NONE);
+        assert_eq!(
+            app.task_input.cursor_position(),
+            pos_before,
+            "handle_task_input_keys: Right arrow should no longer move cursor"
+        );
+    }
+
+    #[tokio::test]
+    async fn launch_expert_in_worktree_returns_early_when_in_progress() {
+        let mut app = TowerApp::new(create_test_config());
+
+        let handle = tokio::spawn(async {
+            Ok(WorktreeLaunchResult {
+                expert_id: 0,
+                expert_name: "dummy".to_string(),
+                branch_name: "dummy-branch".to_string(),
+                worktree_path: "/tmp/dummy".to_string(),
+                claude_ready: true,
+            })
+        });
+        app.worktree_launch_state = WorktreeLaunchState::InProgress {
+            handle,
+            expert_name: "dummy".to_string(),
+            branch_name: "dummy-branch".to_string(),
+        };
+
+        app.launch_expert_in_worktree().await.unwrap();
+
+        assert_eq!(
+            app.message(),
+            Some("Worktree launch already in progress"),
+            "launch_expert_in_worktree: should return early with message when already in progress"
+        );
+    }
+
+    #[tokio::test]
+    async fn poll_worktree_launch_idle_stays_idle() {
+        let mut app = TowerApp::new(create_test_config());
+
+        app.poll_worktree_launch().await.unwrap();
+
+        assert!(
+            matches!(app.worktree_launch_state, WorktreeLaunchState::Idle),
+            "poll_worktree_launch: Idle state should remain Idle"
+        );
+        assert!(
+            app.message().is_none(),
+            "poll_worktree_launch: no message should be set when Idle"
+        );
+    }
+
+    #[tokio::test]
+    async fn poll_worktree_launch_success_transitions_to_idle() {
+        let mut app = TowerApp::new(create_test_config());
+
+        let handle = tokio::spawn(async {
+            Ok(WorktreeLaunchResult {
+                expert_id: 1,
+                expert_name: "architect".to_string(),
+                branch_name: "expert-architect-20260208-120000".to_string(),
+                worktree_path: "/tmp/wt".to_string(),
+                claude_ready: true,
+            })
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+        app.worktree_launch_state = WorktreeLaunchState::InProgress {
+            handle,
+            expert_name: "architect".to_string(),
+            branch_name: "expert-architect-20260208-120000".to_string(),
+        };
+
+        app.poll_worktree_launch().await.unwrap();
+
+        assert!(
+            matches!(app.worktree_launch_state, WorktreeLaunchState::Idle),
+            "poll_worktree_launch: should transition to Idle after success"
+        );
+        assert_eq!(
+            app.message(),
+            Some("architect launched in worktree 'expert-architect-20260208-120000'"),
+            "poll_worktree_launch: should set success message"
+        );
+    }
+
+    #[tokio::test]
+    async fn poll_worktree_launch_claude_not_ready_message() {
+        let mut app = TowerApp::new(create_test_config());
+
+        let handle = tokio::spawn(async {
+            Ok(WorktreeLaunchResult {
+                expert_id: 1,
+                expert_name: "backend".to_string(),
+                branch_name: "expert-backend-20260208-130000".to_string(),
+                worktree_path: "/tmp/wt".to_string(),
+                claude_ready: false,
+            })
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+        app.worktree_launch_state = WorktreeLaunchState::InProgress {
+            handle,
+            expert_name: "backend".to_string(),
+            branch_name: "expert-backend-20260208-130000".to_string(),
+        };
+
+        app.poll_worktree_launch().await.unwrap();
+
+        assert!(
+            matches!(app.worktree_launch_state, WorktreeLaunchState::Idle),
+            "poll_worktree_launch: should transition to Idle even when Claude not ready"
+        );
+        assert!(
+            app.message()
+                .unwrap()
+                .contains("Claude may still be starting"),
+            "poll_worktree_launch: should set partial-ready message, got: {:?}",
+            app.message()
+        );
+    }
+
+    #[tokio::test]
+    async fn poll_worktree_launch_failure_transitions_to_idle() {
+        let mut app = TowerApp::new(create_test_config());
+
+        let handle = tokio::spawn(async { Err(anyhow::anyhow!("git worktree failed")) });
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+        app.worktree_launch_state = WorktreeLaunchState::InProgress {
+            handle,
+            expert_name: "backend".to_string(),
+            branch_name: "expert-backend-20260208-130000".to_string(),
+        };
+
+        app.poll_worktree_launch().await.unwrap();
+
+        assert!(
+            matches!(app.worktree_launch_state, WorktreeLaunchState::Idle),
+            "poll_worktree_launch: should transition to Idle after failure"
+        );
+        assert!(
+            app.message().unwrap().contains("Worktree launch failed"),
+            "poll_worktree_launch: should set error message, got: {:?}",
+            app.message()
+        );
+    }
+
+    #[tokio::test]
+    async fn poll_worktree_launch_not_finished_stays_in_progress() {
+        let mut app = TowerApp::new(create_test_config());
+
+        let handle = tokio::spawn(async {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            Ok(WorktreeLaunchResult {
+                expert_id: 1,
+                expert_name: "test".to_string(),
+                branch_name: "test-branch".to_string(),
+                worktree_path: "/tmp".to_string(),
+                claude_ready: true,
+            })
+        });
+
+        app.worktree_launch_state = WorktreeLaunchState::InProgress {
+            handle,
+            expert_name: "test".to_string(),
+            branch_name: "test-branch".to_string(),
+        };
+
+        app.poll_worktree_launch().await.unwrap();
+
+        assert!(
+            matches!(
+                app.worktree_launch_state,
+                WorktreeLaunchState::InProgress { .. }
+            ),
+            "poll_worktree_launch: should stay InProgress while task is running"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1170,6 +1573,35 @@ mod property_tests {
             } else {
                 panic!("Message router should be initialized");
             }
+        }
+
+        #[test]
+        fn branch_name_format_matches_expected_pattern(
+            name in "[a-zA-Z]{3,15}"
+        ) {
+            let branch = format!(
+                "expert-{}-{}",
+                name.to_lowercase(),
+                chrono::Utc::now().format("%Y%m%d-%H%M%S")
+            );
+            let lower = name.to_lowercase();
+            let prefix = format!("expert-{}-", lower);
+            prop_assert!(
+                branch.starts_with(&prefix),
+                "branch_name: should start with expert-<name>-"
+            );
+            let suffix = &branch[prefix.len()..];
+            prop_assert_eq!(
+                suffix.len(),
+                15,
+                "branch_name: timestamp suffix should be 15 chars (YYYYMMDD-HHMMSS)"
+            );
+            prop_assert!(
+                suffix.chars().enumerate().all(|(i, c)| {
+                    if i == 8 { c == '-' } else { c.is_ascii_digit() }
+                }),
+                "branch_name: timestamp should follow YYYYMMDD-HHMMSS format"
+            );
         }
     }
 }

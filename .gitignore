@@ -26,3 +26,6 @@ queue
 
 # Serena files
 .serena
+
+# Property testing regressions
+proptest-regressions/

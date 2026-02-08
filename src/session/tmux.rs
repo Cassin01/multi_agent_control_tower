@@ -5,6 +5,23 @@ use tokio::process::Command;
 
 use crate::config::Config;
 
+/// Trait for sending keys to tmux panes.
+/// Extracted to allow mocking in tests.
+#[async_trait::async_trait]
+pub trait TmuxSender: Send + Sync {
+    async fn send_keys_with_enter(&self, pane_id: u32, keys: &str) -> Result<()>;
+}
+
+#[async_trait::async_trait]
+impl TmuxSender for TmuxManager {
+    async fn send_keys_with_enter(&self, pane_id: u32, keys: &str) -> Result<()> {
+        self.send_keys(pane_id, "C-u").await?;
+        self.send_keys(pane_id, keys).await?;
+        self.send_keys(pane_id, "Enter").await?;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SessionInfo {
     pub session_name: String,
@@ -121,13 +138,6 @@ impl TmuxManager {
             .output()
             .await
             .context(format!("Failed to send keys to pane {}", pane_id))?;
-        Ok(())
-    }
-
-    pub async fn send_keys_with_enter(&self, pane_id: u32, keys: &str) -> Result<()> {
-        self.send_keys(pane_id, "C-u").await?; // Clear existing input
-        self.send_keys(pane_id, keys).await?;
-        self.send_keys(pane_id, "Enter").await?;
         Ok(())
     }
 

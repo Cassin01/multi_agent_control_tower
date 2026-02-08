@@ -1,7 +1,0 @@
-# Seeds for failure cases proptest has generated in the past. It is
-# automatically read and these particular cases re-run before any
-# novel cases are generated.
-#
-# It is recommended to check this file in to source control so that
-# everyone who runs the test benefits from these saved cases.
-cc 0b8d09c6830af5a6b345d0e292c0c0860c31fa85ce1a0e54fb995a3731906b8d # shrinks to messages = [QueuedMessage { message: Message { message_id: "msg-20260205-020232381", from_expert_id: 0, to: ExpertId { expert_id: 1 }, message_type: Query, priority: High, created_at: 2026-02-05T02:02:32.381766Z, content: MessageContent { subject: "1", body: "0A0 a" }, reply_to: None, delivery_attempts: 0, expires_at: Some(2026-02-06T02:02:32.381766Z), metadata: {} }, attempts: 0, last_attempt: None, status: Pending }, QueuedMessage { message: Message { message_id: "msg-20260205-020232381", from_expert_id: 1, to: ExpertId { expert_id: 1 }, message_type: Query, priority: High, created_at: 2026-02-05T02:02:32.381783Z, content: MessageContent { subject: " 0", body: "Vn pj s3aU0l b  cC 50c0 5Nor3G8BHw3zIK ZzbE RAH   o FySEB 3YICb" }, reply_to: None, delivery_attempts: 0, expires_at: Some(2026-02-06T02:02:32.381783Z), metadata: {} }, attempts: 0, last_attempt: None, status: Pending }]
