@@ -56,6 +56,7 @@ impl ExpertStateDetector {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn ensure_status_dir(&self) -> Result<()> {
         std::fs::create_dir_all(&self.status_dir)?;
         Ok(())

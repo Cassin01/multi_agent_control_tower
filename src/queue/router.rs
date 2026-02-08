@@ -22,9 +22,11 @@ pub enum RouterError {
     #[error("Expert not found: {0}")]
     ExpertNotFound(String),
 
+    #[allow(dead_code)]
     #[error("Delivery failed: {0}")]
     DeliveryFailed(String),
 
+    #[allow(dead_code)]
     #[error("No idle experts available for role: {0}")]
     NoIdleExpertsForRole(String),
 
@@ -405,11 +407,13 @@ impl<T: TmuxSender> MessageRouter<T> {
     }
 
     /// Get mutable access to the queue manager for external operations
+    #[allow(dead_code)]
     pub fn queue_manager_mut(&mut self) -> &mut QueueManager {
         &mut self.queue_manager
     }
 
     /// Get access to the expert registry for external operations
+    #[allow(dead_code)]
     pub fn expert_registry(&self) -> &ExpertRegistry {
         &self.expert_registry
     }
@@ -434,13 +438,16 @@ impl<T: TmuxSender> MessageRouter<T> {
     }
 
     /// Get current queue statistics
+    #[allow(dead_code)]
     pub async fn get_queue_stats(&self) -> Result<QueueStats, RouterError> {
         let all_messages = self.queue_manager.read_queue().await?;
         let pending_messages = self.queue_manager.get_pending_messages().await?;
         
-        let mut stats = QueueStats::default();
-        stats.total_messages = all_messages.len();
-        stats.pending_messages = pending_messages.len();
+        let mut stats = QueueStats {
+            total_messages: all_messages.len(),
+            pending_messages: pending_messages.len(),
+            ..Default::default()
+        };
         
         // Count by priority
         for message in &all_messages {
@@ -464,6 +471,7 @@ impl<T: TmuxSender> MessageRouter<T> {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct QueueStats {
     pub total_messages: usize,
@@ -477,7 +485,6 @@ pub struct QueueStats {
 
 #[cfg(test)]
 mod mock_tmux {
-    use super::*;
     use crate::session::TmuxSender;
 
     #[derive(Clone)]

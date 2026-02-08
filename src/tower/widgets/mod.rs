@@ -9,6 +9,7 @@ mod task_input;
 
 pub use effort_selector::EffortSelector;
 pub use help_modal::HelpModal;
+#[allow(unused_imports)]
 pub use messaging_display::{MessageFilter, MessagingDisplay};
 pub use report_display::{ReportDisplay, ViewMode};
 pub use role_selector::RoleSelector;

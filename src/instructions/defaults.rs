@@ -1,6 +1,5 @@
 /// Embedded default role instructions.
 /// These are used as fallback when user hasn't customized instructions.
-
 pub const DEFAULT_ARCHITECT: &str = include_str!("../../instructions/architect.md");
 pub const DEFAULT_BACKEND: &str = include_str!("../../instructions/backend.md");
 pub const DEFAULT_FRONTEND: &str = include_str!("../../instructions/frontend.md");

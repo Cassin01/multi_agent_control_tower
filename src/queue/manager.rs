@@ -9,6 +9,7 @@ use crate::models::{Message, MessageId, QueuedMessage, Report};
 ///
 /// These error types provide detailed information for debugging and
 /// support error isolation to prevent cascading failures.
+#[allow(dead_code)]
 #[derive(Debug, Error)]
 pub enum QueueError {
     /// Error reading or writing to the file system
@@ -61,6 +62,7 @@ pub enum QueueError {
     },
 }
 
+#[allow(dead_code)]
 impl QueueError {
     /// Create an I/O error with context
     pub fn io(operation: &'static str, path: impl Into<String>, source: std::io::Error) -> Self {
@@ -90,6 +92,7 @@ impl QueueError {
 }
 
 /// Result type alias for queue operations
+#[allow(dead_code)]
 pub type QueueResult<T> = std::result::Result<T, QueueError>;
 
 pub struct QueueManager {
@@ -311,11 +314,13 @@ impl QueueManager {
     }
 
     /// Count messages in queue
+    #[allow(dead_code)]
     pub async fn queue_len(&self) -> Result<usize> {
         Ok(self.read_queue().await?.len())
     }
 
     /// Update delivery attempts counter for a message
+    #[allow(dead_code)]
     pub async fn update_delivery_attempts(&self, message_id: &str, attempts: u32) -> Result<()> {
         let path = self.message_file(message_id);
         if !path.exists() {

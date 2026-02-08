@@ -60,7 +60,7 @@ pub struct RoleInfo {
     pub description: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct AvailableRoles {
     pub roles: Vec<RoleInfo>,
 }
@@ -128,7 +128,7 @@ impl AvailableRoles {
     }
 
     fn capitalize_name(name: &str) -> String {
-        name.split(|c| c == '-' || c == '_')
+        name.split(['-', '_'])
             .map(|part| {
                 let mut chars = part.chars();
                 match chars.next() {
@@ -151,11 +151,6 @@ impl AvailableRoles {
     }
 }
 
-impl Default for AvailableRoles {
-    fn default() -> Self {
-        Self { roles: Vec::new() }
-    }
-}
 
 #[cfg(test)]
 mod tests {

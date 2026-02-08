@@ -85,7 +85,7 @@ impl ExpertRegistry {
         // Add to role lookup
         self.role_to_ids
             .entry(role)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(expert_id);
 
         Ok(expert_id)
@@ -137,6 +137,7 @@ impl ExpertRegistry {
     }
 
     /// Find all expert IDs with the specified role
+    #[allow(dead_code)]
     pub fn find_by_role(&self, role: &Role) -> Vec<ExpertId> {
         self.role_to_ids
             .get(role)
@@ -158,6 +159,7 @@ impl ExpertRegistry {
     }
 
     /// Get all expert IDs that are currently idle
+    #[allow(dead_code)]
     pub fn get_idle_experts(&self) -> Vec<ExpertId> {
         self.experts
             .iter()
@@ -172,6 +174,7 @@ impl ExpertRegistry {
     }
 
     /// Get all expert IDs with the specified role that are currently idle
+    #[allow(dead_code)]
     pub fn get_idle_experts_by_role(&self, role: &Role) -> Vec<ExpertId> {
         let role_experts = self.find_by_role(role);
         role_experts
@@ -212,19 +215,22 @@ impl ExpertRegistry {
     }
 
     /// Get mutable expert information by ID
+    #[allow(dead_code)]
     pub fn get_expert_mut(&mut self, expert_id: ExpertId) -> Option<&mut ExpertInfo> {
         self.experts.get_mut(&expert_id)
     }
 
     /// Get all registered experts
+    #[allow(dead_code)]
     pub fn get_all_experts(&self) -> Vec<&ExpertInfo> {
         self.experts.values().collect()
     }
 
     /// Remove an expert from the registry
-    /// 
+    ///
     /// This removes the expert from all lookup tables and returns the expert info
     /// if it existed.
+    #[allow(dead_code)]
     pub fn remove_expert(&mut self, expert_id: ExpertId) -> Option<ExpertInfo> {
         if let Some(expert) = self.experts.remove(&expert_id) {
             // Remove from name lookup
@@ -246,11 +252,13 @@ impl ExpertRegistry {
     }
 
     /// Get the number of registered experts
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.experts.len()
     }
 
     /// Check if the registry is empty
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.experts.is_empty()
     }

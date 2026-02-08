@@ -21,6 +21,7 @@ impl ClaudeManager {
 }
 
 impl<T: TmuxSender> ClaudeManager<T> {
+    #[allow(dead_code)]
     pub fn with_sender(sender: T, context_store: ContextStore) -> Self {
         Self {
             tmux: sender,
