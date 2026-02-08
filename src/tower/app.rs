@@ -552,14 +552,16 @@ impl TowerApp {
                     self.assign_task().await?;
                 }
 
-                if key.modifiers.contains(KeyModifiers::CONTROL)
-                    && self.focus == FocusArea::TaskInput
-                {
+                if self.focus == FocusArea::TaskInput {
                     match key.code {
-                        KeyCode::Char('p') => self.status_display.prev(),
-                        KeyCode::Char('n') => self.status_display.next(),
-                        KeyCode::Char('o') => self.open_role_selector(),
+                        KeyCode::Up => self.status_display.prev(),
+                        KeyCode::Down => self.status_display.next(),
                         _ => {}
+                    }
+                    if key.modifiers.contains(KeyModifiers::CONTROL) {
+                        if let KeyCode::Char('o') = key.code {
+                            self.open_role_selector();
+                        }
                     }
                 }
 
@@ -590,6 +592,10 @@ impl TowerApp {
                     match c {
                         'b' => self.task_input.move_cursor_left(),
                         'f' => self.task_input.move_cursor_right(),
+                        'a' => self.task_input.move_cursor_line_start(),
+                        'e' => self.task_input.move_cursor_line_end(),
+                        'p' => self.task_input.move_cursor_up(),
+                        'n' => self.task_input.move_cursor_down(),
                         _ => {}
                     }
                 } else if !modifiers.contains(KeyModifiers::ALT) {
@@ -1266,7 +1272,7 @@ mod tests {
     }
 
     #[test]
-    fn handle_task_input_keys_arrow_keys_no_longer_move_cursor() {
+    fn handle_task_input_keys_arrow_keys_do_not_move_cursor() {
         let mut app = create_test_app();
         app.task_input.set_content("hello".to_string());
 
@@ -1275,7 +1281,7 @@ mod tests {
         assert_eq!(
             app.task_input.cursor_position(),
             pos_before,
-            "handle_task_input_keys: Left arrow should no longer move cursor"
+            "handle_task_input_keys: Left arrow should not move cursor"
         );
 
         app.task_input.move_cursor_start();
@@ -1284,7 +1290,60 @@ mod tests {
         assert_eq!(
             app.task_input.cursor_position(),
             pos_before,
-            "handle_task_input_keys: Right arrow should no longer move cursor"
+            "handle_task_input_keys: Right arrow should not move cursor"
+        );
+    }
+
+    #[test]
+    fn handle_task_input_keys_ctrl_a_moves_to_line_start() {
+        let mut app = create_test_app();
+        app.task_input.set_content("abc\ndef".to_string());
+        // cursor at end (pos 7, second line)
+        app.handle_task_input_keys(KeyCode::Char('a'), KeyModifiers::CONTROL);
+        assert_eq!(
+            app.task_input.cursor_position(),
+            4,
+            "handle_task_input_keys: Ctrl+A should move to start of current line"
+        );
+    }
+
+    #[test]
+    fn handle_task_input_keys_ctrl_e_moves_to_line_end() {
+        let mut app = create_test_app();
+        app.task_input.set_content("abc\ndef".to_string());
+        app.task_input.move_cursor_start();
+        app.handle_task_input_keys(KeyCode::Char('e'), KeyModifiers::CONTROL);
+        assert_eq!(
+            app.task_input.cursor_position(),
+            3,
+            "handle_task_input_keys: Ctrl+E should move to end of current line"
+        );
+    }
+
+    #[test]
+    fn handle_task_input_keys_ctrl_p_moves_cursor_up() {
+        let mut app = create_test_app();
+        app.task_input.set_content("abc\ndef".to_string());
+        // cursor at end (pos 7)
+        app.handle_task_input_keys(KeyCode::Char('p'), KeyModifiers::CONTROL);
+        assert_eq!(
+            app.task_input.cursor_position(),
+            3,
+            "handle_task_input_keys: Ctrl+P should move cursor up"
+        );
+    }
+
+    #[test]
+    fn handle_task_input_keys_ctrl_n_moves_cursor_down() {
+        let mut app = create_test_app();
+        app.task_input.set_content("abc\ndef".to_string());
+        app.task_input.move_cursor_start();
+        app.task_input.move_cursor_right(); // pos 1
+        app.handle_task_input_keys(KeyCode::Char('n'), KeyModifiers::CONTROL);
+        assert_eq!(
+            app.task_input.cursor_position(),
+            5,
+            "handle_task_input_keys: Ctrl+N should move cursor down"
         );
     }
 

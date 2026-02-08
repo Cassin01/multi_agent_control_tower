@@ -101,6 +101,84 @@ impl TaskInput {
         self.cursor_position = self.content.chars().count();
     }
 
+    pub fn move_cursor_line_start(&mut self) {
+        let chars: Vec<char> = self.content.chars().collect();
+        let mut pos = self.cursor_position;
+        while pos > 0 && chars[pos - 1] != '\n' {
+            pos -= 1;
+        }
+        self.cursor_position = pos;
+    }
+
+    pub fn move_cursor_line_end(&mut self) {
+        let chars: Vec<char> = self.content.chars().collect();
+        let len = chars.len();
+        let mut pos = self.cursor_position;
+        while pos < len && chars[pos] != '\n' {
+            pos += 1;
+        }
+        self.cursor_position = pos;
+    }
+
+    pub fn move_cursor_up(&mut self) {
+        let chars: Vec<char> = self.content.chars().collect();
+        // Find start of current line
+        let mut line_start = self.cursor_position;
+        while line_start > 0 && chars[line_start - 1] != '\n' {
+            line_start -= 1;
+        }
+        let col = self.cursor_position - line_start;
+
+        if line_start == 0 {
+            // Already on the first line — go to position 0
+            self.cursor_position = 0;
+            return;
+        }
+
+        // Find start of previous line (line_start - 1 is the '\n' before current line)
+        let prev_line_end = line_start - 1;
+        let mut prev_line_start = prev_line_end;
+        while prev_line_start > 0 && chars[prev_line_start - 1] != '\n' {
+            prev_line_start -= 1;
+        }
+        let prev_line_len = prev_line_end - prev_line_start;
+
+        self.cursor_position = prev_line_start + col.min(prev_line_len);
+    }
+
+    pub fn move_cursor_down(&mut self) {
+        let chars: Vec<char> = self.content.chars().collect();
+        let len = chars.len();
+        // Find start of current line
+        let mut line_start = self.cursor_position;
+        while line_start > 0 && chars[line_start - 1] != '\n' {
+            line_start -= 1;
+        }
+        let col = self.cursor_position - line_start;
+
+        // Find end of current line
+        let mut line_end = self.cursor_position;
+        while line_end < len && chars[line_end] != '\n' {
+            line_end += 1;
+        }
+
+        if line_end == len {
+            // Already on the last line — go to end of content
+            self.cursor_position = len;
+            return;
+        }
+
+        // line_end is the '\n', next line starts at line_end + 1
+        let next_line_start = line_end + 1;
+        let mut next_line_end = next_line_start;
+        while next_line_end < len && chars[next_line_end] != '\n' {
+            next_line_end += 1;
+        }
+        let next_line_len = next_line_end - next_line_start;
+
+        self.cursor_position = next_line_start + col.min(next_line_len);
+    }
+
     #[allow(dead_code)]
     pub fn cursor_position(&self) -> usize {
         self.cursor_position
@@ -385,5 +463,288 @@ mod tests {
 
         input.delete_forward();
         assert_eq!(input.content(), "う");
+    }
+
+    // --- move_cursor_line_start tests ---
+
+    #[test]
+    fn move_cursor_line_start_single_line() {
+        let mut input = TaskInput::new();
+        input.set_content("hello".to_string());
+        // cursor at end (pos 5)
+        input.move_cursor_line_start();
+        assert_eq!(
+            input.cursor_position(), 0,
+            "move_cursor_line_start: single line should go to 0"
+        );
+    }
+
+    #[test]
+    fn move_cursor_line_start_multiline_second_line() {
+        let mut input = TaskInput::new();
+        input.set_content("abc\ndef".to_string());
+        // cursor at end (pos 7), on second line
+        input.move_cursor_line_start();
+        assert_eq!(
+            input.cursor_position(), 4,
+            "move_cursor_line_start: should go to start of second line (after newline)"
+        );
+    }
+
+    #[test]
+    fn move_cursor_line_start_middle_of_line() {
+        let mut input = TaskInput::new();
+        input.set_content("abc\ndef".to_string());
+        // put cursor at 'e' (pos 5)
+        input.move_cursor_start();
+        for _ in 0..5 {
+            input.move_cursor_right();
+        }
+        input.move_cursor_line_start();
+        assert_eq!(
+            input.cursor_position(), 4,
+            "move_cursor_line_start: from middle of second line should go to start of that line"
+        );
+    }
+
+    #[test]
+    fn move_cursor_line_start_empty() {
+        let mut input = TaskInput::new();
+        input.move_cursor_line_start();
+        assert_eq!(
+            input.cursor_position(), 0,
+            "move_cursor_line_start: empty content should stay at 0"
+        );
+    }
+
+    #[test]
+    fn move_cursor_line_start_japanese() {
+        let mut input = TaskInput::new();
+        input.set_content("あいう\nえお".to_string());
+        // cursor at end (pos 6)
+        input.move_cursor_line_start();
+        assert_eq!(
+            input.cursor_position(), 4,
+            "move_cursor_line_start: Japanese multiline should go to start of second line"
+        );
+    }
+
+    // --- move_cursor_line_end tests ---
+
+    #[test]
+    fn move_cursor_line_end_single_line() {
+        let mut input = TaskInput::new();
+        input.set_content("hello".to_string());
+        input.move_cursor_start();
+        input.move_cursor_line_end();
+        assert_eq!(
+            input.cursor_position(), 5,
+            "move_cursor_line_end: single line should go to end"
+        );
+    }
+
+    #[test]
+    fn move_cursor_line_end_first_line_of_multiline() {
+        let mut input = TaskInput::new();
+        input.set_content("abc\ndef".to_string());
+        input.move_cursor_start();
+        input.move_cursor_line_end();
+        assert_eq!(
+            input.cursor_position(), 3,
+            "move_cursor_line_end: first line should stop before newline"
+        );
+    }
+
+    #[test]
+    fn move_cursor_line_end_second_line_of_multiline() {
+        let mut input = TaskInput::new();
+        input.set_content("abc\ndef".to_string());
+        // put cursor at start of second line (pos 4)
+        input.move_cursor_start();
+        for _ in 0..4 {
+            input.move_cursor_right();
+        }
+        input.move_cursor_line_end();
+        assert_eq!(
+            input.cursor_position(), 7,
+            "move_cursor_line_end: second line should go to end of content"
+        );
+    }
+
+    #[test]
+    fn move_cursor_line_end_empty() {
+        let mut input = TaskInput::new();
+        input.move_cursor_line_end();
+        assert_eq!(
+            input.cursor_position(), 0,
+            "move_cursor_line_end: empty content should stay at 0"
+        );
+    }
+
+    #[test]
+    fn move_cursor_line_end_japanese() {
+        let mut input = TaskInput::new();
+        input.set_content("あいう\nえお".to_string());
+        input.move_cursor_start();
+        input.move_cursor_line_end();
+        assert_eq!(
+            input.cursor_position(), 3,
+            "move_cursor_line_end: Japanese first line should stop before newline"
+        );
+    }
+
+    // --- move_cursor_up tests ---
+
+    #[test]
+    fn move_cursor_up_single_line_goes_to_start() {
+        let mut input = TaskInput::new();
+        input.set_content("hello".to_string());
+        input.move_cursor_up();
+        assert_eq!(
+            input.cursor_position(), 0,
+            "move_cursor_up: on first line should go to position 0"
+        );
+    }
+
+    #[test]
+    fn move_cursor_up_from_second_line() {
+        let mut input = TaskInput::new();
+        input.set_content("abc\ndef".to_string());
+        // cursor at end of second line (pos 7, col 3)
+        input.move_cursor_up();
+        assert_eq!(
+            input.cursor_position(), 3,
+            "move_cursor_up: should go to same column on previous line"
+        );
+    }
+
+    #[test]
+    fn move_cursor_up_column_clamp() {
+        let mut input = TaskInput::new();
+        input.set_content("ab\ndefgh".to_string());
+        // cursor at end of second line (pos 8, col 5)
+        input.move_cursor_up();
+        assert_eq!(
+            input.cursor_position(), 2,
+            "move_cursor_up: should clamp to end of shorter previous line"
+        );
+    }
+
+    #[test]
+    fn move_cursor_up_empty() {
+        let mut input = TaskInput::new();
+        input.move_cursor_up();
+        assert_eq!(
+            input.cursor_position(), 0,
+            "move_cursor_up: empty content should stay at 0"
+        );
+    }
+
+    #[test]
+    fn move_cursor_up_japanese() {
+        let mut input = TaskInput::new();
+        input.set_content("あい\nうえお".to_string());
+        // cursor at end (pos 6, second line col 3)
+        input.move_cursor_up();
+        assert_eq!(
+            input.cursor_position(), 2,
+            "move_cursor_up: should clamp to end of shorter Japanese prev line"
+        );
+    }
+
+    #[test]
+    fn move_cursor_up_three_lines() {
+        let mut input = TaskInput::new();
+        input.set_content("abc\ndef\nghi".to_string());
+        // cursor at end (pos 11, third line col 3)
+        input.move_cursor_up();
+        assert_eq!(
+            input.cursor_position(), 7,
+            "move_cursor_up: from third line should go to second line same col"
+        );
+    }
+
+    // --- move_cursor_down tests ---
+
+    #[test]
+    fn move_cursor_down_single_line_goes_to_end() {
+        let mut input = TaskInput::new();
+        input.set_content("hello".to_string());
+        input.move_cursor_start();
+        input.move_cursor_down();
+        assert_eq!(
+            input.cursor_position(), 5,
+            "move_cursor_down: on last line should go to end of content"
+        );
+    }
+
+    #[test]
+    fn move_cursor_down_from_first_line() {
+        let mut input = TaskInput::new();
+        input.set_content("abc\ndef".to_string());
+        // put cursor at pos 2 (col 2 on first line)
+        input.move_cursor_start();
+        input.move_cursor_right();
+        input.move_cursor_right();
+        input.move_cursor_down();
+        assert_eq!(
+            input.cursor_position(), 6,
+            "move_cursor_down: should go to same column on next line"
+        );
+    }
+
+    #[test]
+    fn move_cursor_down_column_clamp() {
+        let mut input = TaskInput::new();
+        input.set_content("abcde\nfg".to_string());
+        // cursor at pos 4 (col 4 on first line)
+        input.move_cursor_start();
+        for _ in 0..4 {
+            input.move_cursor_right();
+        }
+        input.move_cursor_down();
+        assert_eq!(
+            input.cursor_position(), 8,
+            "move_cursor_down: should clamp to end of shorter next line"
+        );
+    }
+
+    #[test]
+    fn move_cursor_down_empty() {
+        let mut input = TaskInput::new();
+        input.move_cursor_down();
+        assert_eq!(
+            input.cursor_position(), 0,
+            "move_cursor_down: empty content should stay at 0"
+        );
+    }
+
+    #[test]
+    fn move_cursor_down_japanese() {
+        let mut input = TaskInput::new();
+        input.set_content("あいう\nえ".to_string());
+        // cursor at pos 2 (col 2 on first line)
+        input.move_cursor_start();
+        input.move_cursor_right();
+        input.move_cursor_right();
+        input.move_cursor_down();
+        assert_eq!(
+            input.cursor_position(), 5,
+            "move_cursor_down: should clamp to end of shorter Japanese next line"
+        );
+    }
+
+    #[test]
+    fn move_cursor_down_three_lines() {
+        let mut input = TaskInput::new();
+        input.set_content("abc\ndef\nghi".to_string());
+        // cursor at pos 1 (col 1 on first line)
+        input.move_cursor_start();
+        input.move_cursor_right();
+        input.move_cursor_down();
+        assert_eq!(
+            input.cursor_position(), 5,
+            "move_cursor_down: from first line should go to second line same col"
+        );
     }
 }
