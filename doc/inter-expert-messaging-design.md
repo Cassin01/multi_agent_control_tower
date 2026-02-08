@@ -3,16 +3,12 @@
 ## 1. Overview
 
 ### 1.1 Purpose
-Enable message-based communication between experts (Claude instances in tmux panes), with the Control Tower acting as a message router. Experts can coordinate, delegate tasks, and share knowledge directly with each other.
-
-**Note:** The Control Tower only routes messages; it does not send messages itself. Task assignment from the Control Tower uses the existing task system (`assign_task()`).
+Enable message-based communication between experts (Claude instances in tmux panes) through the Control Tower, allowing coordination, task delegation, and knowledge sharing.
 
 ### 1.2 Current State
-- `src/models/` contains `effort.rs`, `report.rs`, `task.rs` — **No message model exists yet**
-- `src/queue/manager.rs` has task and report operations — **No message queue methods yet**
-- Control Tower UI (`src/tower/`) has no messaging components
-
-**This document proposes new components to be implemented.**
+- Message model exists at `src/models/message.rs` with types: Query, Response, Notify, Delegate
+- QueueManager at `src/queue/manager.rs` has send/list/delete methods
+- **NOT integrated** into Control Tower UI or expert workflow
 
 ### 1.3 Design Principles
 | Principle | Description |
@@ -68,7 +64,7 @@ Enable message-based communication between experts (Claude instances in tmux pan
 ### 2.2 Message Delivery Flow
 
 ```
-1. Expert writes message to queue
+1. Expert/Tower writes message to queue
    └─▶ .macot/messages/queue/msg-{timestamp}.yaml
 
 2. Control Tower polls queue (1s interval)
@@ -136,6 +132,7 @@ pub enum MessageType {
     Response,   // Reply to query
     Notify,     // Information only
     Delegate,   // Task handoff
+    SystemNotify, // Control Tower system messages
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -147,25 +144,13 @@ pub enum MessagePriority {
 }
 ```
 
-### 3.3 Constants
-
-```rust
-// src/models/message.rs
-
-/// Maximum retry attempts before removing message with unknown recipient
-pub const MAX_DELIVERY_ATTEMPTS: u32 = 100;
-
-/// Default message TTL in seconds (24 hours)
-pub const DEFAULT_MESSAGE_TTL_SECS: u64 = 86400;
-```
-
-### 3.4 Message Structure
+### 3.3 Message Structure
 
 ```rust
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub message_id: String,
-    pub from_expert_id: u32,  // Sending expert's ID (0-N)
+    pub from_expert_id: u32,  // 255 = Control Tower
     pub to: MessageRecipient,
     pub message_type: MessageType,
     pub priority: MessagePriority,
@@ -173,10 +158,6 @@ pub struct Message {
     pub content: MessageContent,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_to: Option<String>,  // Original message_id for responses
-    #[serde(default)]
-    pub delivery_attempts: u32,    // Incremented on each failed delivery
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expires_at: Option<DateTime<Utc>>,  // Message expiration time (TTL)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -186,7 +167,7 @@ pub struct MessageContent {
 }
 ```
 
-### 3.5 Message YAML Schema
+### 3.4 Message YAML Schema
 
 ```yaml
 # .macot/messages/queue/msg-20240115-103000123.yaml
@@ -223,15 +204,15 @@ reply_to: null
 ---
 # Example 3: Send to any expert with role
 message_id: "msg-20240115-103200789"
-from_expert_id: 0  # Architect expert
+from_expert_id: 255  # Control Tower
 to:
   role: "backend"
 message_type: delegate
 priority: normal
 created_at: "2024-01-15T10:32:00.789Z"
 content:
-  subject: "Need Backend Help"
-  body: "Please implement the authentication middleware."
+  subject: "New Task Available"
+  body: "Implement authentication middleware."
 reply_to: null
 ```
 
@@ -262,10 +243,6 @@ reply_to: null
 // src/queue/manager.rs
 
 impl QueueManager {
-    fn messages_path(&self) -> PathBuf {
-        self.base_path.join("messages")
-    }
-
     fn queue_path(&self) -> PathBuf {
         self.messages_path().join("queue")
     }
@@ -324,22 +301,6 @@ impl QueueManager {
     pub async fn queue_len(&self) -> Result<usize> {
         Ok(self.read_queue().await?.len())
     }
-
-    /// Update delivery attempts counter for a message
-    pub async fn update_delivery_attempts(&self, message_id: &str, attempts: u32) -> Result<()> {
-        let path = self.queue_path().join(format!("{}.yaml", message_id));
-        if !path.exists() {
-            return Ok(());
-        }
-
-        let content = fs::read_to_string(&path).await?;
-        let mut message: Message = serde_yaml::from_str(&content)?;
-        message.delivery_attempts = attempts;
-
-        let yaml = serde_yaml::to_string(&message)?;
-        fs::write(&path, yaml).await?;
-        Ok(())
-    }
 }
 ```
 
@@ -380,9 +341,9 @@ impl TowerApp {
                 if let Some(expert_id) = self.find_expert_by_name(expert_name) {
                     self.try_deliver_to_expert(expert_id, message).await
                 } else {
-                    // Unknown expert name - increment attempts and check threshold
+                    // Unknown expert name - log warning and skip
                     tracing::warn!("Unknown expert name: {}", expert_name);
-                    self.handle_undeliverable(message).await
+                    Ok(false)
                 }
             }
             MessageRecipient::Role { role } => {
@@ -392,11 +353,6 @@ impl TowerApp {
     }
 
     /// Try to deliver to specific expert. Returns true if delivered.
-    ///
-    /// Note: There is a minor race condition between status check and send.
-    /// If expert becomes busy between check and send, message may be delivered
-    /// to a non-idle expert. This is acceptable as the message will still be
-    /// visible to the expert when they return to idle state.
     async fn try_deliver_to_expert(
         &mut self,
         expert_id: u32,
@@ -465,33 +421,34 @@ impl TowerApp {
         None
     }
 
-    /// Handle undeliverable message (unknown recipient or expired)
-    /// Returns Ok(true) to remove message, Ok(false) to keep in queue
-    async fn handle_undeliverable(&mut self, message: &Message) -> Result<bool> {
-        // Check TTL expiration
-        if let Some(expires_at) = message.expires_at {
-            if Utc::now() > expires_at {
-                tracing::info!("Message {} expired, removing from queue", message.message_id);
-                return Ok(true);  // Remove expired message
-            }
-        }
+    /// Send message from Control Tower
+    pub async fn send_message(
+        &mut self,
+        to: MessageRecipient,
+        msg_type: MessageType,
+        subject: String,
+        body: String,
+    ) -> Result<()> {
+        let message = Message {
+            message_id: generate_message_id(),
+            from_expert_id: 255,  // Control Tower
+            to,
+            message_type: msg_type,
+            priority: MessagePriority::Normal,
+            created_at: Utc::now(),
+            content: MessageContent { subject, body },
+            reply_to: None,
+        };
 
-        // Increment delivery attempts (requires mutable message or queue update)
-        let attempts = message.delivery_attempts + 1;
-        if attempts >= MAX_DELIVERY_ATTEMPTS {
-            tracing::warn!(
-                "Message {} exceeded max delivery attempts ({}), removing from queue",
-                message.message_id,
-                MAX_DELIVERY_ATTEMPTS
-            );
-            return Ok(true);  // Remove after max attempts
-        }
-
-        // Update attempts count in queue file
-        self.queue.update_delivery_attempts(&message.message_id, attempts).await?;
-        Ok(false)  // Keep in queue for retry
+        self.queue.enqueue(&message).await?;
+        self.set_message("Message queued".to_string());
+        Ok(())
     }
+}
 
+fn generate_message_id() -> String {
+    let now = Utc::now();
+    format!("msg-{}", now.format("%Y%m%d-%H%M%S%3f"))
 }
 ```
 
@@ -499,43 +456,57 @@ impl TowerApp {
 
 ## 6. UI Components
 
-### 6.1 Message Panel (Display Only)
-
-The Control Tower displays queued messages for monitoring purposes only. It does not send messages.
+### 6.1 Message Panel
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│ Messages [2 queued]                                              │
+│ Messages [2 queued]                             Ctrl+M: Compose  │
 ├─────────────────────────────────────────────────────────────────┤
-│ ? [0→2] API Question                                2m ago  High │
-│ D [0→role:backend] Need Backend Help                5m ago       │
+│ ? [0→Backend] API Question                          2m ago  High │
+│ D [Tower→role:backend] New Task                     5m ago       │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 **Legend:**
-- `?` Query | `!` Notify | `R` Response | `D` Delegate
-- `[0→2]` From Expert 0 to Expert 2
-- `[0→role:backend]` From Expert 0 to any expert with role "backend"
+- `?` Query | `!` Notify | `R` Response | `D` Delegate | `S` SystemNotify
+- `[0→Backend]` From Expert 0 to Expert "Backend"
+- `[Tower→role:backend]` From Control Tower to role "backend"
 
-### 6.2 Keyboard Shortcuts
+### 6.2 Compose Modal
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Compose Message                                            [X]  │
+├─────────────────────────────────────────────────────────────────┤
+│ From:     Control Tower                                         │
+│ To:       (•) Expert  [▼ Backend (Expert 2)    ]               │
+│           ( ) Role    [▼ backend               ]               │
+│ Type:     [▼ Query                 ]                           │
+│ Priority: [▼ Normal                ]                           │
+├─────────────────────────────────────────────────────────────────┤
+│ Subject:  [                                                  ]  │
+├─────────────────────────────────────────────────────────────────┤
+│ Body:                                                           │
+│ ┌─────────────────────────────────────────────────────────────┐ │
+│ │                                                             │ │
+│ │                                                             │ │
+│ └─────────────────────────────────────────────────────────────┘ │
+├─────────────────────────────────────────────────────────────────┤
+│ [Ctrl+Enter: Send]                              [Esc: Cancel]   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 6.3 Keyboard Shortcuts
 
 | Context | Key | Action |
 |---------|-----|--------|
+| Global | `Ctrl+M` | Open compose modal |
 | Message Panel | `j` / `↓` | Next message |
 | Message Panel | `k` / `↑` | Previous message |
-| Message Panel | `d` | Delete message from queue |
-
-### 6.3 Separation of Concerns
-
-| Channel | Purpose | Used By |
-|---------|---------|---------|
-| Task System (`assign_task()`) | Formal task assignment with tracking | Control Tower → Expert |
-| Message Queue | Expert coordination and communication | Expert ↔ Expert |
-
-**Design Rationale:**
-- Control Tower assigns tasks via the existing task system with effort levels and reporting
-- Experts communicate with each other via messages for coordination
-- This separation keeps task tracking formal while allowing flexible expert communication
+| Message Panel | `d` | Delete message |
+| Compose Modal | `Tab` | Next field |
+| Compose Modal | `Ctrl+Enter` | Send |
+| Compose Modal | `Esc` | Cancel |
 
 ---
 
@@ -602,31 +573,25 @@ When responding to a Query:
 ## 8. Implementation Phases
 
 ### Phase 1: Core Infrastructure
-- [ ] Create `src/models/message.rs` module
-- [ ] Define constants: `MAX_DELIVERY_ATTEMPTS`, `DEFAULT_MESSAGE_TTL_SECS`
 - [ ] Implement `MessageRecipient` enum with three variants
-- [ ] Implement `Message` struct with TTL and delivery_attempts fields
-- [ ] Add message module to `src/models/mod.rs`
-- [ ] Implement `QueueManager` message queue methods (enqueue, read_queue, dequeue, update_delivery_attempts)
-- [ ] Add `messages_path()` helper to QueueManager
+- [ ] Update `Message` struct
+- [ ] Implement `QueueManager` queue methods
 - [ ] Initialize queue directory in `init()`
-- [ ] Write unit tests for queue operations and TTL handling
+- [ ] Write unit tests
 
 ### Phase 2: Message Router
-- [ ] Add `last_message_poll: Instant` field to TowerApp
 - [ ] Implement `poll_messages()` in TowerApp
 - [ ] Implement `try_deliver()` routing logic
-- [ ] Implement `try_deliver_to_expert()` with race condition documentation
+- [ ] Implement `try_deliver_to_expert()`
 - [ ] Implement `try_deliver_to_role()`
-- [ ] Implement `handle_undeliverable()` for TTL and max attempts handling
 - [ ] Implement `send_to_expert()` via tmux
-- [ ] Implement `find_expert_by_name()`
 - [ ] Add polling to main event loop
 
 ### Phase 3: UI Components
-- [ ] Create `MessagePanel` widget (display-only, for monitoring)
-- [ ] Add keyboard handlers for message list navigation
-- [ ] Update UI layout to include message panel
+- [ ] Create `MessagePanel` widget
+- [ ] Create `ComposeModal` widget
+- [ ] Add keyboard handlers
+- [ ] Update UI layout
 
 ### Phase 4: Expert Integration
 - [ ] Update `core.md` instructions
@@ -644,35 +609,31 @@ cargo test
 - Queue enqueue/dequeue operations
 - Message serialization/deserialization
 - Recipient type parsing
-- TTL expiration detection
-- Delivery attempts counter increment
 
 ### 9.2 Manual Testing Checklist
 
 | Test | Expected Result |
 |------|-----------------|
 | Start session | Queue directory created |
-| Expert sends to idle expert (by ID) | Message delivered immediately |
-| Expert sends to busy expert (by ID) | Message stays in queue |
+| Send to idle expert (by ID) | Message delivered immediately |
+| Send to busy expert (by ID) | Message stays in queue |
 | Busy expert becomes idle | Message delivered on next poll |
-| Expert sends to expert (by name) | Message delivered to named expert |
-| Expert sends to unknown expert name | Message removed after MAX_DELIVERY_ATTEMPTS |
-| Expert sends to role (idle exists) | Message delivered to one idle expert |
-| Expert sends to role (all busy) | Message stays in queue |
-| Message TTL expires | Message removed from queue |
-| Tower displays queued messages | Message panel shows pending messages |
+| Send to expert (by name) | Message delivered to named expert |
+| Send to role (idle exists) | Message delivered to one idle expert |
+| Send to role (all busy) | Message stays in queue |
+| Expert writes to queue | Control Tower routes message |
 
 ### 9.3 Integration Test Scenario
 
 ```
 1. Start session: macot start
 2. Open tower: macot tower
-3. Expert 0 (Architect) is Idle, Expert 2 (Backend) is Busy
-4. Expert 0 writes message to queue targeting role:backend
-5. Expert 2 is busy: message stays in queue, visible in tower's message panel
-6. Expert 2 becomes Idle
-7. Next poll: message delivered to Expert 2
-8. Expert 2 receives message and can respond
+3. Expert 0 is Idle, Expert 1 is Busy
+4. Control Tower sends to role:backend
+5. If Expert 0 has role "backend": receives message
+6. If Expert 1 has role "backend": message stays queued
+7. Expert 1 becomes Idle
+8. Next poll: message delivered to Expert 1
 ```
 
 ---

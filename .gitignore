@@ -29,3 +29,6 @@ queue
 
 # Property testing regressions
 proptest-regressions/
+
+# Git files
+.worktrees
