@@ -98,8 +98,7 @@ impl TowerApp {
             };
 
         // Initialize expert registry with configured experts
-        // Note: Expert IDs start from 1 to avoid auto-assignment issues in registry
-        // (registry treats ID 0 as "auto-assign")
+        // Expert IDs match config indices (0-based), which also match tmux pane indices
         let mut expert_registry = ExpertRegistry::new();
         for (i, expert_config) in config.experts.iter().enumerate() {
             let role_name = if expert_config.role.is_empty() {
@@ -108,11 +107,11 @@ impl TowerApp {
                 expert_config.role.clone()
             };
             let expert_info = ExpertInfo::new(
-                (i + 1) as u32, // IDs start from 1
+                i as u32,
                 expert_config.name.clone(),
                 Role::specialist(role_name),
                 session_name.clone(),
-                i.to_string(), // pane index still starts from 0
+                i.to_string(),
             );
             if let Err(e) = expert_registry.register_expert(expert_info) {
                 tracing::warn!("Failed to register expert {}: {}", i, e);
@@ -356,13 +355,12 @@ impl TowerApp {
 
         if let Some(ref mut router) = self.message_router {
             // Update expert states from status marker files
-            // Note: config indices are 0-based, registry IDs are 1-based (see TowerApp::new)
+            // Config indices and registry IDs are both 0-based
             for (i, _) in self.config.experts.iter().enumerate() {
-                let config_idx = i as u32;
-                let registry_id = (i + 1) as u32;
-                let expert_state = self.detector.detect_state(config_idx);
-                if let Err(e) = router.expert_registry_mut().update_expert_state(registry_id, expert_state) {
-                    tracing::warn!("Failed to update expert {} state: {}", registry_id, e);
+                let expert_id = i as u32;
+                let expert_state = self.detector.detect_state(expert_id);
+                if let Err(e) = router.expert_registry_mut().update_expert_state(expert_id, expert_state) {
+                    tracing::warn!("Failed to update expert {} state: {}", expert_id, e);
                 }
             }
 
@@ -1542,7 +1540,7 @@ mod property_tests {
             );
 
             // Verify each expert is registered correctly by name
-            // Note: Expert IDs may not be sequential starting from 0 due to registry auto-assignment
+            // Expert IDs are 0-based and match config indices
             for expert_config in &config.experts {
                 let expert_id = app.expert_registry.find_by_name(&expert_config.name);
                 assert!(

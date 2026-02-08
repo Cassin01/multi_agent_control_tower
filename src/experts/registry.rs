@@ -3,6 +3,11 @@ use thiserror::Error;
 
 use crate::models::{ExpertInfo, ExpertState, Role, ExpertId};
 
+/// Sentinel value indicating the registry should auto-assign an ID.
+/// Pass this as the `id` field in `ExpertInfo::new` when the caller does
+/// not care about the specific ID.
+pub const AUTO_ASSIGN_ID: ExpertId = u32::MAX;
+
 #[derive(Debug, Error)]
 pub enum RegistryError {
     #[error("Expert not found: {0}")]
@@ -42,7 +47,7 @@ impl ExpertRegistry {
             experts: HashMap::new(),
             name_to_id: HashMap::new(),
             role_to_ids: HashMap::new(),
-            next_id: 1,
+            next_id: 0,
         }
     }
 
@@ -56,8 +61,8 @@ impl ExpertRegistry {
             return Err(RegistryError::DuplicateName(expert_info.name.clone()));
         }
 
-        // Assign ID if not already set
-        if expert_info.id == 0 {
+        // Assign ID if sentinel value (AUTO_ASSIGN_ID) is used
+        if expert_info.id == AUTO_ASSIGN_ID {
             expert_info.id = self.next_id;
             self.next_id += 1;
         } else {
@@ -272,7 +277,7 @@ mod tests {
 
     fn create_test_expert(name: &str, role: Role) -> ExpertInfo {
         ExpertInfo::new(
-            0, // ID will be assigned by registry
+            AUTO_ASSIGN_ID, // ID will be assigned by registry
             name.to_string(),
             role,
             "test-session".to_string(),
@@ -285,7 +290,7 @@ mod tests {
         let registry = ExpertRegistry::new();
         assert!(registry.is_empty());
         assert_eq!(registry.len(), 0);
-        assert_eq!(registry.next_id, 1);
+        assert_eq!(registry.next_id, 0);
     }
 
     #[test]
@@ -294,14 +299,14 @@ mod tests {
         let expert = create_test_expert("backend-dev", Role::Developer);
 
         let expert_id = registry.register_expert(expert).unwrap();
-        
-        assert_eq!(expert_id, 1);
+
+        assert_eq!(expert_id, 0);
         assert_eq!(registry.len(), 1);
-        assert_eq!(registry.next_id, 2);
+        assert_eq!(registry.next_id, 1);
 
         // Check lookups are updated
-        assert_eq!(registry.find_by_name("backend-dev"), Some(1));
-        assert_eq!(registry.find_by_role(&Role::Developer), vec![1]);
+        assert_eq!(registry.find_by_name("backend-dev"), Some(0));
+        assert_eq!(registry.find_by_role(&Role::Developer), vec![0]);
     }
 
     #[test]
@@ -311,7 +316,7 @@ mod tests {
         expert.id = 5; // Set specific ID
 
         let expert_id = registry.register_expert(expert).unwrap();
-        
+
         assert_eq!(expert_id, 5);
         assert_eq!(registry.next_id, 6); // Should update next_id
     }
@@ -586,7 +591,7 @@ mod property_tests {
             "[a-zA-Z0-9-]{1,20}",
             "[0-9]{1,2}",
         ).prop_map(|(name, role, session, pane)| {
-            ExpertInfo::new(0, name, role, session, pane)
+            ExpertInfo::new(AUTO_ASSIGN_ID, name, role, session, pane)
         })
     }
 
