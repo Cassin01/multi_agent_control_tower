@@ -191,4 +191,4 @@ Please open an issue before submitting large changes to discuss the approach.
 
 ## License
 
-[MIT](LICENSE)
+[Apache-2.0](LICENSE) © Cassin01
