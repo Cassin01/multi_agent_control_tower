@@ -8,10 +8,17 @@ use ratatui::{
     Frame,
 };
 
-use crate::session::{AgentStatus, PaneCapture};
+use crate::models::ExpertState;
+
+#[derive(Debug, Clone)]
+pub struct ExpertEntry {
+    pub expert_id: u32,
+    pub expert_name: String,
+    pub state: ExpertState,
+}
 
 pub struct StatusDisplay {
-    captures: Vec<PaneCapture>,
+    experts: Vec<ExpertEntry>,
     state: ListState,
     focused: bool,
     expert_roles: HashMap<u32, String>,
@@ -20,15 +27,15 @@ pub struct StatusDisplay {
 impl StatusDisplay {
     pub fn new() -> Self {
         Self {
-            captures: Vec::new(),
+            experts: Vec::new(),
             state: ListState::default(),
             focused: false,
             expert_roles: HashMap::new(),
         }
     }
 
-    pub fn set_captures(&mut self, captures: Vec<PaneCapture>) {
-        self.captures = captures;
+    pub fn set_experts(&mut self, experts: Vec<ExpertEntry>) {
+        self.experts = experts;
     }
 
     #[allow(dead_code)]
@@ -50,12 +57,12 @@ impl StatusDisplay {
     }
 
     pub fn next(&mut self) {
-        if self.captures.is_empty() {
+        if self.experts.is_empty() {
             return;
         }
         let i = match self.state.selected() {
             Some(i) => {
-                if i >= self.captures.len() - 1 {
+                if i >= self.experts.len() - 1 {
                     0
                 } else {
                     i + 1
@@ -67,13 +74,13 @@ impl StatusDisplay {
     }
 
     pub fn prev(&mut self) {
-        if self.captures.is_empty() {
+        if self.experts.is_empty() {
             return;
         }
         let i = match self.state.selected() {
             Some(i) => {
                 if i == 0 {
-                    self.captures.len() - 1
+                    self.experts.len() - 1
                 } else {
                     i - 1
                 }
@@ -83,31 +90,26 @@ impl StatusDisplay {
         self.state.select(Some(i));
     }
 
-    pub fn selected(&self) -> Option<&PaneCapture> {
-        self.state.selected().and_then(|i| self.captures.get(i))
+    pub fn selected(&self) -> Option<&ExpertEntry> {
+        self.state.selected().and_then(|i| self.experts.get(i))
     }
 
     pub fn selected_expert_id(&self) -> Option<u32> {
-        self.selected().map(|c| c.expert_id)
+        self.selected().map(|e| e.expert_id)
     }
 
     pub fn expert_count(&self) -> usize {
-        self.captures.len()
-    }
-
-    /// Get a capture by expert ID
-    pub fn get_capture(&self, expert_id: u32) -> Option<&PaneCapture> {
-        self.captures.iter().find(|c| c.expert_id == expert_id)
+        self.experts.len()
     }
 
     pub fn render(&mut self, frame: &mut Frame, area: Rect) {
         let items: Vec<ListItem> = self
-            .captures
+            .experts
             .iter()
-            .map(|capture| {
-                let status_style = Style::default().fg(capture.status.color());
+            .map(|entry| {
+                let status_style = Style::default().fg(entry.state.color());
 
-                let role = self.expert_roles.get(&capture.expert_id);
+                let role = self.expert_roles.get(&entry.expert_id);
                 let role_display = match role {
                     Some(r) => format!(" ({})", r),
                     None => String::new(),
@@ -115,25 +117,22 @@ impl StatusDisplay {
 
                 let spans = vec![
                     Span::styled(
-                        format!("[{}] ", capture.expert_id),
+                        format!("[{}] ", entry.expert_id),
                         Style::default().add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(capture.status.symbol(), status_style),
+                    Span::styled(entry.state.symbol(), status_style),
                     Span::raw(" "),
                     Span::styled(
-                        format!("{:<12}", capture.expert_name),
+                        format!("{:<12}", entry.expert_name),
                         Style::default().add_modifier(Modifier::BOLD),
                     ),
                     Span::styled(role_display, Style::default().fg(Color::Cyan)),
-                    Span::raw(" - "),
-                    Span::styled(&capture.last_activity, Style::default()),
                 ];
 
                 ListItem::new(Line::from(spans))
             })
             .collect();
 
-        // Use DarkGray consistently for display-only panel (non-interactive)
         let border_style = Style::default().fg(ratatui::style::Color::DarkGray);
 
         let list = List::new(items)
@@ -156,17 +155,15 @@ impl StatusDisplay {
     pub fn get_status_summary(&self) -> StatusSummary {
         let mut summary = StatusSummary::default();
 
-        for capture in &self.captures {
-            match capture.status {
-                AgentStatus::Idle => summary.idle += 1,
-                AgentStatus::Thinking => summary.thinking += 1,
-                AgentStatus::Executing => summary.executing += 1,
-                AgentStatus::Error => summary.error += 1,
-                AgentStatus::Unknown => summary.unknown += 1,
+        for entry in &self.experts {
+            match entry.state {
+                ExpertState::Idle => summary.idle += 1,
+                ExpertState::Busy => summary.busy += 1,
+                ExpertState::Offline => summary.offline += 1,
             }
         }
 
-        summary.total = self.captures.len();
+        summary.total = self.experts.len();
         summary
     }
 }
@@ -181,25 +178,19 @@ impl Default for StatusDisplay {
 pub struct StatusSummary {
     pub total: usize,
     pub idle: usize,
-    pub thinking: usize,
-    pub executing: usize,
-    pub error: usize,
-    pub unknown: usize,
+    pub busy: usize,
+    pub offline: usize,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
 
-    fn create_test_capture(id: u32, name: &str, status: AgentStatus) -> PaneCapture {
-        PaneCapture {
+    fn create_test_entry(id: u32, name: &str, state: ExpertState) -> ExpertEntry {
+        ExpertEntry {
             expert_id: id,
             expert_name: name.to_string(),
-            lines: vec![],
-            captured_at: Utc::now(),
-            status,
-            last_activity: "test".to_string(),
+            state,
         }
     }
 
@@ -212,10 +203,10 @@ mod tests {
     #[test]
     fn status_display_navigation() {
         let mut display = StatusDisplay::new();
-        display.set_captures(vec![
-            create_test_capture(0, "architect", AgentStatus::Idle),
-            create_test_capture(1, "frontend", AgentStatus::Thinking),
-            create_test_capture(2, "backend", AgentStatus::Executing),
+        display.set_experts(vec![
+            create_test_entry(0, "architect", ExpertState::Idle),
+            create_test_entry(1, "frontend", ExpertState::Busy),
+            create_test_entry(2, "backend", ExpertState::Offline),
         ]);
 
         display.next();
@@ -234,9 +225,9 @@ mod tests {
     #[test]
     fn status_display_prev_navigation() {
         let mut display = StatusDisplay::new();
-        display.set_captures(vec![
-            create_test_capture(0, "architect", AgentStatus::Idle),
-            create_test_capture(1, "frontend", AgentStatus::Thinking),
+        display.set_experts(vec![
+            create_test_entry(0, "architect", ExpertState::Idle),
+            create_test_entry(1, "frontend", ExpertState::Busy),
         ]);
 
         display.prev();
@@ -249,18 +240,18 @@ mod tests {
     #[test]
     fn status_display_summary() {
         let mut display = StatusDisplay::new();
-        display.set_captures(vec![
-            create_test_capture(0, "architect", AgentStatus::Idle),
-            create_test_capture(1, "frontend", AgentStatus::Idle),
-            create_test_capture(2, "backend", AgentStatus::Executing),
-            create_test_capture(3, "tester", AgentStatus::Error),
+        display.set_experts(vec![
+            create_test_entry(0, "architect", ExpertState::Idle),
+            create_test_entry(1, "frontend", ExpertState::Idle),
+            create_test_entry(2, "backend", ExpertState::Busy),
+            create_test_entry(3, "tester", ExpertState::Offline),
         ]);
 
         let summary = display.get_status_summary();
         assert_eq!(summary.total, 4);
         assert_eq!(summary.idle, 2);
-        assert_eq!(summary.executing, 1);
-        assert_eq!(summary.error, 1);
+        assert_eq!(summary.busy, 1);
+        assert_eq!(summary.offline, 1);
     }
 
     #[test]
@@ -270,5 +261,31 @@ mod tests {
 
         display.set_focused(true);
         assert!(display.is_focused());
+    }
+
+    #[test]
+    fn selected_returns_expert_entry() {
+        let mut display = StatusDisplay::new();
+        display.set_experts(vec![
+            create_test_entry(5, "devops", ExpertState::Busy),
+        ]);
+
+        display.next();
+        let selected = display.selected().unwrap();
+        assert_eq!(selected.expert_id, 5);
+        assert_eq!(selected.expert_name, "devops");
+        assert_eq!(selected.state, ExpertState::Busy);
+    }
+
+    #[test]
+    fn expert_count_returns_correct_count() {
+        let mut display = StatusDisplay::new();
+        assert_eq!(display.expert_count(), 0);
+
+        display.set_experts(vec![
+            create_test_entry(0, "a", ExpertState::Idle),
+            create_test_entry(1, "b", ExpertState::Busy),
+        ]);
+        assert_eq!(display.expert_count(), 2);
     }
 }

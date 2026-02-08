@@ -13,8 +13,13 @@ pub struct InstructionResult {
     pub used_general_fallback: bool,
 }
 
-/// Render a template file with the yaml_schema, expert_id, and expert_name variables.
-pub fn render_template(template_content: &str, expert_id: u32, expert_name: &str) -> Result<String> {
+/// Render a template file with the yaml_schema, expert_id, expert_name, and status_file_path variables.
+pub fn render_template(
+    template_content: &str,
+    expert_id: u32,
+    expert_name: &str,
+    status_file_path: &str,
+) -> Result<String> {
     let mut env = Environment::new();
     env.add_template("core", template_content)
         .context("Failed to add template")?;
@@ -27,6 +32,7 @@ pub fn render_template(template_content: &str, expert_id: u32, expert_name: &str
             yaml_schema => yaml_schema,
             expert_id => expert_id,
             expert_name => expert_name,
+            status_file_path => status_file_path,
         })
         .context("Failed to render template")?;
 
@@ -49,6 +55,7 @@ pub fn load_instruction_with_template(
     role_name: &str,
     expert_id: u32,
     expert_name: &str,
+    status_file_path: &str,
 ) -> Result<InstructionResult> {
     let mut content = String::new();
 
@@ -60,7 +67,12 @@ pub fn load_instruction_with_template(
     if core_template_path.exists() {
         let template_content =
             std::fs::read_to_string(&core_template_path).context("Failed to read core template")?;
-        content.push_str(&render_template(&template_content, expert_id, expert_name)?);
+        content.push_str(&render_template(
+            &template_content,
+            expert_id,
+            expert_name,
+            status_file_path,
+        )?);
         content.push_str("\n\n");
     } else if core_legacy_path.exists() {
         content.push_str(&std::fs::read_to_string(&core_legacy_path)?);
@@ -120,7 +132,7 @@ mod tests {
     #[test]
     fn render_template_replaces_yaml_schema() {
         let template = "## Report Format\n\n```yaml\n{{ yaml_schema }}```\n";
-        let rendered = render_template(template, 0, "test").unwrap();
+        let rendered = render_template(template, 0, "test", "/tmp/status/expert0").unwrap();
 
         assert!(rendered.contains("task_id:"));
         assert!(rendered.contains("expert_id:"));
@@ -131,7 +143,7 @@ mod tests {
     #[test]
     fn render_template_preserves_surrounding_text() {
         let template = "# Header\n\nSome text before.\n\n{{ yaml_schema }}\n\nSome text after.";
-        let rendered = render_template(template, 0, "test").unwrap();
+        let rendered = render_template(template, 0, "test", "/tmp/status/expert0").unwrap();
 
         assert!(rendered.contains("# Header"));
         assert!(rendered.contains("Some text before."));
@@ -152,7 +164,7 @@ mod tests {
 **Critical Notes**:
 - `status` must be exactly `done`
 "#;
-        let rendered = render_template(template, 0, "test").unwrap();
+        let rendered = render_template(template, 0, "test", "/tmp/status/expert0").unwrap();
 
         assert!(rendered.contains("# Multi-Agent Control Tower"));
         assert!(rendered.contains("task_id:"));
@@ -170,6 +182,7 @@ mod tests {
             "architect",
             0,
             "test",
+            "/tmp/status/expert0",
         )
         .unwrap();
 
@@ -195,6 +208,7 @@ mod tests {
             "architect",
             0,
             "test",
+            "/tmp/status/expert0",
         )
         .unwrap();
 
@@ -214,6 +228,7 @@ mod tests {
             "unknown-role",
             0,
             "test",
+            "/tmp/status/expert0",
         )
         .unwrap();
 
@@ -235,6 +250,7 @@ mod tests {
             "architect",
             0,
             "test",
+            "/tmp/status/expert0",
         )
         .unwrap();
 
@@ -244,10 +260,20 @@ mod tests {
     #[test]
     fn render_template_replaces_expert_identity() {
         let template = "You are **{{ expert_name }}** (Expert ID: {{ expert_id }}).";
-        let rendered = render_template(template, 3, "Alyosha").unwrap();
+        let rendered = render_template(template, 3, "Alyosha", "/tmp/status/expert3").unwrap();
 
         assert!(rendered.contains("You are **Alyosha** (Expert ID: 3)."));
         assert!(!rendered.contains("{{ expert_name }}"));
         assert!(!rendered.contains("{{ expert_id }}"));
+    }
+
+    #[test]
+    fn render_template_replaces_status_file_path() {
+        let template = "Write status to: {{ status_file_path }}";
+        let rendered =
+            render_template(template, 0, "test", "/tmp/project/.macot/status/expert0").unwrap();
+
+        assert!(rendered.contains("/tmp/project/.macot/status/expert0"));
+        assert!(!rendered.contains("{{ status_file_path }}"));
     }
 }

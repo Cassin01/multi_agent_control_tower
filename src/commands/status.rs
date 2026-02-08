@@ -3,7 +3,7 @@ use clap::Args as ClapArgs;
 
 use crate::commands::common;
 use crate::config::Config;
-use crate::session::{CaptureManager, TmuxManager};
+use crate::session::{ExpertStateDetector, TmuxManager};
 
 #[derive(ClapArgs)]
 pub struct Args {
@@ -39,30 +39,28 @@ pub async fn execute(args: Args) -> Result<()> {
         .await?
         .unwrap_or_else(|| "unknown".to_string());
 
+    let queue_path = tmux
+        .get_env("MACOT_QUEUE_PATH")
+        .await?
+        .unwrap_or_else(|| "/tmp/macot".to_string());
+
     println!("Session: {} (running)", session_name);
     println!("Project: {}", project_path);
     println!("Created: {}", created_at);
     println!("\nExperts:");
 
     let config = Config::default().with_num_experts(num_experts);
-    let capture = CaptureManager::new(session_name);
+    let detector = ExpertStateDetector::new(std::path::PathBuf::from(&queue_path).join("status"));
 
-    let experts: Vec<(u32, String)> = config
-        .experts
-        .iter()
-        .enumerate()
-        .map(|(i, e)| (i as u32, e.name.clone()))
-        .collect();
-
-    let captures = capture.capture_all(&experts).await;
-
-    for cap in captures {
+    for (i, expert_config) in config.experts.iter().enumerate() {
+        let expert_id = i as u32;
+        let state = detector.detect_state(expert_id);
         println!(
             "  [{}] {:<12} {} - {}",
-            cap.expert_id,
-            cap.expert_name,
-            cap.status.symbol(),
-            cap.status.description()
+            expert_id,
+            expert_config.name,
+            state.symbol(),
+            state.description()
         );
     }
 

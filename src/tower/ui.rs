@@ -146,15 +146,11 @@ impl UI {
                 Style::default().fg(Color::Gray),
             ),
             Span::styled(
-                format!("◐ {} ", summary.thinking),
-                Style::default().fg(Color::Yellow),
-            ),
-            Span::styled(
-                format!("● {} ", summary.executing),
+                format!("● {} ", summary.busy),
                 Style::default().fg(Color::Green),
             ),
             Span::styled(
-                format!("✗ {}", summary.error),
+                format!("✗ {}", summary.offline),
                 Style::default().fg(Color::Red),
             ),
         ]);

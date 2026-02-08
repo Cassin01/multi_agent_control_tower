@@ -208,6 +208,16 @@ impl Config {
             .unwrap_or_else(|| format!("expert{}", id))
     }
 
+    /// Returns the absolute path to the status marker file for a given expert.
+    /// Path format: {queue_path}/status/expert{expert_id}
+    pub fn status_file_path(&self, expert_id: u32) -> String {
+        self.queue_path
+            .join("status")
+            .join(format!("expert{}", expert_id))
+            .to_string_lossy()
+            .into_owned()
+    }
+
     /// Get default role for expert from config
     pub fn get_expert_role(&self, id: u32) -> String {
         self.get_expert(id)
@@ -448,6 +458,19 @@ experts:
         assert_eq!(config.experts[0].role, "architect");
         assert_eq!(config.experts[1].name, "Frontend Dev");
         assert_eq!(config.experts[1].role, "frontend");
+    }
+
+    #[test]
+    fn config_status_file_path_format() {
+        let config = Config::default().with_project_path(PathBuf::from("/tmp/project"));
+        assert_eq!(
+            config.status_file_path(0),
+            "/tmp/project/.macot/status/expert0"
+        );
+        assert_eq!(
+            config.status_file_path(3),
+            "/tmp/project/.macot/status/expert3"
+        );
     }
 
     #[test]

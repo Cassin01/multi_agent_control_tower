@@ -7,16 +7,18 @@ use crate::config::Config;
 use crate::context::{AvailableRoles, ContextStore, Decision, ExpertContext, SessionExpertRoles};
 use crate::experts::ExpertRegistry;
 use crate::instructions::load_instruction_with_template;
-use crate::models::{ExpertInfo, ExpertState, Role};
+use crate::models::{ExpertInfo, Role};
 use crate::utils::sanitize_branch_name;
 use crate::queue::{MessageRouter, QueueManager};
+use crate::models::ExpertState;
 use crate::session::{
-    AgentStatus, CaptureManager, ClaudeManager, TmuxManager, WorktreeLaunchResult,
+    ClaudeManager, ExpertStateDetector, TmuxManager, WorktreeLaunchResult,
     WorktreeLaunchState, WorktreeManager,
 };
+use crate::tower::widgets::ExpertEntry;
 
-/// Message polling interval for the messaging system (1 second)
-const MESSAGE_POLL_INTERVAL: Duration = Duration::from_millis(1000);
+/// Message polling interval for the messaging system (3 seconds)
+const MESSAGE_POLL_INTERVAL: Duration = Duration::from_millis(3000);
 
 use super::ui::UI;
 use super::widgets::{
@@ -44,7 +46,6 @@ pub struct TowerApp {
     config: Config,
     #[allow(dead_code)]
     tmux: TmuxManager,
-    capture: CaptureManager,
     claude: ClaudeManager,
     queue: QueueManager,
     context_store: ContextStore,
@@ -52,6 +53,7 @@ pub struct TowerApp {
     // Messaging system components
     message_router: Option<MessageRouter>,
     expert_registry: ExpertRegistry,
+    detector: ExpertStateDetector,
 
     status_display: StatusDisplay,
     task_input: TaskInput,
@@ -117,6 +119,8 @@ impl TowerApp {
             }
         }
 
+        let detector = ExpertStateDetector::new(config.queue_path.join("status"));
+
         // Create message queue manager for messaging system
         let message_queue_manager = QueueManager::new(config.queue_path.clone());
 
@@ -129,7 +133,6 @@ impl TowerApp {
 
         Self {
             tmux: tmux_manager,
-            capture: CaptureManager::new(session_name),
             claude: claude_manager,
             queue: queue_manager,
             context_store,
@@ -137,6 +140,7 @@ impl TowerApp {
             // Messaging system
             message_router: Some(message_router),
             expert_registry,
+            detector,
 
             status_display: StatusDisplay::new(),
             task_input: TaskInput::new(),
@@ -252,16 +256,29 @@ impl TowerApp {
     }
 
     pub async fn refresh_status(&mut self) -> Result<()> {
-        let experts: Vec<(u32, String)> = self
+        let expert_ids: Vec<u32> = (0..self.config.experts.len() as u32).collect();
+        let states = self.detector.detect_all(&expert_ids);
+
+        let entries: Vec<ExpertEntry> = self
             .config
             .experts
             .iter()
             .enumerate()
-            .map(|(i, e)| (i as u32, e.name.clone()))
+            .map(|(i, e)| {
+                let state = states
+                    .iter()
+                    .find(|(id, _)| *id == i as u32)
+                    .map(|(_, s)| s.clone())
+                    .unwrap_or(ExpertState::Offline);
+                ExpertEntry {
+                    expert_id: i as u32,
+                    expert_name: e.name.clone(),
+                    state,
+                }
+            })
             .collect();
 
-        let captures = self.capture.capture_all(&experts).await;
-        self.status_display.set_captures(captures);
+        self.status_display.set_experts(entries);
 
         let roles: std::collections::HashMap<u32, String> = self
             .session_roles
@@ -288,7 +305,7 @@ impl TowerApp {
             return Ok(());
         }
 
-        const STATUS_POLL_INTERVAL: Duration = Duration::from_millis(500);
+        const STATUS_POLL_INTERVAL: Duration = Duration::from_millis(2000);
         if self.last_status_poll.elapsed() < STATUS_POLL_INTERVAL {
             tracing::trace!("poll_status: skipped (interval)");
             return Ok(());
@@ -306,7 +323,7 @@ impl TowerApp {
             return Ok(());
         }
 
-        const REPORT_POLL_INTERVAL: Duration = Duration::from_millis(1000);
+        const REPORT_POLL_INTERVAL: Duration = Duration::from_millis(3000);
         if self.last_report_poll.elapsed() < REPORT_POLL_INTERVAL {
             tracing::trace!("poll_reports: skipped (interval)");
             return Ok(());
@@ -338,20 +355,14 @@ impl TowerApp {
         self.last_message_poll = Instant::now();
 
         if let Some(ref mut router) = self.message_router {
-            // Update expert states from current capture status
-            // Note: status_display uses config indices (0,1,2,3) while registry uses IDs (1,2,3,4)
+            // Update expert states from status marker files
+            // Note: config indices are 0-based, registry IDs are 1-based (see TowerApp::new)
             for (i, _) in self.config.experts.iter().enumerate() {
                 let config_idx = i as u32;
-                let registry_id = (i + 1) as u32; // Registry IDs start from 1 (see TowerApp::new)
-                if let Some(capture) = self.status_display.get_capture(config_idx) {
-                    let expert_state = match capture.status {
-                        AgentStatus::Idle => ExpertState::Idle,
-                        AgentStatus::Executing | AgentStatus::Thinking => ExpertState::Busy,
-                        AgentStatus::Error | AgentStatus::Unknown => ExpertState::Offline,
-                    };
-                    if let Err(e) = router.expert_registry_mut().update_expert_state(registry_id, expert_state) {
-                        tracing::warn!("Failed to update expert {} state: {}", registry_id, e);
-                    }
+                let registry_id = (i + 1) as u32;
+                let expert_state = self.detector.detect_state(config_idx);
+                if let Err(e) = router.expert_registry_mut().update_expert_state(registry_id, expert_state) {
+                    tracing::warn!("Failed to update expert {} state: {}", registry_id, e);
                 }
             }
 
@@ -370,6 +381,12 @@ impl TowerApp {
                             stats.messages_failed,
                             stats.messages_expired
                         );
+                    }
+                    // Mark delivered experts as processing
+                    for eid in &stats.delivered_expert_ids {
+                        if let Err(e) = self.detector.set_marker(*eid, "processing") {
+                            tracing::warn!("Failed to set processing marker for expert {}: {}", eid, e);
+                        }
                     }
                 }
                 Err(e) => {
@@ -725,12 +742,8 @@ impl TowerApp {
     }
 
     pub async fn change_expert_role(&mut self, expert_id: u32, new_role: &str) -> Result<()> {
-        if let Some(capture) = self.status_display.selected() {
-            use crate::session::AgentStatus;
-            if matches!(
-                capture.status,
-                AgentStatus::Executing | AgentStatus::Thinking
-            ) {
+        if let Some(entry) = self.status_display.selected() {
+            if entry.state == ExpertState::Busy {
                 self.set_message(format!(
                     "Warning: Expert {} is currently active. Role change may interrupt work.",
                     expert_id
@@ -752,6 +765,7 @@ impl TowerApp {
             new_role,
             expert_id,
             &expert_name,
+            &self.config.status_file_path(expert_id),
         )?;
         if !instruction_result.content.is_empty() {
             self.claude
@@ -831,6 +845,7 @@ impl TowerApp {
             &instruction_role,
             expert_id,
             &expert_name,
+            &self.config.status_file_path(expert_id),
         )?;
         if !instruction_result.content.is_empty() {
             self.claude
@@ -899,6 +914,7 @@ impl TowerApp {
         let expert_name_clone = expert_name.clone();
         let branch_clone = branch_name.clone();
         let ready_timeout = config.timeouts.agent_ready;
+        let status_file_path = config.status_file_path(expert_id);
 
         let handle = tokio::spawn(async move {
             claude.send_exit(expert_id).await?;
@@ -942,6 +958,7 @@ impl TowerApp {
                     &instruction_role,
                     expert_id,
                     &expert_name_clone,
+                    &status_file_path,
                 )?;
                 if !instruction_result.content.is_empty() {
                     claude

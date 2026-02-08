@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use ratatui::style::Color;
 use serde::{Deserialize, Serialize};
 
 use super::message::ExpertId;
@@ -9,6 +10,32 @@ pub enum ExpertState {
     Idle,
     Busy,
     Offline,
+}
+
+impl ExpertState {
+    pub fn symbol(&self) -> &'static str {
+        match self {
+            ExpertState::Idle => "○",
+            ExpertState::Busy => "●",
+            ExpertState::Offline => "✗",
+        }
+    }
+
+    pub fn color(&self) -> Color {
+        match self {
+            ExpertState::Idle => Color::Gray,
+            ExpertState::Busy => Color::Green,
+            ExpertState::Offline => Color::Red,
+        }
+    }
+
+    pub fn description(&self) -> &'static str {
+        match self {
+            ExpertState::Idle => "Waiting for input",
+            ExpertState::Busy => "Working",
+            ExpertState::Offline => "Offline",
+        }
+    }
 }
 
 impl Default for ExpertState {
@@ -281,5 +308,38 @@ last_activity: "2024-01-15T10:30:00Z"
     #[test]
     fn expert_state_default_is_offline() {
         assert_eq!(ExpertState::default(), ExpertState::Offline);
+    }
+
+    #[test]
+    fn expert_state_symbols_are_unique() {
+        let states = [ExpertState::Idle, ExpertState::Busy, ExpertState::Offline];
+        let symbols: Vec<_> = states.iter().map(|s| s.symbol()).collect();
+        let unique: std::collections::HashSet<_> = symbols.iter().collect();
+        assert_eq!(
+            symbols.len(),
+            unique.len(),
+            "expert_state_symbols: all symbols should be unique"
+        );
+    }
+
+    #[test]
+    fn expert_state_symbol_values() {
+        assert_eq!(ExpertState::Idle.symbol(), "○");
+        assert_eq!(ExpertState::Busy.symbol(), "●");
+        assert_eq!(ExpertState::Offline.symbol(), "✗");
+    }
+
+    #[test]
+    fn expert_state_color_values() {
+        assert_eq!(ExpertState::Idle.color(), Color::Gray);
+        assert_eq!(ExpertState::Busy.color(), Color::Green);
+        assert_eq!(ExpertState::Offline.color(), Color::Red);
+    }
+
+    #[test]
+    fn expert_state_description_values() {
+        assert_eq!(ExpertState::Idle.description(), "Waiting for input");
+        assert_eq!(ExpertState::Busy.description(), "Working");
+        assert_eq!(ExpertState::Offline.description(), "Offline");
     }
 }
