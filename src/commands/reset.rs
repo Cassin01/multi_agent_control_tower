@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use crate::commands::common;
 use crate::config::Config;
 use crate::context::ContextStore;
-use crate::instructions::load_instruction_with_template;
+use crate::instructions::{load_instruction_with_template, write_instruction_file};
 use crate::session::{ClaudeManager, TmuxManager};
 
 #[derive(ClapArgs)]
@@ -85,7 +85,7 @@ async fn reset_expert(
 
     let session_hash = session_name.strip_prefix("macot-").unwrap_or(&session_name);
     let context_store = ContextStore::new(config.queue_path.clone());
-    let claude = ClaudeManager::new(session_name.clone(), context_store.clone());
+    let claude = ClaudeManager::new(session_name.clone());
 
     // Load session roles to get current role for instruction loading
     let instruction_role = match context_store.load_session_roles(session_hash).await {
@@ -100,19 +100,14 @@ async fn reset_expert(
         }
     };
 
-    if full {
-        println!("  Sending /exit to Claude...");
-        claude.send_exit(expert_id).await?;
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+    println!("  Sending /exit to Claude...");
+    claude.send_exit(expert_id).await?;
+    tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
 
-        println!("  Clearing context...");
+    if full {
+        println!("  Clearing context (full)...");
         context_store
             .clear_expert_context(session_hash, expert_id)
-            .await?;
-
-        println!("  Restarting Claude...");
-        claude
-            .launch_claude(expert_id, session_hash, &project_path)
             .await?;
     } else {
         println!("  Clearing context (keep_history={})...", keep_history);
@@ -128,12 +123,9 @@ async fn reset_expert(
             ctx.clear_knowledge();
             context_store.save_expert_context(&ctx).await?;
         }
-
-        println!("  Sending /clear to Claude...");
-        claude.send_clear(expert_id).await?;
     }
 
-    println!("  Resending instructions (role: {})...", instruction_role);
+    println!("  Loading instructions (role: {})...", instruction_role);
     let instruction_result = load_instruction_with_template(
         &config.core_instructions_path,
         &config.role_instructions_path,
@@ -142,15 +134,30 @@ async fn reset_expert(
         &expert_name,
         &config.status_file_path(expert_id),
     )?;
-    if !instruction_result.content.is_empty() {
-        claude.send_instruction(expert_id, &instruction_result.content).await?;
-    }
+    let instruction_file = if !instruction_result.content.is_empty() {
+        Some(write_instruction_file(
+            &config.queue_path,
+            expert_id,
+            &instruction_result.content,
+        )?)
+    } else {
+        None
+    };
     if instruction_result.used_general_fallback {
         println!(
             "  Warning: Role '{}' not found, using 'general' instructions",
             instruction_result.requested_role
         );
     }
+
+    println!("  Restarting Claude...");
+    claude
+        .launch_claude(
+            expert_id,
+            &project_path,
+            instruction_file.as_deref(),
+        )
+        .await?;
 
     println!("Expert {} reset complete.", expert_id);
     Ok(())
