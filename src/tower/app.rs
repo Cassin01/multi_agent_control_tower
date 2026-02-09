@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use crate::config::Config;
 use crate::context::{AvailableRoles, ContextStore, Decision, ExpertContext, SessionExpertRoles};
 use crate::experts::ExpertRegistry;
-use crate::instructions::load_instruction_with_template;
+use crate::instructions::{load_instruction_with_template, write_instruction_file};
 use crate::models::{ExpertInfo, Role};
 use crate::utils::sanitize_branch_name;
 use crate::queue::{MessageRouter, QueueManager};
@@ -761,7 +761,8 @@ impl TowerApp {
             .save_session_roles(&self.session_roles)
             .await?;
 
-        self.claude.send_clear(expert_id).await?;
+        self.claude.send_exit(expert_id).await?;
+        tokio::time::sleep(Duration::from_secs(3)).await;
 
         let expert_name = self.config.get_expert_name(expert_id);
         let instruction_result = load_instruction_with_template(
@@ -772,11 +773,30 @@ impl TowerApp {
             &expert_name,
             &self.config.status_file_path(expert_id),
         )?;
-        if !instruction_result.content.is_empty() {
-            self.claude
-                .send_instruction(expert_id, &instruction_result.content)
-                .await?;
-        }
+        let instruction_file = if !instruction_result.content.is_empty() {
+            Some(write_instruction_file(
+                &self.config.queue_path,
+                expert_id,
+                &instruction_result.content,
+            )?)
+        } else {
+            None
+        };
+
+        let working_dir = self
+            .config
+            .project_path
+            .to_str()
+            .unwrap_or(".")
+            .to_string();
+        self.claude
+            .launch_claude(
+                expert_id,
+                &self.config.session_hash(),
+                &working_dir,
+                instruction_file.as_deref(),
+            )
+            .await?;
 
         if instruction_result.used_general_fallback {
             self.set_message(format!(
@@ -829,7 +849,6 @@ impl TowerApp {
 
         let expert_name = self.config.get_expert_name(expert_id);
 
-        // Get current role for instruction loading (fallback to config role)
         let instruction_role = self
             .session_roles
             .get_role(expert_id)
@@ -838,11 +857,12 @@ impl TowerApp {
 
         self.set_message(format!("Resetting {} (role: {})...", expert_name, instruction_role));
 
+        self.claude.send_exit(expert_id).await?;
+        tokio::time::sleep(Duration::from_secs(3)).await;
+
         self.context_store
             .clear_expert_context(&self.config.session_hash(), expert_id)
             .await?;
-
-        self.claude.send_clear(expert_id).await?;
 
         let instruction_result = load_instruction_with_template(
             &self.config.core_instructions_path,
@@ -852,11 +872,30 @@ impl TowerApp {
             &expert_name,
             &self.config.status_file_path(expert_id),
         )?;
-        if !instruction_result.content.is_empty() {
-            self.claude
-                .send_instruction(expert_id, &instruction_result.content)
-                .await?;
-        }
+        let instruction_file = if !instruction_result.content.is_empty() {
+            Some(write_instruction_file(
+                &self.config.queue_path,
+                expert_id,
+                &instruction_result.content,
+            )?)
+        } else {
+            None
+        };
+
+        let working_dir = self
+            .config
+            .project_path
+            .to_str()
+            .unwrap_or(".")
+            .to_string();
+        self.claude
+            .launch_claude(
+                expert_id,
+                &self.config.session_hash(),
+                &working_dir,
+                instruction_file.as_deref(),
+            )
+            .await?;
 
         if instruction_result.used_general_fallback {
             self.set_message(format!(
@@ -916,6 +955,7 @@ impl TowerApp {
             .unwrap_or_else(|| config.get_expert_role(expert_id));
         let core_path = config.core_instructions_path.clone();
         let role_path = config.role_instructions_path.clone();
+        let queue_path = config.queue_path.clone();
         let expert_name_clone = expert_name.clone();
         let branch_clone = branch_name.clone();
         let ready_timeout = config.timeouts.agent_ready;
@@ -950,27 +990,34 @@ impl TowerApp {
             expert_ctx.set_worktree(branch_clone.clone(), wt_path_str.clone());
             context_store.save_expert_context(&expert_ctx).await?;
 
+            let instruction_result = load_instruction_with_template(
+                &core_path,
+                &role_path,
+                &instruction_role,
+                expert_id,
+                &expert_name_clone,
+                &status_file_path,
+            )?;
+            let instruction_file = if !instruction_result.content.is_empty() {
+                Some(write_instruction_file(
+                    &queue_path,
+                    expert_id,
+                    &instruction_result.content,
+                )?)
+            } else {
+                None
+            };
+
             claude
-                .launch_claude(expert_id, &session_hash, &wt_path_str)
+                .launch_claude(
+                    expert_id,
+                    &session_hash,
+                    &wt_path_str,
+                    instruction_file.as_deref(),
+                )
                 .await?;
 
             let ready = claude.wait_for_ready(expert_id, ready_timeout).await?;
-
-            if ready {
-                let instruction_result = load_instruction_with_template(
-                    &core_path,
-                    &role_path,
-                    &instruction_role,
-                    expert_id,
-                    &expert_name_clone,
-                    &status_file_path,
-                )?;
-                if !instruction_result.content.is_empty() {
-                    claude
-                        .send_instruction(expert_id, &instruction_result.content)
-                        .await?;
-                }
-            }
 
             Ok(WorktreeLaunchResult {
                 expert_id,

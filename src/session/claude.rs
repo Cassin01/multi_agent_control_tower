@@ -1,5 +1,6 @@
 use anyhow::Result;
 use regex::Regex;
+use std::path::Path;
 use tokio::time::{sleep, Duration};
 
 use super::{TmuxManager, TmuxSender};
@@ -34,9 +35,11 @@ impl<T: TmuxSender> ClaudeManager<T> {
         expert_id: u32,
         session_hash: &str,
         working_dir: &str,
+        instruction_file: Option<&Path>,
     ) -> Result<()> {
         let mut args = vec!["--dangerously-skip-permissions".to_string()];
 
+        let mut resuming = false;
         if let Some(ctx) = self
             .context_store
             .load_expert_context(session_hash, expert_id)
@@ -45,6 +48,14 @@ impl<T: TmuxSender> ClaudeManager<T> {
             if let Some(session_id) = ctx.claude_session.session_id {
                 args.push("--resume".to_string());
                 args.push(session_id);
+                resuming = true;
+            }
+        }
+
+        if !resuming {
+            if let Some(file) = instruction_file {
+                args.push("--append-system-prompt".to_string());
+                args.push(format!("\"$(cat '{}')\"", file.display()));
             }
         }
 
@@ -76,6 +87,7 @@ impl<T: TmuxSender> ClaudeManager<T> {
         Ok(None)
     }
 
+    #[allow(dead_code)]
     pub async fn send_keys(&self, expert_id: u32, keys: &str) -> Result<()> {
         self.tmux.send_keys(expert_id, keys).await
     }
@@ -88,6 +100,7 @@ impl<T: TmuxSender> ClaudeManager<T> {
         self.send_keys_with_enter(expert_id, "/exit").await
     }
 
+    #[allow(dead_code)]
     pub async fn send_clear(&self, expert_id: u32) -> Result<()> {
         self.send_keys_with_enter(expert_id, "/clear").await
     }
@@ -109,6 +122,7 @@ impl<T: TmuxSender> ClaudeManager<T> {
         Ok(false)
     }
 
+    #[allow(dead_code)]
     pub async fn send_instruction(&self, expert_id: u32, instruction: &str) -> Result<()> {
         for chunk in instruction.as_bytes().chunks(200) {
             let chunk_str = String::from_utf8_lossy(chunk);

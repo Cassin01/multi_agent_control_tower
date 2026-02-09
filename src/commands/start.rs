@@ -5,7 +5,7 @@ use tokio::task::JoinSet;
 
 use crate::config::Config;
 use crate::context::ContextStore;
-use crate::instructions::load_instruction_with_template;
+use crate::instructions::{load_instruction_with_template, write_instruction_file};
 use crate::queue::QueueManager;
 use crate::session::{ClaudeManager, TmuxManager};
 
@@ -80,20 +80,27 @@ pub async fn execute(args: Args) -> Result<()> {
         let session_hash = config.session_hash();
         let working_dir = project_path.to_str().unwrap().to_string();
         let timeout = config.timeouts.agent_ready;
+
         let instruction = load_instruction(&config, expert_id, &expert.name)?;
+        let instruction_file = if !instruction.is_empty() {
+            Some(write_instruction_file(&config.queue_path, expert_id, &instruction)?)
+        } else {
+            None
+        };
 
         tasks.spawn(async move {
             tmux.set_pane_title(expert_id, &expert_name).await?;
 
             claude
-                .launch_claude(expert_id, &session_hash, &working_dir)
+                .launch_claude(
+                    expert_id,
+                    &session_hash,
+                    &working_dir,
+                    instruction_file.as_deref(),
+                )
                 .await?;
 
             let ready = claude.wait_for_ready(expert_id, timeout).await?;
-
-            if !instruction.is_empty() {
-                claude.send_instruction(expert_id, &instruction).await?;
-            }
 
             Ok((expert_id, expert_name, ready))
         });
