@@ -86,7 +86,7 @@ impl TowerApp {
         let session_hash = config.session_hash();
         let queue_manager = QueueManager::new(config.queue_path.clone());
         let context_store = ContextStore::new(config.queue_path.clone());
-        let claude_manager = ClaudeManager::new(session_name.clone(), context_store.clone());
+        let claude_manager = ClaudeManager::new(session_name.clone());
         let tmux_manager = TmuxManager::new(session_name.clone());
 
         let available_roles =
@@ -792,7 +792,6 @@ impl TowerApp {
         self.claude
             .launch_claude(
                 expert_id,
-                &self.config.session_hash(),
                 &working_dir,
                 instruction_file.as_deref(),
             )
@@ -891,7 +890,6 @@ impl TowerApp {
         self.claude
             .launch_claude(
                 expert_id,
-                &self.config.session_hash(),
                 &working_dir,
                 instruction_file.as_deref(),
             )
@@ -1011,7 +1009,6 @@ impl TowerApp {
             claude
                 .launch_claude(
                     expert_id,
-                    &session_hash,
                     &wt_path_str,
                     instruction_file.as_deref(),
                 )

@@ -66,7 +66,7 @@ pub async fn execute(args: Args) -> Result<()> {
     tmux.init_session_metadata(project_path.to_str().unwrap(), config.num_experts())
         .await?;
 
-    let claude = ClaudeManager::new(config.session_name(), context_store);
+    let claude = ClaudeManager::new(config.session_name());
 
     println!("Launching {} experts in parallel...", config.num_experts());
 
@@ -77,7 +77,6 @@ pub async fn execute(args: Args) -> Result<()> {
         let expert_name = expert.name.clone();
         let tmux = tmux.clone();
         let claude = claude.clone();
-        let session_hash = config.session_hash();
         let working_dir = project_path.to_str().unwrap().to_string();
         let timeout = config.timeouts.agent_ready;
 
@@ -94,7 +93,6 @@ pub async fn execute(args: Args) -> Result<()> {
             claude
                 .launch_claude(
                     expert_id,
-                    &session_hash,
                     &working_dir,
                     instruction_file.as_deref(),
                 )

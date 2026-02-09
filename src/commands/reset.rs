@@ -85,7 +85,7 @@ async fn reset_expert(
 
     let session_hash = session_name.strip_prefix("macot-").unwrap_or(&session_name);
     let context_store = ContextStore::new(config.queue_path.clone());
-    let claude = ClaudeManager::new(session_name.clone(), context_store.clone());
+    let claude = ClaudeManager::new(session_name.clone());
 
     // Load session roles to get current role for instruction loading
     let instruction_role = match context_store.load_session_roles(session_hash).await {
@@ -154,7 +154,6 @@ async fn reset_expert(
     claude
         .launch_claude(
             expert_id,
-            session_hash,
             &project_path,
             instruction_file.as_deref(),
         )

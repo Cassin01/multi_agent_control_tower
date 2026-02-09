@@ -49,11 +49,7 @@ pub async fn execute(args: Args) -> Result<()> {
     if !args.force {
         println!("Sending exit commands to {} agents...", num_experts);
 
-        let config = Config::default()
-            .with_project_path(std::path::PathBuf::from(&project_path))
-            .with_num_experts(num_experts);
-        let context_store = ContextStore::new(config.queue_path.clone());
-        let claude = ClaudeManager::new(session_name.clone(), context_store);
+        let claude = ClaudeManager::new(session_name.clone());
 
         for i in 0..num_experts {
             if let Err(e) = claude.send_exit(i).await {

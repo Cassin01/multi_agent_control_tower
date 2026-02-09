@@ -1,62 +1,39 @@
 use anyhow::Result;
-use regex::Regex;
 use std::path::Path;
 use tokio::time::{sleep, Duration};
 
 use super::{TmuxManager, TmuxSender};
-use crate::context::ContextStore;
 
 #[derive(Clone)]
 pub struct ClaudeManager<T: TmuxSender = TmuxManager> {
     tmux: T,
-    context_store: ContextStore,
 }
 
 impl ClaudeManager {
-    pub fn new(session_name: String, context_store: ContextStore) -> Self {
+    pub fn new(session_name: String) -> Self {
         Self {
             tmux: TmuxManager::new(session_name),
-            context_store,
         }
     }
 }
 
 impl<T: TmuxSender> ClaudeManager<T> {
     #[allow(dead_code)]
-    pub fn with_sender(sender: T, context_store: ContextStore) -> Self {
-        Self {
-            tmux: sender,
-            context_store,
-        }
+    pub fn with_sender(sender: T) -> Self {
+        Self { tmux: sender }
     }
 
     pub async fn launch_claude(
         &self,
         expert_id: u32,
-        session_hash: &str,
         working_dir: &str,
         instruction_file: Option<&Path>,
     ) -> Result<()> {
         let mut args = vec!["--dangerously-skip-permissions".to_string()];
 
-        let mut resuming = false;
-        if let Some(ctx) = self
-            .context_store
-            .load_expert_context(session_hash, expert_id)
-            .await?
-        {
-            if let Some(session_id) = ctx.claude_session.session_id {
-                args.push("--resume".to_string());
-                args.push(session_id);
-                resuming = true;
-            }
-        }
-
-        if !resuming {
-            if let Some(file) = instruction_file {
-                args.push("--append-system-prompt".to_string());
-                args.push(format!("\"$(cat '{}')\"", file.display()));
-            }
+        if let Some(file) = instruction_file {
+            args.push("--append-system-prompt".to_string());
+            args.push(format!("\"$(cat '{}')\"", file.display()));
         }
 
         let claude_cmd = format!("cd {} && claude {}", working_dir, args.join(" "));
@@ -66,25 +43,6 @@ impl<T: TmuxSender> ClaudeManager<T> {
             .await?;
 
         Ok(())
-    }
-
-    #[allow(dead_code)]
-    pub async fn capture_session_id(&self, expert_id: u32) -> Result<Option<String>> {
-        sleep(Duration::from_secs(2)).await;
-
-        let content = self.tmux.capture_pane(expert_id).await?;
-
-        let re = Regex::new(r"Session:\s*([a-zA-Z0-9_-]+)")?;
-        if let Some(caps) = re.captures(&content) {
-            return Ok(Some(caps[1].to_string()));
-        }
-
-        let re_alt = Regex::new(r"session[:\s]+([a-f0-9-]{36})")?;
-        if let Some(caps) = re_alt.captures(&content) {
-            return Ok(Some(caps[1].to_string()));
-        }
-
-        Ok(None)
     }
 
     #[allow(dead_code)]
@@ -137,9 +95,7 @@ impl<T: TmuxSender> ClaudeManager<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
-    use tempfile::TempDir;
 
     #[derive(Clone)]
     struct MockTmuxSender {
@@ -180,39 +136,70 @@ mod tests {
         }
     }
 
-    fn create_mock_manager(mock: MockTmuxSender) -> (ClaudeManager<MockTmuxSender>, TempDir) {
-        let temp_dir = TempDir::new().unwrap();
-        let context_store = ContextStore::new(temp_dir.path().to_path_buf());
-        let manager = ClaudeManager::with_sender(mock, context_store);
-        (manager, temp_dir)
+    fn create_mock_manager(mock: MockTmuxSender) -> ClaudeManager<MockTmuxSender> {
+        ClaudeManager::with_sender(mock)
     }
 
     #[test]
     fn claude_manager_creates_with_session_name() {
-        let context_store = ContextStore::new(PathBuf::from("/tmp"));
-        let manager = ClaudeManager::new("test-session".to_string(), context_store);
+        let manager = ClaudeManager::new("test-session".to_string());
         assert_eq!(manager.tmux.session_name(), "test-session");
     }
 
-    #[test]
-    fn session_id_regex_matches_uuid() {
-        let re = Regex::new(r"(?i)session[:\s]+([a-f0-9-]{36})").unwrap();
-        let content = "session: a1b2c3d4-e5f6-7890-abcd-ef1234567890";
-        assert!(re.is_match(content));
+    #[tokio::test]
+    async fn launch_claude_with_instruction_file() {
+        let mock = MockTmuxSender::new();
+        let manager = create_mock_manager(mock.clone());
+
+        let instruction_file = std::path::PathBuf::from("/tmp/instructions.txt");
+        manager
+            .launch_claude(0, "/tmp/workdir", Some(instruction_file.as_path()))
+            .await
+            .unwrap();
+
+        let keys = mock.sent_keys();
+        let cmd = keys
+            .iter()
+            .find(|(_, k)| k.contains("claude"))
+            .map(|(_, k)| k.as_str())
+            .expect("launch_claude: should send a claude command");
+        assert!(
+            cmd.contains("--append-system-prompt"),
+            "launch_claude: should include --append-system-prompt flag"
+        );
+        assert!(
+            cmd.contains("--dangerously-skip-permissions"),
+            "launch_claude: should include --dangerously-skip-permissions flag"
+        );
     }
 
-    #[test]
-    fn session_id_regex_matches_simple_format() {
-        let re = Regex::new(r"Session:\s*([a-zA-Z0-9_-]+)").unwrap();
-        let content = "Session: my-session-123";
-        let caps = re.captures(content).unwrap();
-        assert_eq!(&caps[1], "my-session-123");
+    #[tokio::test]
+    async fn launch_claude_without_instruction_file() {
+        let mock = MockTmuxSender::new();
+        let manager = create_mock_manager(mock.clone());
+
+        manager.launch_claude(0, "/tmp/workdir", None).await.unwrap();
+
+        let keys = mock.sent_keys();
+        let cmd = keys
+            .iter()
+            .find(|(_, k)| k.contains("claude"))
+            .map(|(_, k)| k.as_str())
+            .expect("launch_claude: should send a claude command");
+        assert!(
+            !cmd.contains("--append-system-prompt"),
+            "launch_claude: should not include --append-system-prompt when no instruction file"
+        );
+        assert!(
+            cmd.contains("--dangerously-skip-permissions"),
+            "launch_claude: should include --dangerously-skip-permissions flag"
+        );
     }
 
     #[tokio::test]
     async fn send_exit_sends_exit_command() {
         let mock = MockTmuxSender::new();
-        let (manager, _tmp) = create_mock_manager(mock.clone());
+        let manager = create_mock_manager(mock.clone());
 
         manager.send_exit(0).await.unwrap();
 
@@ -226,7 +213,7 @@ mod tests {
     #[tokio::test]
     async fn send_clear_sends_clear_command() {
         let mock = MockTmuxSender::new();
-        let (manager, _tmp) = create_mock_manager(mock.clone());
+        let manager = create_mock_manager(mock.clone());
 
         manager.send_clear(2).await.unwrap();
 
@@ -240,7 +227,7 @@ mod tests {
     #[tokio::test]
     async fn send_instruction_chunks_and_sends_enter() {
         let mock = MockTmuxSender::new();
-        let (manager, _tmp) = create_mock_manager(mock.clone());
+        let manager = create_mock_manager(mock.clone());
 
         manager.send_instruction(1, "hello").await.unwrap();
 
@@ -259,7 +246,7 @@ mod tests {
     #[tokio::test]
     async fn send_instruction_splits_large_input() {
         let mock = MockTmuxSender::new();
-        let (manager, _tmp) = create_mock_manager(mock.clone());
+        let manager = create_mock_manager(mock.clone());
 
         let large_input = "a".repeat(500);
         manager.send_instruction(0, &large_input).await.unwrap();
@@ -275,7 +262,7 @@ mod tests {
     #[tokio::test]
     async fn wait_for_ready_returns_true_when_bypass_found() {
         let mock = MockTmuxSender::new().with_capture_response("bypass permissions");
-        let (manager, _tmp) = create_mock_manager(mock);
+        let manager = create_mock_manager(mock);
 
         let ready = manager.wait_for_ready(0, 2).await.unwrap();
         assert!(ready, "wait_for_ready: should return true when pane contains 'bypass permissions'");
@@ -284,7 +271,7 @@ mod tests {
     #[tokio::test]
     async fn wait_for_ready_returns_false_on_timeout() {
         let mock = MockTmuxSender::new().with_capture_response("some other output");
-        let (manager, _tmp) = create_mock_manager(mock);
+        let manager = create_mock_manager(mock);
 
         let ready = manager.wait_for_ready(0, 1).await.unwrap();
         assert!(!ready, "wait_for_ready: should return false when pane never shows ready prompt");
@@ -293,7 +280,7 @@ mod tests {
     #[tokio::test]
     async fn send_keys_delegates_to_sender() {
         let mock = MockTmuxSender::new();
-        let (manager, _tmp) = create_mock_manager(mock.clone());
+        let manager = create_mock_manager(mock.clone());
 
         manager.send_keys(3, "test-keys").await.unwrap();
 
@@ -304,7 +291,7 @@ mod tests {
     #[tokio::test]
     async fn send_keys_with_enter_uses_default_trait_behavior() {
         let mock = MockTmuxSender::new();
-        let (manager, _tmp) = create_mock_manager(mock.clone());
+        let manager = create_mock_manager(mock.clone());
 
         manager.send_keys_with_enter(1, "my-command").await.unwrap();
 
