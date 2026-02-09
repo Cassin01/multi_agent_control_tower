@@ -18,6 +18,10 @@ pub trait TmuxSender: Send + Sync {
         self.send_keys(pane_id, "Enter").await?;
         Ok(())
     }
+
+    async fn capture_pane_with_escapes(&self, pane_id: u32) -> Result<String> {
+        self.capture_pane(pane_id).await
+    }
 }
 
 #[async_trait::async_trait]
@@ -47,6 +51,25 @@ impl TmuxSender for TmuxManager {
             .output()
             .await
             .context(format!("Failed to capture pane {}", pane_id))?;
+
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+
+    async fn capture_pane_with_escapes(&self, pane_id: u32) -> Result<String> {
+        let output = Command::new("tmux")
+            .args([
+                "capture-pane",
+                "-e",
+                "-p",
+                "-t",
+                &format!("{}:0.{}", self.session_name, pane_id),
+            ])
+            .output()
+            .await
+            .context(format!(
+                "Failed to capture pane {} with escapes",
+                pane_id
+            ))?;
 
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     }
@@ -256,5 +279,35 @@ mod tests {
         let manager = TmuxManager::from_config(&config);
 
         assert!(manager.session_name().starts_with("macot-"));
+    }
+
+    /// Mock TmuxSender that only implements the required methods (not `capture_pane_with_escapes`).
+    /// Verifies the default trait implementation falls back to `capture_pane`.
+    struct MockTmuxSender {
+        capture_output: String,
+    }
+
+    #[async_trait::async_trait]
+    impl TmuxSender for MockTmuxSender {
+        async fn send_keys(&self, _pane_id: u32, _keys: &str) -> Result<()> {
+            Ok(())
+        }
+
+        async fn capture_pane(&self, _pane_id: u32) -> Result<String> {
+            Ok(self.capture_output.clone())
+        }
+    }
+
+    #[tokio::test]
+    async fn capture_pane_with_escapes_default_falls_back() {
+        let mock = MockTmuxSender {
+            capture_output: "mock pane content".to_string(),
+        };
+
+        let result = mock.capture_pane_with_escapes(0).await.unwrap();
+        assert_eq!(
+            result, "mock pane content",
+            "capture_pane_with_escapes: default impl should fall back to capture_pane"
+        );
     }
 }

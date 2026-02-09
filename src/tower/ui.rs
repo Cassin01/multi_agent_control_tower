@@ -37,33 +37,69 @@ impl UI {
     pub fn render(frame: &mut Frame, app: &mut TowerApp) {
         // Dynamic height: expert_count + 2 (borders), minimum 3
         let expert_height = (app.status_display().expert_count() + 2).max(3) as u16;
+        let panel_visible = app.expert_panel_display().is_visible();
 
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .margin(1)
-            .constraints([
-                Constraint::Length(3),
-                Constraint::Length(expert_height),
-                Constraint::Min(8),
-                Constraint::Length(3),
-                Constraint::Length(6),
-                Constraint::Length(3),
-            ])
-            .split(frame.area());
+        if panel_visible {
+            // 7 layout constraints when panel is visible
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .margin(1)
+                .constraints([
+                    Constraint::Length(3),            // [0] Header
+                    Constraint::Length(expert_height), // [1] Expert List
+                    Constraint::Min(5),               // [2] Task Input (shrunk)
+                    Constraint::Percentage(40),       // [3] Expert Panel (NEW)
+                    Constraint::Length(3),            // [4] Effort Selector
+                    Constraint::Length(4),            // [5] Report Display (shrunk)
+                    Constraint::Length(3),            // [6] Footer
+                ])
+                .split(frame.area());
 
-        app.set_layout_areas(LayoutAreas {
-            expert_list: chunks[1],
-            task_input: chunks[2],
-            effort_selector: chunks[3],
-            report_list: chunks[4],
-        });
+            app.set_layout_areas(LayoutAreas {
+                expert_list: chunks[1],
+                task_input: chunks[2],
+                expert_panel: chunks[3],
+                effort_selector: chunks[4],
+                report_list: chunks[5],
+            });
 
-        Self::render_header(frame, chunks[0], app);
-        app.status_display().render(frame, chunks[1]);
-        Self::render_task_input(frame, chunks[2], app);
-        app.effort_selector().render(frame, chunks[3]);
-        app.report_display().render(frame, chunks[4]);
-        Self::render_footer(frame, chunks[5], app);
+            Self::render_header(frame, chunks[0], app);
+            app.status_display().render(frame, chunks[1]);
+            Self::render_task_input(frame, chunks[2], app);
+            app.expert_panel_display().render(frame, chunks[3]);
+            app.effort_selector().render(frame, chunks[4]);
+            app.report_display().render(frame, chunks[5]);
+            Self::render_footer(frame, chunks[6], app);
+        } else {
+            // 6 layout constraints when panel is hidden (default)
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .margin(1)
+                .constraints([
+                    Constraint::Length(3),            // [0] Header
+                    Constraint::Length(expert_height), // [1] Expert List
+                    Constraint::Min(8),               // [2] Task Input
+                    Constraint::Length(3),            // [3] Effort Selector
+                    Constraint::Length(6),            // [4] Report Display
+                    Constraint::Length(3),            // [5] Footer
+                ])
+                .split(frame.area());
+
+            app.set_layout_areas(LayoutAreas {
+                expert_list: chunks[1],
+                task_input: chunks[2],
+                expert_panel: Rect::default(),
+                effort_selector: chunks[3],
+                report_list: chunks[4],
+            });
+
+            Self::render_header(frame, chunks[0], app);
+            app.status_display().render(frame, chunks[1]);
+            Self::render_task_input(frame, chunks[2], app);
+            app.effort_selector().render(frame, chunks[3]);
+            app.report_display().render(frame, chunks[4]);
+            Self::render_footer(frame, chunks[5], app);
+        }
 
         if app.report_display().view_mode() == ViewMode::Detail {
             let (percent_x, percent_y) = Self::responsive_modal_size(frame.area(), 80, 90);
@@ -205,6 +241,8 @@ impl UI {
             help_text.push(Span::raw(": Reset "));
         }
 
+        help_text.push(Span::styled("Ctrl+J", Style::default().fg(Color::Yellow)));
+        help_text.push(Span::raw(": Panel "));
         help_text.push(Span::styled("Ctrl+I", Style::default().fg(Color::Yellow)));
         help_text.push(Span::raw(": Help "));
         help_text.push(Span::styled("Ctrl+Q", Style::default().fg(Color::Yellow)));

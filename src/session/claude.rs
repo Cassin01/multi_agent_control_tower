@@ -45,9 +45,12 @@ impl<T: TmuxSender> ClaudeManager<T> {
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub async fn send_keys(&self, expert_id: u32, keys: &str) -> Result<()> {
         self.tmux.send_keys(expert_id, keys).await
+    }
+
+    pub async fn capture_pane_with_escapes(&self, expert_id: u32) -> Result<String> {
+        self.tmux.capture_pane_with_escapes(expert_id).await
     }
 
     pub async fn send_keys_with_enter(&self, expert_id: u32, keys: &str) -> Result<()> {
