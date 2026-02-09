@@ -170,7 +170,7 @@ The `handle_events()` method is already `async fn`. The key challenge is integra
 if key.modifiers.contains(KeyModifiers::CONTROL) {
     match key.code {
         Char('c') | Char('q') => { self.quit(); return Ok(()); }
-        Char('h') => { self.help_modal.toggle(); return Ok(()); }
+        Char('i') => { self.help_modal.toggle(); return Ok(()); }
         _ => {}
     }
 }
