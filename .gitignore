@@ -22,7 +22,7 @@ Thumbs.db
 
 # queue
 queue
-.macot
+.macot/*
 !.macot/specs/
 
 # Serena files

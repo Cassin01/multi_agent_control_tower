@@ -81,7 +81,7 @@ impl HelpModal {
             Self::key_line("Ctrl+W", "Launch expert in worktree (uses task input as branch name)"),
             Self::nested_subsection_title("Cursor Movement"),
             Self::key_line("Ctrl+B / Ctrl+F", "Move cursor left / right"),
-            Self::key_line("Ctrl+A / Ctrl+J", "Move to line start / end"),
+            Self::key_line("Ctrl+A / Ctrl+E", "Move to line start / end"),
             Self::key_line("Ctrl+P / Ctrl+N", "Move to previous / next line"),
             Self::nested_subsection_title("Editing"),
             Self::key_line("Ctrl+H", "Delete character before cursor (backspace)"),

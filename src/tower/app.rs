@@ -590,7 +590,7 @@ impl TowerApp {
                         'b' => self.task_input.move_cursor_left(),
                         'f' => self.task_input.move_cursor_right(),
                         'a' => self.task_input.move_cursor_line_start(),
-                        'j' => self.task_input.move_cursor_line_end(),
+                        'e' => self.task_input.move_cursor_line_end(),
                         'p' => self.task_input.move_cursor_up(),
                         'n' => self.task_input.move_cursor_down(),
                         'h' => {
@@ -1361,15 +1361,15 @@ mod tests {
     }
 
     #[test]
-    fn handle_task_input_keys_ctrl_j_moves_to_line_end() {
+    fn handle_task_input_keys_ctrl_e_moves_to_line_end() {
         let mut app = create_test_app();
         app.task_input.set_content("abc\ndef".to_string());
         app.task_input.move_cursor_start();
-        app.handle_task_input_keys(KeyCode::Char('j'), KeyModifiers::CONTROL);
+        app.handle_task_input_keys(KeyCode::Char('e'), KeyModifiers::CONTROL);
         assert_eq!(
             app.task_input.cursor_position(),
             3,
-            "handle_task_input_keys: Ctrl+J should move to end of current line"
+            "handle_task_input_keys: Ctrl+E should move to end of current line"
         );
     }
 
