@@ -482,7 +482,7 @@ impl TowerApp {
                             self.quit();
                             return Ok(());
                         }
-                        KeyCode::Char('h') => {
+                        KeyCode::Char('i') => {
                             self.help_modal.toggle();
                             return Ok(());
                         }
@@ -492,7 +492,7 @@ impl TowerApp {
 
                 if self.help_modal.is_visible() {
                     match key.code {
-                        KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
+                        KeyCode::Enter | KeyCode::Char('q') => {
                             self.help_modal.hide();
                         }
                         _ => {}
@@ -502,7 +502,7 @@ impl TowerApp {
 
                 if self.report_display.view_mode() == ViewMode::Detail {
                     match key.code {
-                        KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
+                        KeyCode::Enter | KeyCode::Char('q') => {
                             self.report_display.close_detail();
                         }
                         KeyCode::Up | KeyCode::Char('k') => self.report_display.scroll_up(),
@@ -514,7 +514,7 @@ impl TowerApp {
 
                 if self.role_selector.is_visible() {
                     match key.code {
-                        KeyCode::Esc | KeyCode::Char('q') => {
+                        KeyCode::Char('q') => {
                             self.role_selector.hide();
                         }
                         KeyCode::Enter => {
@@ -534,15 +534,12 @@ impl TowerApp {
                     FocusArea::ReportList => self.handle_report_list_keys(key.code, key.modifiers),
                 }
 
-                if key.code == KeyCode::Tab {
+                if key.code == KeyCode::Char('t') && key.modifiers.contains(KeyModifiers::CONTROL) {
                     if key.modifiers.contains(KeyModifiers::SHIFT) {
                         self.prev_focus();
                     } else {
                         self.next_focus();
                     }
-                }
-                if key.code == KeyCode::BackTab {
-                    self.prev_focus();
                 }
 
                 if key.code == KeyCode::Char('s')
@@ -593,9 +590,25 @@ impl TowerApp {
                         'b' => self.task_input.move_cursor_left(),
                         'f' => self.task_input.move_cursor_right(),
                         'a' => self.task_input.move_cursor_line_start(),
-                        'e' => self.task_input.move_cursor_line_end(),
+                        'j' => self.task_input.move_cursor_line_end(),
                         'p' => self.task_input.move_cursor_up(),
                         'n' => self.task_input.move_cursor_down(),
+                        'h' => {
+                            self.task_input.delete_char();
+                            self.last_input_time = Instant::now();
+                        }
+                        'd' => {
+                            self.task_input.delete_forward();
+                            self.last_input_time = Instant::now();
+                        }
+                        'u' => {
+                            self.task_input.unix_line_discard();
+                            self.last_input_time = Instant::now();
+                        }
+                        'k' => {
+                            self.task_input.kill_line();
+                            self.last_input_time = Instant::now();
+                        }
                         _ => {}
                     }
                 } else if !modifiers.contains(KeyModifiers::ALT) {
@@ -615,10 +628,6 @@ impl TowerApp {
             KeyCode::End => self.task_input.move_cursor_end(),
             KeyCode::Enter => {
                 self.task_input.insert_newline();
-                self.last_input_time = Instant::now();
-            }
-            KeyCode::Esc => {
-                self.task_input.clear();
                 self.last_input_time = Instant::now();
             }
             _ => {}
@@ -645,7 +654,7 @@ impl TowerApp {
                 match code {
                     KeyCode::Up | KeyCode::Char('k') => self.report_display.scroll_up(),
                     KeyCode::Down | KeyCode::Char('j') => self.report_display.scroll_down(),
-                    KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
+                    KeyCode::Enter | KeyCode::Char('q') => {
                         self.report_display.close_detail()
                     }
                     _ => {}
@@ -1352,15 +1361,15 @@ mod tests {
     }
 
     #[test]
-    fn handle_task_input_keys_ctrl_e_moves_to_line_end() {
+    fn handle_task_input_keys_ctrl_j_moves_to_line_end() {
         let mut app = create_test_app();
         app.task_input.set_content("abc\ndef".to_string());
         app.task_input.move_cursor_start();
-        app.handle_task_input_keys(KeyCode::Char('e'), KeyModifiers::CONTROL);
+        app.handle_task_input_keys(KeyCode::Char('j'), KeyModifiers::CONTROL);
         assert_eq!(
             app.task_input.cursor_position(),
             3,
-            "handle_task_input_keys: Ctrl+E should move to end of current line"
+            "handle_task_input_keys: Ctrl+J should move to end of current line"
         );
     }
 
@@ -1388,6 +1397,63 @@ mod tests {
             app.task_input.cursor_position(),
             5,
             "handle_task_input_keys: Ctrl+N should move cursor down"
+        );
+    }
+
+    #[test]
+    fn handle_task_input_keys_ctrl_h_deletes_char() {
+        let mut app = create_test_app();
+        app.task_input.set_content("hello".to_string());
+
+        app.handle_task_input_keys(KeyCode::Char('h'), KeyModifiers::CONTROL);
+        assert_eq!(
+            app.task_input.content(),
+            "hell",
+            "handle_task_input_keys: Ctrl+H should delete char before cursor"
+        );
+    }
+
+    #[test]
+    fn handle_task_input_keys_ctrl_d_deletes_forward() {
+        let mut app = create_test_app();
+        app.task_input.set_content("hello".to_string());
+        app.task_input.move_cursor_start();
+
+        app.handle_task_input_keys(KeyCode::Char('d'), KeyModifiers::CONTROL);
+        assert_eq!(
+            app.task_input.content(),
+            "ello",
+            "handle_task_input_keys: Ctrl+D should delete char at cursor"
+        );
+    }
+
+    #[test]
+    fn handle_task_input_keys_ctrl_u_unix_line_discard() {
+        let mut app = create_test_app();
+        app.task_input.set_content("hello world".to_string());
+
+        app.handle_task_input_keys(KeyCode::Char('u'), KeyModifiers::CONTROL);
+        assert_eq!(
+            app.task_input.content(),
+            "",
+            "handle_task_input_keys: Ctrl+U should discard from start of line to cursor"
+        );
+    }
+
+    #[test]
+    fn handle_task_input_keys_ctrl_k_kill_line() {
+        let mut app = create_test_app();
+        app.task_input.set_content("hello world".to_string());
+        app.task_input.move_cursor_start();
+        for _ in 0..5 {
+            app.task_input.move_cursor_right();
+        }
+
+        app.handle_task_input_keys(KeyCode::Char('k'), KeyModifiers::CONTROL);
+        assert_eq!(
+            app.task_input.content(),
+            "hello",
+            "handle_task_input_keys: Ctrl+K should kill from cursor to end of line"
         );
     }
 

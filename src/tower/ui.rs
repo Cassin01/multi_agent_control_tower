@@ -189,7 +189,7 @@ impl UI {
 
         let mut help_text = vec![
             Span::styled(message, message_style),
-            Span::styled("Tab", Style::default().fg(Color::Yellow)),
+            Span::styled("Ctrl+T", Style::default().fg(Color::Yellow)),
             Span::raw(": Switch focus "),
         ];
 
@@ -205,7 +205,7 @@ impl UI {
             help_text.push(Span::raw(": Reset "));
         }
 
-        help_text.push(Span::styled("Ctrl+H", Style::default().fg(Color::Yellow)));
+        help_text.push(Span::styled("Ctrl+I", Style::default().fg(Color::Yellow)));
         help_text.push(Span::raw(": Help "));
         help_text.push(Span::styled("Ctrl+Q", Style::default().fg(Color::Yellow)));
         help_text.push(Span::raw(": Quit"));

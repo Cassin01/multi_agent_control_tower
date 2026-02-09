@@ -179,6 +179,38 @@ impl TaskInput {
         self.cursor_position = next_line_start + col.min(next_line_len);
     }
 
+    pub fn kill_line(&mut self) {
+        let chars: Vec<char> = self.content.chars().collect();
+        let len = chars.len();
+        let mut line_end = self.cursor_position;
+        while line_end < len && chars[line_end] != '\n' {
+            line_end += 1;
+        }
+        if line_end == self.cursor_position && line_end < len {
+            let byte_idx = self.cursor_byte_index();
+            self.content.remove(byte_idx);
+        } else if line_end > self.cursor_position {
+            let start_byte = self.cursor_byte_index();
+            let end_byte: usize = chars[..line_end].iter().map(|c| c.len_utf8()).sum();
+            self.content.replace_range(start_byte..end_byte, "");
+        }
+    }
+
+    pub fn unix_line_discard(&mut self) {
+        let chars: Vec<char> = self.content.chars().collect();
+        let mut line_start = self.cursor_position;
+        while line_start > 0 && chars[line_start - 1] != '\n' {
+            line_start -= 1;
+        }
+        if line_start == self.cursor_position {
+            return;
+        }
+        let start_byte: usize = chars[..line_start].iter().map(|c| c.len_utf8()).sum();
+        let end_byte = self.cursor_byte_index();
+        self.content.replace_range(start_byte..end_byte, "");
+        self.cursor_position = line_start;
+    }
+
     #[allow(dead_code)]
     pub fn cursor_position(&self) -> usize {
         self.cursor_position
@@ -745,6 +777,152 @@ mod tests {
         assert_eq!(
             input.cursor_position(), 5,
             "move_cursor_down: from first line should go to second line same col"
+        );
+    }
+
+    // --- kill_line tests ---
+
+    #[test]
+    fn kill_line_deletes_to_end_of_line() {
+        let mut input = TaskInput::new();
+        input.set_content("hello world".to_string());
+        input.move_cursor_start();
+        for _ in 0..5 {
+            input.move_cursor_right();
+        }
+        input.kill_line();
+        assert_eq!(
+            input.content(), "hello",
+            "kill_line: should delete from cursor to end of line"
+        );
+        assert_eq!(input.cursor_position(), 5);
+    }
+
+    #[test]
+    fn kill_line_at_end_of_line_deletes_newline() {
+        let mut input = TaskInput::new();
+        input.set_content("abc\ndef".to_string());
+        // move to end of first line (pos 3)
+        input.move_cursor_start();
+        input.move_cursor_line_end();
+        input.kill_line();
+        assert_eq!(
+            input.content(), "abcdef",
+            "kill_line: at end of line should delete newline to join lines"
+        );
+    }
+
+    #[test]
+    fn kill_line_at_end_of_content_does_nothing() {
+        let mut input = TaskInput::new();
+        input.set_content("hello".to_string());
+        // cursor at end
+        input.kill_line();
+        assert_eq!(
+            input.content(), "hello",
+            "kill_line: at end of content should do nothing"
+        );
+    }
+
+    #[test]
+    fn kill_line_from_start_clears_line() {
+        let mut input = TaskInput::new();
+        input.set_content("hello\nworld".to_string());
+        input.move_cursor_start();
+        input.kill_line();
+        assert_eq!(
+            input.content(), "\nworld",
+            "kill_line: from start should clear entire first line content"
+        );
+    }
+
+    #[test]
+    fn kill_line_japanese() {
+        let mut input = TaskInput::new();
+        input.set_content("あいう\nえお".to_string());
+        input.move_cursor_start();
+        input.move_cursor_right();
+        input.kill_line();
+        assert_eq!(
+            input.content(), "あ\nえお",
+            "kill_line: should work with Japanese characters"
+        );
+    }
+
+    #[test]
+    fn kill_line_empty() {
+        let mut input = TaskInput::new();
+        input.kill_line();
+        assert_eq!(
+            input.content(), "",
+            "kill_line: empty content should stay empty"
+        );
+    }
+
+    // --- unix_line_discard tests ---
+
+    #[test]
+    fn unix_line_discard_deletes_to_start_of_line() {
+        let mut input = TaskInput::new();
+        input.set_content("hello world".to_string());
+        input.move_cursor_start();
+        for _ in 0..5 {
+            input.move_cursor_right();
+        }
+        input.unix_line_discard();
+        assert_eq!(
+            input.content(), " world",
+            "unix_line_discard: should delete from start of line to cursor"
+        );
+        assert_eq!(input.cursor_position(), 0);
+    }
+
+    #[test]
+    fn unix_line_discard_at_start_does_nothing() {
+        let mut input = TaskInput::new();
+        input.set_content("hello".to_string());
+        input.move_cursor_start();
+        input.unix_line_discard();
+        assert_eq!(
+            input.content(), "hello",
+            "unix_line_discard: at start of line should do nothing"
+        );
+    }
+
+    #[test]
+    fn unix_line_discard_second_line() {
+        let mut input = TaskInput::new();
+        input.set_content("abc\ndef".to_string());
+        // cursor at end (pos 7, second line)
+        input.unix_line_discard();
+        assert_eq!(
+            input.content(), "abc\n",
+            "unix_line_discard: should delete second line content before cursor"
+        );
+        assert_eq!(input.cursor_position(), 4);
+    }
+
+    #[test]
+    fn unix_line_discard_japanese() {
+        let mut input = TaskInput::new();
+        input.set_content("あいう".to_string());
+        // cursor at end (pos 3)
+        input.move_cursor_left();
+        input.unix_line_discard();
+        assert_eq!(
+            input.content(), "う",
+            "unix_line_discard: should work with Japanese characters"
+        );
+        assert_eq!(input.cursor_position(), 0);
+    }
+
+    #[test]
+    fn unix_line_discard_empty() {
+        let mut input = TaskInput::new();
+        input.unix_line_discard();
+        assert_eq!(
+            input.content(), "",
+            "unix_line_discard: empty content should stay empty"
         );
     }
 }
