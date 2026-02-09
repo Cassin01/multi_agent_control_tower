@@ -68,10 +68,10 @@ impl HelpModal {
             Self::section_title("Keyboard Shortcuts", Color::Cyan),
             Line::from(""),
             Self::subsection_title("Global"),
-            Self::key_line("Tab / Shift+Tab", "Switch focus between panels"),
+            Self::key_line("Ctrl+T / Ctrl+Shift+T", "Switch focus between panels"),
             Self::key_line("Mouse Click", "Focus clicked panel"),
             Self::key_line("Ctrl+C / Ctrl+Q", "Quit application"),
-            Self::key_line("Ctrl+H", "Toggle this help"),
+            Self::key_line("Ctrl+I", "Toggle this help"),
             Line::from(""),
             Self::subsection_title("Task Input"),
             Self::nested_subsection_title("Expert Operations"),
@@ -81,33 +81,37 @@ impl HelpModal {
             Self::key_line("Ctrl+W", "Launch expert in worktree (uses task input as branch name)"),
             Self::nested_subsection_title("Cursor Movement"),
             Self::key_line("Ctrl+B / Ctrl+F", "Move cursor left / right"),
-            Self::key_line("Ctrl+A / Ctrl+E", "Move to line start / end"),
+            Self::key_line("Ctrl+A / Ctrl+J", "Move to line start / end"),
             Self::key_line("Ctrl+P / Ctrl+N", "Move to previous / next line"),
-            Self::nested_subsection_title("Submit / Cancel"),
+            Self::nested_subsection_title("Editing"),
+            Self::key_line("Ctrl+H", "Delete character before cursor (backspace)"),
+            Self::key_line("Ctrl+D", "Delete character at cursor (delete)"),
+            Self::key_line("Ctrl+U", "Delete from line start to cursor (unix-line-discard)"),
+            Self::key_line("Ctrl+K", "Delete from cursor to line end (kill-line)"),
+            Self::nested_subsection_title("Submit"),
             Self::key_line("Ctrl+S", "Assign task to selected expert"),
             Self::key_line("Enter", "Insert newline"),
-            Self::key_line("Esc", "Clear input"),
             Line::from(""),
             Self::subsection_title("Effort Selector"),
-            Self::key_line("h / ←", "Previous effort level"),
-            Self::key_line("l / →", "Next effort level"),
+            Self::key_line("h / \u{2190}", "Previous effort level"),
+            Self::key_line("l / \u{2192}", "Next effort level"),
             Line::from(""),
             Self::subsection_title("Report List"),
-            Self::key_line("j / ↓", "Select next report"),
-            Self::key_line("k / ↑", "Select previous report"),
+            Self::key_line("j / \u{2193}", "Select next report"),
+            Self::key_line("k / \u{2191}", "Select previous report"),
             Self::key_line("Enter", "Open report detail"),
             Line::from(""),
             Self::subsection_title("Report Detail"),
-            Self::key_line("j / ↓", "Scroll down"),
-            Self::key_line("k / ↑", "Scroll up"),
-            Self::key_line("Esc / Enter / q", "Close detail"),
+            Self::key_line("j / \u{2193}", "Scroll down"),
+            Self::key_line("k / \u{2191}", "Scroll up"),
+            Self::key_line("Enter / q", "Close detail"),
             Line::from(""),
             Line::from(Span::styled(
                 "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
                 Style::default().fg(Color::DarkGray),
             )),
             Line::from(vec![
-                Span::styled("Esc / Enter / q", Style::default().fg(Color::Yellow)),
+                Span::styled("Enter / q", Style::default().fg(Color::Yellow)),
                 Span::raw(": Close this help"),
             ]),
         ]
@@ -209,6 +213,60 @@ mod tests {
         assert!(
             text.contains("worktree"),
             "build_help_lines: should describe worktree functionality"
+        );
+    }
+
+    #[test]
+    fn help_text_shows_ctrl_i_for_help() {
+        let modal = HelpModal::new();
+        let lines = modal.build_help_lines();
+        let text: String = lines
+            .iter()
+            .flat_map(|line| line.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(
+            text.contains("Ctrl+I"),
+            "build_help_lines: should show Ctrl+I for help toggle"
+        );
+    }
+
+    #[test]
+    fn help_text_shows_ctrl_t_for_panel_switch() {
+        let modal = HelpModal::new();
+        let lines = modal.build_help_lines();
+        let text: String = lines
+            .iter()
+            .flat_map(|line| line.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(
+            text.contains("Ctrl+T"),
+            "build_help_lines: should show Ctrl+T for panel switching"
+        );
+    }
+
+    #[test]
+    fn help_text_shows_editing_keybindings() {
+        let modal = HelpModal::new();
+        let lines = modal.build_help_lines();
+        let text: String = lines
+            .iter()
+            .flat_map(|line| line.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(
+            text.contains("Ctrl+H") && text.contains("backspace"),
+            "build_help_lines: should show Ctrl+H for backspace"
+        );
+        assert!(
+            text.contains("Ctrl+D") && text.contains("delete"),
+            "build_help_lines: should show Ctrl+D for delete"
+        );
+        assert!(
+            text.contains("Ctrl+U") && text.contains("unix-line-discard"),
+            "build_help_lines: should show Ctrl+U for unix-line-discard"
+        );
+        assert!(
+            text.contains("Ctrl+K") && text.contains("kill-line"),
+            "build_help_lines: should show Ctrl+K for kill-line"
         );
     }
 }
