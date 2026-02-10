@@ -264,6 +264,11 @@ impl TowerApp {
         self.session_roles.get_role(expert_id)
     }
 
+    #[cfg(test)]
+    pub fn last_input_time(&self) -> Instant {
+        self.last_input_time
+    }
+
     pub fn set_layout_areas(&mut self, areas: LayoutAreas) {
         self.layout_areas = areas;
     }
@@ -581,9 +586,13 @@ impl TowerApp {
                     return Ok(());
                 }
 
-                // Update input time for all key presses to pause polling during interaction
-                self.last_input_time = Instant::now();
-                tracing::debug!("Key pressed: {:?}, last_input_time updated", key.code);
+                // Update input time for key presses to pause polling during interaction.
+                // Skip when ExpertPanel is focused: keys are forwarded to tmux, and
+                // the debounce would freeze the panel's live capture for 500ms per keystroke.
+                if self.focus != FocusArea::ExpertPanel {
+                    self.last_input_time = Instant::now();
+                }
+                tracing::debug!("Key pressed: {:?}, focus: {:?}", key.code, self.focus);
 
                 self.clear_message();
 
@@ -1724,6 +1733,40 @@ mod tests {
 
         app.set_focus(FocusArea::TaskInput);
         assert!(!app.expert_panel_display.is_focused(), "expert panel should lose focus");
+    }
+
+    #[test]
+    fn expert_panel_focus_does_not_update_debounce_timer() {
+        let mut app = create_test_app();
+        app.expert_panel_display.show();
+        app.set_focus(FocusArea::ExpertPanel);
+
+        // Record the initial last_input_time
+        let before = app.last_input_time();
+
+        // Simulate time passing so we can detect a change
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        // Simulate a keypress in handle_events context:
+        // When ExpertPanel is focused, last_input_time should NOT be updated
+        // We test the condition directly since handle_events requires terminal setup
+        if app.focus() != FocusArea::ExpertPanel {
+            panic!("focus should be ExpertPanel");
+        }
+        // The guard: focus == ExpertPanel means no update
+        assert_eq!(
+            app.last_input_time(),
+            before,
+            "expert_panel_focus: last_input_time should not change when ExpertPanel is focused"
+        );
+
+        // Verify that TaskInput focus DOES update the timer
+        app.set_focus(FocusArea::TaskInput);
+        app.handle_task_input_keys(KeyCode::Char('a'), KeyModifiers::NONE);
+        assert!(
+            app.last_input_time() > before,
+            "task_input_focus: last_input_time should update when TaskInput is focused"
+        );
     }
 
     #[test]

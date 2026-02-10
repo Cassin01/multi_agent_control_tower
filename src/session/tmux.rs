@@ -1,9 +1,25 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
-use std::process::Stdio;
+use std::process::{Output, Stdio};
 use tokio::process::Command;
 
 use crate::config::Config;
+
+fn check_tmux_output(output: Output, context: &str) -> Result<String> {
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("{}: tmux exited with {}: {}", context, output.status, stderr.trim());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+fn check_tmux_status(output: Output, context: &str) -> Result<()> {
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("{}: tmux exited with {}: {}", context, output.status, stderr.trim());
+    }
+    Ok(())
+}
 
 /// Trait for sending keys to and capturing output from tmux panes.
 /// Extracted to allow mocking in tests.
@@ -31,7 +47,7 @@ pub trait TmuxSender: Send + Sync {
 #[async_trait::async_trait]
 impl TmuxSender for TmuxManager {
     async fn send_keys(&self, pane_id: u32, keys: &str) -> Result<()> {
-        Command::new("tmux")
+        let output = Command::new("tmux")
             .args([
                 "send-keys",
                 "-t",
@@ -41,7 +57,7 @@ impl TmuxSender for TmuxManager {
             .output()
             .await
             .context(format!("Failed to send keys to pane {}", pane_id))?;
-        Ok(())
+        check_tmux_status(output, &format!("send-keys to pane {}", pane_id))
     }
 
     async fn capture_pane(&self, pane_id: u32) -> Result<String> {
@@ -55,8 +71,7 @@ impl TmuxSender for TmuxManager {
             .output()
             .await
             .context(format!("Failed to capture pane {}", pane_id))?;
-
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        check_tmux_output(output, &format!("capture-pane {}", pane_id))
     }
 
     async fn capture_pane_with_escapes(&self, pane_id: u32) -> Result<String> {
@@ -75,12 +90,11 @@ impl TmuxSender for TmuxManager {
                 "Failed to capture pane {} with escapes",
                 pane_id
             ))?;
-
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        check_tmux_output(output, &format!("capture-pane-with-escapes {}", pane_id))
     }
 
     async fn resize_pane(&self, pane_id: u32, width: u16, height: u16) -> Result<()> {
-        Command::new("tmux")
+        let output = Command::new("tmux")
             .args([
                 "resize-pane",
                 "-t",
@@ -93,7 +107,7 @@ impl TmuxSender for TmuxManager {
             .output()
             .await
             .context(format!("Failed to resize pane {}", pane_id))?;
-        Ok(())
+        check_tmux_status(output, &format!("resize-pane {}", pane_id))
     }
 }
 
@@ -286,6 +300,63 @@ impl TmuxManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::ExitStatus;
+
+    fn make_output(code: i32, stdout: &str, stderr: &str) -> Output {
+        Output {
+            status: ExitStatus::from_raw(code << 8), // Unix: exit code is in bits 8-15
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: stderr.as_bytes().to_vec(),
+        }
+    }
+
+    #[test]
+    fn check_tmux_output_success_returns_stdout() {
+        let output = make_output(0, "pane content\n", "");
+        let result = check_tmux_output(output, "test-cmd");
+        assert_eq!(
+            result.unwrap(),
+            "pane content\n",
+            "check_tmux_output: success should return stdout"
+        );
+    }
+
+    #[test]
+    fn check_tmux_output_failure_returns_error_with_stderr() {
+        let output = make_output(1, "", "no such pane");
+        let result = check_tmux_output(output, "capture-pane");
+        let err = result.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("capture-pane") && msg.contains("no such pane"),
+            "check_tmux_output: error should contain context and stderr, got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn check_tmux_status_success_returns_ok() {
+        let output = make_output(0, "", "");
+        let result = check_tmux_status(output, "test-cmd");
+        assert!(
+            result.is_ok(),
+            "check_tmux_status: success should return Ok"
+        );
+    }
+
+    #[test]
+    fn check_tmux_status_failure_returns_error() {
+        let output = make_output(1, "", "session not found");
+        let result = check_tmux_status(output, "send-keys");
+        let err = result.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("send-keys") && msg.contains("session not found"),
+            "check_tmux_status: error should contain context and stderr, got: {}",
+            msg
+        );
+    }
 
     #[test]
     fn tmux_manager_new_sets_session_name() {

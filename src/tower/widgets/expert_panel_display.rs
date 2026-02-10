@@ -51,10 +51,12 @@ impl ExpertPanelDisplay {
         self.visible
     }
 
+    #[allow(dead_code)]
     pub fn show(&mut self) {
         self.visible = true;
     }
 
+    #[allow(dead_code)]
     pub fn hide(&mut self) {
         self.visible = false;
     }
@@ -63,6 +65,7 @@ impl ExpertPanelDisplay {
         self.focused = focused;
     }
 
+    #[allow(dead_code)]
     pub fn is_focused(&self) -> bool {
         self.focused
     }
