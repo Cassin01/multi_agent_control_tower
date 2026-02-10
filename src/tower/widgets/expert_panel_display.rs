@@ -8,6 +8,10 @@ use ratatui::{
     Frame,
 };
 
+/// Safety margin subtracted from inner width when setting tmux PTY size.
+/// Prevents edge-case line wrapping at width boundaries.
+const PREVIEW_WIDTH_MARGIN: u16 = 1;
+
 pub struct ExpertPanelDisplay {
     expert_id: Option<u32>,
     expert_name: Option<String>,
@@ -74,8 +78,26 @@ impl ExpertPanelDisplay {
         self.expert_id
     }
 
+    #[cfg(test)]
     pub fn last_render_size(&self) -> (u16, u16) {
         self.last_render_size
+    }
+
+    /// Returns the effective dimensions for tmux PTY synchronization.
+    ///
+    /// The preview size is smaller than the render inner size by
+    /// PREVIEW_WIDTH_MARGIN columns. This ensures that tmux output
+    /// (formatted at preview_width) fits within the display area
+    /// (inner_width) without triggering ratatui's Wrap.
+    ///
+    /// Size chain:
+    ///   Terminal → Layout margin(1) → Panel Rect → Borders::ALL
+    ///   → inner size (last_render_size)
+    ///   → preview size (inner - PREVIEW_WIDTH_MARGIN)
+    ///   → tmux resize-pane
+    pub fn preview_size(&self) -> (u16, u16) {
+        let (w, h) = self.last_render_size;
+        (w.saturating_sub(PREVIEW_WIDTH_MARGIN), h)
     }
 
     pub fn set_expert(&mut self, id: u32, name: String) {
@@ -524,6 +546,67 @@ mod tests {
         assert!(
             !rendered.contains("SCROLL"),
             "render: should NOT show scroll indicator when auto_scroll is enabled"
+        );
+    }
+
+    // Preview size tests (Preview Width Synchronization)
+
+    #[test]
+    fn preview_size_subtracts_margin_from_render_size() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.set_content(Text::raw("hello"), 1);
+
+        use ratatui::{Terminal, backend::TestBackend};
+        let backend = TestBackend::new(40, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| panel.render(frame, frame.area()))
+            .unwrap();
+
+        // inner = (40-2, 10-2) = (38, 8)
+        assert_eq!(
+            panel.last_render_size(),
+            (38, 8),
+            "preview_size: last_render_size should be inner dimensions"
+        );
+        // preview = (38-1, 8) = (37, 8)
+        assert_eq!(
+            panel.preview_size(),
+            (37, 8),
+            "preview_size: should subtract PREVIEW_WIDTH_MARGIN from width"
+        );
+    }
+
+    #[test]
+    fn preview_size_saturates_at_zero() {
+        let panel = ExpertPanelDisplay::new();
+        // last_render_size = (0, 0) by default
+        assert_eq!(
+            panel.preview_size(),
+            (0, 0),
+            "preview_size: should saturate at zero, not underflow"
+        );
+    }
+
+    #[test]
+    fn preview_size_with_narrow_terminal() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.set_content(Text::raw("x"), 1);
+
+        use ratatui::{Terminal, backend::TestBackend};
+        // Minimum viable: 3 wide (border + 1 content col + border)
+        let backend = TestBackend::new(3, 5);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| panel.render(frame, frame.area()))
+            .unwrap();
+
+        // inner = (3-2, 5-2) = (1, 3)
+        // preview = (1-1, 3) = (0, 3)
+        assert_eq!(
+            panel.preview_size(),
+            (0, 3),
+            "preview_size: narrow terminal should saturate width to 0"
         );
     }
 

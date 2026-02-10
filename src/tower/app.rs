@@ -107,7 +107,8 @@ pub struct TowerApp {
     last_panel_poll: Instant,
     layout_areas: LayoutAreas,
 
-    last_panel_size: (u16, u16),
+    last_preview_size: (u16, u16),
+    last_resized_expert_id: Option<u32>,
 
     worktree_manager: WorktreeManager,
     worktree_launch_state: WorktreeLaunchState,
@@ -197,7 +198,8 @@ impl TowerApp {
             last_panel_poll: Instant::now(),
             layout_areas: LayoutAreas::default(),
 
-            last_panel_size: (0, 0),
+            last_preview_size: (0, 0),
+            last_resized_expert_id: None,
 
             worktree_manager,
             worktree_launch_state: WorktreeLaunchState::default(),
@@ -267,6 +269,11 @@ impl TowerApp {
     #[cfg(test)]
     pub fn last_input_time(&self) -> Instant {
         self.last_input_time
+    }
+
+    #[cfg(test)]
+    pub fn last_resized_expert_id(&self) -> Option<u32> {
+        self.last_resized_expert_id
     }
 
     pub fn set_layout_areas(&mut self, areas: LayoutAreas) {
@@ -476,16 +483,27 @@ impl TowerApp {
         }
 
         if let Some(expert_id) = self.expert_panel_display.expert_id() {
-            let current_size = self.expert_panel_display.last_render_size();
-            if current_size != self.last_panel_size && current_size.0 > 0 && current_size.1 > 0 {
-                if let Err(e) = self
-                    .claude
-                    .resize_pane(expert_id, current_size.0, current_size.1)
-                    .await
-                {
-                    tracing::warn!("Failed to resize window for expert {}: {}", expert_id, e);
+            let preview_size = self.expert_panel_display.preview_size();
+            let size_changed = preview_size != self.last_preview_size;
+            let expert_changed = self.last_resized_expert_id != Some(expert_id);
+
+            if (size_changed || expert_changed) && preview_size.0 > 0 && preview_size.1 > 0 {
+                if size_changed {
+                    // Panel size changed (terminal resize): resize ALL expert panes.
+                    // Mirrors claude-squad's SetSessionPreviewSize() (list.go:86-98).
+                    for id in 0..self.config.num_experts() {
+                        if let Err(e) = self.claude.resize_pane(id, preview_size.0, preview_size.1).await {
+                            tracing::warn!("Failed to resize pane for expert {}: {}", id, e);
+                        }
+                    }
+                    self.last_preview_size = preview_size;
+                } else {
+                    // Expert switched: resize only the newly viewed expert's pane.
+                    if let Err(e) = self.claude.resize_pane(expert_id, preview_size.0, preview_size.1).await {
+                        tracing::warn!("Failed to resize pane for expert {}: {}", expert_id, e);
+                    }
                 }
-                self.last_panel_size = current_size;
+                self.last_resized_expert_id = Some(expert_id);
             }
 
             match self.claude.capture_pane_with_escapes(expert_id).await {
@@ -1766,6 +1784,16 @@ mod tests {
         assert!(
             app.last_input_time() > before,
             "task_input_focus: last_input_time should update when TaskInput is focused"
+        );
+    }
+
+    #[test]
+    fn last_resized_expert_id_starts_none() {
+        let app = create_test_app();
+        assert_eq!(
+            app.last_resized_expert_id(),
+            None,
+            "last_resized_expert_id: should start as None"
         );
     }
 
