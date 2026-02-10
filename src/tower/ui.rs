@@ -40,6 +40,15 @@ impl UI {
         let panel_visible = app.expert_panel_display().is_visible();
 
         if panel_visible {
+            // Adaptive panel height: use percentage on large terminals,
+            // fixed minimum on small terminals to avoid squeezing other widgets.
+            let usable_height = frame.area().height.saturating_sub(2); // margin
+            let panel_constraint = if usable_height < 30 {
+                Constraint::Length(10)
+            } else {
+                Constraint::Percentage(40)
+            };
+
             // 7 layout constraints when panel is visible
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
@@ -48,7 +57,7 @@ impl UI {
                     Constraint::Length(3),            // [0] Header
                     Constraint::Length(expert_height), // [1] Expert List
                     Constraint::Min(5),               // [2] Task Input (shrunk)
-                    Constraint::Percentage(40),       // [3] Expert Panel (NEW)
+                    panel_constraint,                 // [3] Expert Panel
                     Constraint::Length(3),            // [4] Effort Selector
                     Constraint::Length(4),            // [5] Report Display (shrunk)
                     Constraint::Length(3),            // [6] Footer

@@ -145,11 +145,16 @@ impl ExpertPanelDisplay {
             Color::DarkGray
         };
 
-        let focus_indicator = if self.focused { " [FOCUSED] " } else { "" };
+        let focus_indicator = if self.focused { " [FOCUSED]" } else { "" };
+        let scroll_indicator = if !self.auto_scroll {
+            format!(" [SCROLL {}/{}]", self.scroll_offset + 1, self.raw_line_count)
+        } else {
+            String::new()
+        };
 
         let block = Block::default()
             .title(Span::styled(
-                format!("{}{}", title, focus_indicator),
+                format!("{}{}{} ", title, focus_indicator, scroll_indicator),
                 Style::default()
                     .fg(border_color)
                     .add_modifier(Modifier::BOLD),
@@ -466,6 +471,60 @@ mod tests {
         let ansi_content = "\x1b[31mred text\x1b[0m normal";
         assert!(panel.try_set_content(ansi_content), "first set should parse");
         assert!(!panel.try_set_content(ansi_content), "second set should skip parsing");
+    }
+
+    // Scroll indicator tests (Phase 3, Issue 3.10)
+
+    fn render_to_string(panel: &mut ExpertPanelDisplay, width: u16, height: u16) -> String {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| {
+            panel.render(frame, frame.area());
+        }).unwrap();
+
+        let buffer = terminal.backend().buffer().clone();
+        let mut result = String::new();
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                let cell = &buffer[(x, y)];
+                result.push_str(cell.symbol());
+            }
+            result.push('\n');
+        }
+        result
+    }
+
+    #[test]
+    fn render_shows_scroll_indicator_when_not_auto_scrolling() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.set_expert(1, "Alice".to_string());
+        let content = (0..30).map(|i| format!("line{}", i)).collect::<Vec<_>>().join("\n");
+        panel.set_content(Text::raw(content), 30);
+        panel.scroll_up();
+        assert!(!panel.auto_scroll, "scroll_up should disable auto_scroll");
+
+        let rendered = render_to_string(&mut panel, 60, 10);
+        assert!(
+            rendered.contains("SCROLL"),
+            "render: should show scroll indicator when auto_scroll is disabled, got title: {}",
+            rendered.lines().next().unwrap_or("")
+        );
+    }
+
+    #[test]
+    fn render_no_scroll_indicator_when_auto_scrolling() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.set_expert(1, "Alice".to_string());
+        panel.set_content(Text::raw("line1\nline2"), 2);
+        assert!(panel.auto_scroll, "auto_scroll should be enabled");
+
+        let rendered = render_to_string(&mut panel, 60, 10);
+        assert!(
+            !rendered.contains("SCROLL"),
+            "render: should NOT show scroll indicator when auto_scroll is enabled"
+        );
     }
 
     // ANSI parsing tests (P10)
