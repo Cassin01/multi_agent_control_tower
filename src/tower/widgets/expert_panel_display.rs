@@ -12,6 +12,9 @@ use sha2::{Digest, Sha256};
 /// Prevents edge-case line wrapping at width boundaries.
 const PREVIEW_WIDTH_MARGIN: u16 = 1;
 
+/// Safety margin subtracted from inner height when setting tmux PTY size.
+const PREVIEW_HEIGHT_MARGIN: u16 = 0;
+
 pub struct ExpertPanelDisplay {
     expert_id: Option<u32>,
     expert_name: Option<String>,
@@ -86,18 +89,21 @@ impl ExpertPanelDisplay {
     /// Returns the effective dimensions for tmux PTY synchronization.
     ///
     /// The preview size is smaller than the render inner size by
-    /// PREVIEW_WIDTH_MARGIN columns. This ensures that tmux output
-    /// (formatted at preview_width) fits within the display area
-    /// (inner_width) without triggering ratatui's Wrap.
+    /// PREVIEW_WIDTH_MARGIN columns and PREVIEW_HEIGHT_MARGIN rows.
+    /// This ensures that tmux output (formatted at preview_width)
+    /// fits within the display area without triggering ratatui's Wrap.
     ///
     /// Size chain:
     ///   Terminal → Layout margin(1) → Panel Rect → Borders::ALL
     ///   → inner size (last_render_size)
-    ///   → preview size (inner - PREVIEW_WIDTH_MARGIN)
+    ///   → preview size (inner - margins)
     ///   → tmux resize-pane
     pub fn preview_size(&self) -> (u16, u16) {
         let (w, h) = self.last_render_size;
-        (w.saturating_sub(PREVIEW_WIDTH_MARGIN), h)
+        (
+            w.saturating_sub(PREVIEW_WIDTH_MARGIN),
+            h.saturating_sub(PREVIEW_HEIGHT_MARGIN),
+        )
     }
 
     pub fn set_expert(&mut self, id: u32, name: String) {
@@ -649,11 +655,11 @@ mod tests {
             (38, 8),
             "preview_size: last_render_size should be inner dimensions"
         );
-        // preview = (38-1, 8) = (37, 8)
+        // preview = (38-1, 8-0) = (37, 8)
         assert_eq!(
             panel.preview_size(),
             (37, 8),
-            "preview_size: should subtract PREVIEW_WIDTH_MARGIN from width"
+            "preview_size: should subtract margins from dimensions"
         );
     }
 
@@ -682,7 +688,7 @@ mod tests {
             .unwrap();
 
         // inner = (3-2, 5-2) = (1, 3)
-        // preview = (1-1, 3) = (0, 3)
+        // preview = (1-1, 3-0) = (0, 3)
         assert_eq!(
             panel.preview_size(),
             (0, 3),

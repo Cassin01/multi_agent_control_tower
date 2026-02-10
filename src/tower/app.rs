@@ -34,7 +34,6 @@ pub enum FocusArea {
     TaskInput,
     ExpertPanel,
     EffortSelector,
-    ReportList,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -44,7 +43,6 @@ pub struct LayoutAreas {
     pub task_input: Rect,
     pub expert_panel: Rect,
     pub effort_selector: Rect,
-    pub report_list: Rect,
 }
 
 fn keycode_to_tmux_key(code: KeyCode, modifiers: KeyModifiers) -> Option<String> {
@@ -298,8 +296,6 @@ impl TowerApp {
             self.set_focus(FocusArea::ExpertPanel);
         } else if Self::point_in_rect(pos, self.layout_areas.effort_selector) {
             self.set_focus(FocusArea::EffortSelector);
-        } else if Self::point_in_rect(pos, self.layout_areas.report_list) {
-            self.set_focus(FocusArea::ReportList);
         }
     }
 
@@ -559,8 +555,6 @@ impl TowerApp {
             .set_focused(self.focus == FocusArea::ExpertPanel);
         self.effort_selector
             .set_focused(self.focus == FocusArea::EffortSelector);
-        self.report_display
-            .set_focused(self.focus == FocusArea::ReportList);
     }
 
     pub fn next_focus(&mut self) {
@@ -575,8 +569,7 @@ impl TowerApp {
                 }
             }
             FocusArea::ExpertPanel => FocusArea::EffortSelector,
-            FocusArea::EffortSelector => FocusArea::ReportList,
-            FocusArea::ReportList => FocusArea::TaskInput,
+            FocusArea::EffortSelector => FocusArea::TaskInput,
         };
         self.update_focus();
     }
@@ -585,7 +578,7 @@ impl TowerApp {
         let panel_visible = self.expert_panel_display.is_visible();
         self.focus = match self.focus {
             FocusArea::ExpertList => FocusArea::TaskInput,
-            FocusArea::TaskInput => FocusArea::ReportList,
+            FocusArea::TaskInput => FocusArea::EffortSelector,
             FocusArea::ExpertPanel => FocusArea::TaskInput,
             FocusArea::EffortSelector => {
                 if panel_visible {
@@ -594,7 +587,6 @@ impl TowerApp {
                     FocusArea::TaskInput
                 }
             }
-            FocusArea::ReportList => FocusArea::EffortSelector,
         };
         self.update_focus();
     }
@@ -705,9 +697,6 @@ impl TowerApp {
                             return Ok(());
                         }
                         FocusArea::EffortSelector => self.handle_effort_selector_keys(key.code),
-                        FocusArea::ReportList => {
-                            self.handle_report_list_keys(key.code, key.modifiers)
-                        }
                     }
 
                     if key.code == KeyCode::Char('t')
@@ -824,28 +813,6 @@ impl TowerApp {
             KeyCode::Left | KeyCode::Char('h') => self.effort_selector.prev(),
             KeyCode::Right | KeyCode::Char('l') => self.effort_selector.next(),
             _ => {}
-        }
-    }
-
-    fn handle_report_list_keys(&mut self, code: KeyCode, modifiers: KeyModifiers) {
-        match self.report_display.view_mode() {
-            ViewMode::List => match code {
-                KeyCode::Up | KeyCode::Char('k') => self.report_display.prev(),
-                KeyCode::Down | KeyCode::Char('j') => self.report_display.next(),
-                KeyCode::Enter => self.report_display.open_detail(),
-                _ => {}
-            },
-            ViewMode::Detail => {
-                match code {
-                    KeyCode::Up | KeyCode::Char('k') => self.report_display.scroll_up(),
-                    KeyCode::Down | KeyCode::Char('j') => self.report_display.scroll_down(),
-                    KeyCode::Enter | KeyCode::Char('q') => self.report_display.close_detail(),
-                    _ => {}
-                }
-                if code == KeyCode::Char('q') && modifiers.contains(KeyModifiers::CONTROL) {
-                    self.report_display.close_detail();
-                }
-            }
         }
     }
 
@@ -1512,9 +1479,6 @@ mod tests {
         assert_eq!(app.focus(), FocusArea::EffortSelector);
 
         app.next_focus();
-        assert_eq!(app.focus(), FocusArea::ReportList);
-
-        app.next_focus();
         assert_eq!(app.focus(), FocusArea::TaskInput);
     }
 
@@ -1524,9 +1488,6 @@ mod tests {
 
         // ExpertList is display-only, initial focus is TaskInput
         assert_eq!(app.focus(), FocusArea::TaskInput);
-
-        app.prev_focus();
-        assert_eq!(app.focus(), FocusArea::ReportList);
 
         app.prev_focus();
         assert_eq!(app.focus(), FocusArea::EffortSelector);
@@ -1557,9 +1518,6 @@ mod tests {
 
         app.set_focus(FocusArea::EffortSelector);
         assert_eq!(app.focus(), FocusArea::EffortSelector);
-
-        app.set_focus(FocusArea::ReportList);
-        assert_eq!(app.focus(), FocusArea::ReportList);
     }
 
     #[test]
@@ -1590,7 +1548,6 @@ mod tests {
             task_input: Rect::new(0, 10, 100, 10),
             expert_panel: Rect::default(),
             effort_selector: Rect::new(0, 20, 100, 5),
-            report_list: Rect::new(0, 25, 100, 10),
         });
 
         // ExpertList is display-only, clicking it doesn't change focus
@@ -1602,9 +1559,6 @@ mod tests {
 
         app.handle_mouse_click(50, 22);
         assert_eq!(app.focus(), FocusArea::EffortSelector);
-
-        app.handle_mouse_click(50, 30);
-        assert_eq!(app.focus(), FocusArea::ReportList);
     }
 
     // Task 10.1: Focus cycling tests (P2, P3)
@@ -1622,8 +1576,6 @@ mod tests {
             FocusArea::EffortSelector,
             "should skip ExpertPanel when hidden"
         );
-        app.next_focus();
-        assert_eq!(app.focus(), FocusArea::ReportList);
         app.next_focus();
         assert_eq!(
             app.focus(),
@@ -1647,8 +1599,6 @@ mod tests {
         app.next_focus();
         assert_eq!(app.focus(), FocusArea::EffortSelector);
         app.next_focus();
-        assert_eq!(app.focus(), FocusArea::ReportList);
-        app.next_focus();
         assert_eq!(
             app.focus(),
             FocusArea::TaskInput,
@@ -1662,8 +1612,6 @@ mod tests {
         app.expert_panel_display.show();
         assert_eq!(app.focus(), FocusArea::TaskInput);
 
-        app.prev_focus();
-        assert_eq!(app.focus(), FocusArea::ReportList);
         app.prev_focus();
         assert_eq!(app.focus(), FocusArea::EffortSelector);
         app.prev_focus();
@@ -1686,8 +1634,6 @@ mod tests {
         assert!(!app.expert_panel_display.is_visible());
         assert_eq!(app.focus(), FocusArea::TaskInput);
 
-        app.prev_focus();
-        assert_eq!(app.focus(), FocusArea::ReportList);
         app.prev_focus();
         assert_eq!(app.focus(), FocusArea::EffortSelector);
         app.prev_focus();
@@ -1726,7 +1672,6 @@ mod tests {
             task_input: Rect::new(0, 10, 100, 10),
             expert_panel: Rect::default(),
             effort_selector: Rect::new(0, 20, 100, 5),
-            report_list: Rect::new(0, 25, 100, 10),
         });
 
         // Click at (0,0) — inside expert_list (display-only) and expert_panel zero rect
@@ -1747,7 +1692,6 @@ mod tests {
             task_input: Rect::new(0, 10, 100, 10),
             expert_panel: Rect::new(0, 20, 100, 15),
             effort_selector: Rect::new(0, 35, 100, 5),
-            report_list: Rect::new(0, 40, 100, 10),
         });
 
         app.handle_mouse_click(50, 25);
@@ -1768,7 +1712,7 @@ mod tests {
         app.expert_panel_display.toggle();
         assert!(app.expert_panel_display.is_visible());
 
-        // When visible, focus cycle should have 4 stops (TaskInput, ExpertPanel, EffortSelector, ReportList)
+        // When visible, focus cycle should have 3 stops (TaskInput, ExpertPanel, EffortSelector)
         let mut visited = Vec::new();
         let start = app.focus();
         loop {
@@ -1785,15 +1729,15 @@ mod tests {
         );
         assert_eq!(
             visited.len(),
-            4,
-            "visible panel: focus cycle should have 4 stops"
+            3,
+            "visible panel: focus cycle should have 3 stops"
         );
 
         // Toggle off — panel becomes hidden
         app.expert_panel_display.toggle();
         assert!(!app.expert_panel_display.is_visible());
 
-        // When hidden, focus cycle should have 3 stops (TaskInput, EffortSelector, ReportList)
+        // When hidden, focus cycle should have 2 stops (TaskInput, EffortSelector)
         let mut visited = Vec::new();
         let start = app.focus();
         loop {
@@ -1809,8 +1753,8 @@ mod tests {
         );
         assert_eq!(
             visited.len(),
-            3,
-            "hidden panel: focus cycle should have 3 stops"
+            2,
+            "hidden panel: focus cycle should have 2 stops"
         );
     }
 

@@ -18,6 +18,7 @@ pub enum ViewMode {
     Detail,
 }
 
+#[allow(dead_code)]
 pub struct ReportDisplay {
     reports: Vec<Report>,
     state: ListState,
@@ -26,6 +27,7 @@ pub struct ReportDisplay {
     detail_modal: ReportDetailModal,
 }
 
+#[allow(dead_code)]
 impl ReportDisplay {
     pub fn new() -> Self {
         Self {
@@ -41,10 +43,12 @@ impl ReportDisplay {
         self.view_mode
     }
 
+    #[allow(dead_code)]
     pub fn selected_report(&self) -> Option<&Report> {
         self.state.selected().and_then(|i| self.reports.get(i))
     }
 
+    #[allow(dead_code)]
     pub fn open_detail(&mut self) {
         if let Some(report) = self.selected_report().cloned() {
             self.detail_modal.show(report);
@@ -83,10 +87,12 @@ impl ReportDisplay {
         self.reports = reports;
     }
 
+    #[allow(dead_code)]
     pub fn set_focused(&mut self, focused: bool) {
         self.focused = focused;
     }
 
+    #[allow(dead_code)]
     pub fn next(&mut self) {
         if self.reports.is_empty() {
             return;
@@ -104,6 +110,7 @@ impl ReportDisplay {
         self.state.select(Some(i));
     }
 
+    #[allow(dead_code)]
     pub fn prev(&mut self) {
         if self.reports.is_empty() {
             return;
@@ -121,6 +128,7 @@ impl ReportDisplay {
         self.state.select(Some(i));
     }
 
+    #[allow(dead_code)]
     fn status_symbol(status: &TaskStatus) -> (&'static str, Color) {
         match status {
             TaskStatus::Pending => ("○", Color::Gray),
@@ -130,6 +138,7 @@ impl ReportDisplay {
         }
     }
 
+    #[allow(dead_code)]
     pub fn render(&mut self, frame: &mut Frame, area: Rect) {
         let items: Vec<ListItem> = self
             .reports
