@@ -72,6 +72,7 @@ impl HelpModal {
             Self::key_line("Mouse Click", "Focus clicked panel"),
             Self::key_line("Ctrl+C / Ctrl+Q", "Quit application"),
             Self::key_line("Ctrl+I", "Toggle this help"),
+            Self::key_line("Ctrl+J", "Toggle expert panel"),
             Line::from(""),
             Self::subsection_title("Task Input"),
             Self::nested_subsection_title("Expert Operations"),
@@ -241,6 +242,24 @@ mod tests {
         assert!(
             text.contains("Ctrl+T"),
             "build_help_lines: should show Ctrl+T for panel switching"
+        );
+    }
+
+    #[test]
+    fn help_text_shows_ctrl_j_for_expert_panel() {
+        let modal = HelpModal::new();
+        let lines = modal.build_help_lines();
+        let text: String = lines
+            .iter()
+            .flat_map(|line| line.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(
+            text.contains("Ctrl+J"),
+            "build_help_lines: should show Ctrl+J for expert panel toggle"
+        );
+        assert!(
+            text.contains("expert panel"),
+            "build_help_lines: should describe expert panel functionality"
         );
     }
 

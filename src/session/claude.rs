@@ -45,13 +45,20 @@ impl<T: TmuxSender> ClaudeManager<T> {
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub async fn send_keys(&self, expert_id: u32, keys: &str) -> Result<()> {
         self.tmux.send_keys(expert_id, keys).await
     }
 
+    pub async fn capture_pane_with_escapes(&self, expert_id: u32) -> Result<String> {
+        self.tmux.capture_pane_with_escapes(expert_id).await
+    }
+
     pub async fn send_keys_with_enter(&self, expert_id: u32, keys: &str) -> Result<()> {
         self.tmux.send_keys_with_enter(expert_id, keys).await
+    }
+
+    pub async fn resize_pane(&self, pane_id: u32, width: u16, height: u16) -> Result<()> {
+        self.tmux.resize_pane(pane_id, width, height).await
     }
 
     pub async fn send_exit(&self, expert_id: u32) -> Result<()> {
@@ -275,6 +282,14 @@ mod tests {
 
         let ready = manager.wait_for_ready(0, 1).await.unwrap();
         assert!(!ready, "wait_for_ready: should return false when pane never shows ready prompt");
+    }
+
+    #[tokio::test]
+    async fn resize_pane_delegates_to_sender() {
+        let mock = MockTmuxSender::new();
+        let manager = create_mock_manager(mock.clone());
+
+        manager.resize_pane(2, 80, 24).await.unwrap();
     }
 
     #[tokio::test]

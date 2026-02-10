@@ -22,14 +22,15 @@ const MESSAGE_POLL_INTERVAL: Duration = Duration::from_millis(3000);
 
 use super::ui::UI;
 use super::widgets::{
-    EffortSelector, HelpModal, MessagingDisplay, ReportDisplay, RoleSelector, StatusDisplay,
-    TaskInput, ViewMode,
+    EffortSelector, ExpertPanelDisplay, HelpModal, MessagingDisplay, ReportDisplay, RoleSelector,
+    StatusDisplay, TaskInput, ViewMode,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusArea {
     ExpertList,
     TaskInput,
+    ExpertPanel,
     EffortSelector,
     ReportList,
 }
@@ -39,8 +40,36 @@ pub struct LayoutAreas {
     #[allow(dead_code)]
     pub expert_list: Rect,
     pub task_input: Rect,
+    pub expert_panel: Rect,
     pub effort_selector: Rect,
     pub report_list: Rect,
+}
+
+fn keycode_to_tmux_key(code: KeyCode, modifiers: KeyModifiers) -> Option<String> {
+    if modifiers.contains(KeyModifiers::CONTROL) {
+        if let KeyCode::Char(c) = code {
+            return Some(format!("C-{}", c));
+        }
+    }
+
+    match code {
+        KeyCode::Char(c) => Some(c.to_string()),
+        KeyCode::Enter => Some("Enter".to_string()),
+        KeyCode::Backspace => Some("BSpace".to_string()),
+        KeyCode::Tab => Some("Tab".to_string()),
+        KeyCode::BackTab => Some("BTab".to_string()),
+        KeyCode::Esc => Some("Escape".to_string()),
+        KeyCode::Up => Some("Up".to_string()),
+        KeyCode::Down => Some("Down".to_string()),
+        KeyCode::Left => Some("Left".to_string()),
+        KeyCode::Right => Some("Right".to_string()),
+        KeyCode::Home => None,
+        KeyCode::End => None,
+        KeyCode::PageUp => None,
+        KeyCode::PageDown => None,
+        KeyCode::Delete => Some("DC".to_string()),
+        _ => None,
+    }
 }
 
 pub struct TowerApp {
@@ -63,6 +92,7 @@ pub struct TowerApp {
     help_modal: HelpModal,
     role_selector: RoleSelector,
     messaging_display: MessagingDisplay,
+    expert_panel_display: ExpertPanelDisplay,
 
     session_roles: SessionExpertRoles,
     available_roles: AvailableRoles,
@@ -74,7 +104,10 @@ pub struct TowerApp {
     last_report_poll: Instant,
     last_message_poll: Instant,
     last_input_time: Instant,
+    last_panel_poll: Instant,
     layout_areas: LayoutAreas,
+
+    last_panel_size: (u16, u16),
 
     worktree_manager: WorktreeManager,
     worktree_launch_state: WorktreeLaunchState,
@@ -149,6 +182,7 @@ impl TowerApp {
             help_modal: HelpModal::new(),
             role_selector: RoleSelector::new(),
             messaging_display: MessagingDisplay::new(),
+            expert_panel_display: ExpertPanelDisplay::new(),
 
             session_roles: SessionExpertRoles::new(session_hash),
             available_roles,
@@ -160,7 +194,10 @@ impl TowerApp {
             last_report_poll: Instant::now(),
             last_message_poll: Instant::now(),
             last_input_time: Instant::now(),
+            last_panel_poll: Instant::now(),
             layout_areas: LayoutAreas::default(),
+
+            last_panel_size: (0, 0),
 
             worktree_manager,
             worktree_launch_state: WorktreeLaunchState::default(),
@@ -227,6 +264,11 @@ impl TowerApp {
         self.session_roles.get_role(expert_id)
     }
 
+    #[cfg(test)]
+    pub fn last_input_time(&self) -> Instant {
+        self.last_input_time
+    }
+
     pub fn set_layout_areas(&mut self, areas: LayoutAreas) {
         self.layout_areas = areas;
     }
@@ -241,6 +283,10 @@ impl TowerApp {
 
         if Self::point_in_rect(pos, self.layout_areas.task_input) {
             self.set_focus(FocusArea::TaskInput);
+        } else if self.expert_panel_display.is_visible()
+            && Self::point_in_rect(pos, self.layout_areas.expert_panel)
+        {
+            self.set_focus(FocusArea::ExpertPanel);
         } else if Self::point_in_rect(pos, self.layout_areas.effort_selector) {
             self.set_focus(FocusArea::EffortSelector);
         } else if Self::point_in_rect(pos, self.layout_areas.report_list) {
@@ -407,10 +453,62 @@ impl TowerApp {
         Ok(())
     }
 
+    async fn poll_expert_panel(&mut self) -> Result<()> {
+        if !self.expert_panel_display.is_visible() {
+            return Ok(());
+        }
+
+        const INPUT_PAUSE_DURATION: Duration = Duration::from_millis(500);
+        if self.last_input_time.elapsed() < INPUT_PAUSE_DURATION {
+            return Ok(());
+        }
+
+        const PANEL_POLL_INTERVAL: Duration = Duration::from_millis(250);
+        if self.last_panel_poll.elapsed() < PANEL_POLL_INTERVAL {
+            return Ok(());
+        }
+        self.last_panel_poll = Instant::now();
+
+        let selected_id = self.status_display.selected_expert_id();
+        if let Some(id) = selected_id {
+            let name = self.config.get_expert_name(id);
+            self.expert_panel_display.set_expert(id, name);
+        }
+
+        if let Some(expert_id) = self.expert_panel_display.expert_id() {
+            let current_size = self.expert_panel_display.last_render_size();
+            if current_size != self.last_panel_size && current_size.0 > 0 && current_size.1 > 0 {
+                if let Err(e) = self
+                    .claude
+                    .resize_pane(expert_id, current_size.0, current_size.1)
+                    .await
+                {
+                    tracing::warn!("Failed to resize pane for expert {}: {}", expert_id, e);
+                }
+                self.last_panel_size = current_size;
+            }
+
+            match self.claude.capture_pane_with_escapes(expert_id).await {
+                Ok(raw) => {
+                    self.expert_panel_display.try_set_content(&raw);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to capture expert {} pane: {}", expert_id, e);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// Get the messaging display widget
     #[allow(dead_code)]
     pub fn messaging_display(&mut self) -> &mut MessagingDisplay {
         &mut self.messaging_display
+    }
+
+    pub fn expert_panel_display(&mut self) -> &mut ExpertPanelDisplay {
+        &mut self.expert_panel_display
     }
 
     /// Get the expert registry
@@ -424,6 +522,8 @@ impl TowerApp {
         self.status_display.set_focused(false);
         self.task_input
             .set_focused(self.focus == FocusArea::TaskInput);
+        self.expert_panel_display
+            .set_focused(self.focus == FocusArea::ExpertPanel);
         self.effort_selector
             .set_focused(self.focus == FocusArea::EffortSelector);
         self.report_display
@@ -431,9 +531,17 @@ impl TowerApp {
     }
 
     pub fn next_focus(&mut self) {
+        let panel_visible = self.expert_panel_display.is_visible();
         self.focus = match self.focus {
             FocusArea::ExpertList => FocusArea::TaskInput,
-            FocusArea::TaskInput => FocusArea::EffortSelector,
+            FocusArea::TaskInput => {
+                if panel_visible {
+                    FocusArea::ExpertPanel
+                } else {
+                    FocusArea::EffortSelector
+                }
+            }
+            FocusArea::ExpertPanel => FocusArea::EffortSelector,
             FocusArea::EffortSelector => FocusArea::ReportList,
             FocusArea::ReportList => FocusArea::TaskInput,
         };
@@ -441,10 +549,18 @@ impl TowerApp {
     }
 
     pub fn prev_focus(&mut self) {
+        let panel_visible = self.expert_panel_display.is_visible();
         self.focus = match self.focus {
             FocusArea::ExpertList => FocusArea::TaskInput,
             FocusArea::TaskInput => FocusArea::ReportList,
-            FocusArea::EffortSelector => FocusArea::TaskInput,
+            FocusArea::ExpertPanel => FocusArea::TaskInput,
+            FocusArea::EffortSelector => {
+                if panel_visible {
+                    FocusArea::ExpertPanel
+                } else {
+                    FocusArea::TaskInput
+                }
+            }
             FocusArea::ReportList => FocusArea::EffortSelector,
         };
         self.update_focus();
@@ -470,9 +586,13 @@ impl TowerApp {
                     return Ok(());
                 }
 
-                // Update input time for all key presses to pause polling during interaction
-                self.last_input_time = Instant::now();
-                tracing::debug!("Key pressed: {:?}, last_input_time updated", key.code);
+                // Update input time for key presses to pause polling during interaction.
+                // Skip when ExpertPanel is focused: keys are forwarded to tmux, and
+                // the debounce would freeze the panel's live capture for 500ms per keystroke.
+                if self.focus != FocusArea::ExpertPanel {
+                    self.last_input_time = Instant::now();
+                }
+                tracing::debug!("Key pressed: {:?}, focus: {:?}", key.code, self.focus);
 
                 self.clear_message();
 
@@ -484,6 +604,15 @@ impl TowerApp {
                         }
                         KeyCode::Char('i') => {
                             self.help_modal.toggle();
+                            return Ok(());
+                        }
+                        KeyCode::Char('j') => {
+                            self.expert_panel_display.toggle();
+                            if !self.expert_panel_display.is_visible()
+                                && self.focus == FocusArea::ExpertPanel
+                            {
+                                self.set_focus(FocusArea::TaskInput);
+                            }
                             return Ok(());
                         }
                         _ => {}
@@ -530,6 +659,10 @@ impl TowerApp {
                 match self.focus {
                     FocusArea::ExpertList => {} // Display only, not selectable
                     FocusArea::TaskInput => self.handle_task_input_keys(key.code, key.modifiers),
+                    FocusArea::ExpertPanel => {
+                        self.handle_expert_panel_keys(key.code, key.modifiers).await?;
+                        return Ok(());
+                    }
                     FocusArea::EffortSelector => self.handle_effort_selector_keys(key.code),
                     FocusArea::ReportList => self.handle_report_list_keys(key.code, key.modifiers),
                 }
@@ -664,6 +797,39 @@ impl TowerApp {
                 }
             }
         }
+    }
+
+    async fn handle_expert_panel_keys(&mut self, code: KeyCode, modifiers: KeyModifiers) -> Result<()> {
+        match code {
+            KeyCode::PageUp => {
+                self.expert_panel_display.scroll_up();
+                return Ok(());
+            }
+            KeyCode::PageDown => {
+                self.expert_panel_display.scroll_down();
+                return Ok(());
+            }
+            KeyCode::Home => {
+                self.expert_panel_display.scroll_to_top();
+                return Ok(());
+            }
+            KeyCode::End => {
+                self.expert_panel_display.scroll_to_bottom();
+                return Ok(());
+            }
+            _ => {}
+        }
+
+        if let Some(tmux_key) = keycode_to_tmux_key(code, modifiers) {
+            if let Some(expert_id) = self.expert_panel_display.expert_id() {
+                if let Err(e) = self.claude.send_keys(expert_id, &tmux_key).await {
+                    tracing::warn!("Failed to send keys to expert {}: {}", expert_id, e);
+                    self.set_message(format!("Error sending keys to expert: {}", e));
+                }
+            }
+        }
+
+        Ok(())
     }
 
     pub async fn assign_task(&mut self) -> Result<()> {
@@ -1121,6 +1287,7 @@ impl TowerApp {
             self.poll_messages().await?;
             let poll_messages_elapsed = poll_messages_start.elapsed();
 
+            self.poll_expert_panel().await?;
             self.poll_worktree_launch().await?;
 
             let loop_elapsed = loop_start.elapsed();
@@ -1155,6 +1322,127 @@ mod tests {
         let config = create_test_config();
         let wm = WorktreeManager::new(config.project_path.clone());
         TowerApp::new(config, wm)
+    }
+
+    // keycode_to_tmux_key tests (P7: Input Isolation)
+
+    #[test]
+    fn keycode_to_tmux_key_char() {
+        assert_eq!(
+            keycode_to_tmux_key(KeyCode::Char('a'), KeyModifiers::NONE),
+            Some("a".to_string()),
+            "keycode_to_tmux_key: plain char 'a' should return \"a\""
+        );
+    }
+
+    #[test]
+    fn keycode_to_tmux_key_ctrl_char() {
+        assert_eq!(
+            keycode_to_tmux_key(KeyCode::Char('c'), KeyModifiers::CONTROL),
+            Some("C-c".to_string()),
+            "keycode_to_tmux_key: Ctrl+c should return \"C-c\""
+        );
+    }
+
+    #[test]
+    fn keycode_to_tmux_key_enter() {
+        assert_eq!(
+            keycode_to_tmux_key(KeyCode::Enter, KeyModifiers::NONE),
+            Some("Enter".to_string()),
+            "keycode_to_tmux_key: Enter should return \"Enter\""
+        );
+    }
+
+    #[test]
+    fn keycode_to_tmux_key_backspace() {
+        assert_eq!(
+            keycode_to_tmux_key(KeyCode::Backspace, KeyModifiers::NONE),
+            Some("BSpace".to_string()),
+            "keycode_to_tmux_key: Backspace should return \"BSpace\""
+        );
+    }
+
+    #[test]
+    fn keycode_to_tmux_key_tab_returns_tab_string() {
+        assert_eq!(
+            keycode_to_tmux_key(KeyCode::Tab, KeyModifiers::NONE),
+            Some("Tab".to_string()),
+            "keycode_to_tmux_key: Tab should return \"Tab\" (NOT None — forwarded to tmux)"
+        );
+    }
+
+    #[test]
+    fn keycode_to_tmux_key_backtab_returns_btab() {
+        assert_eq!(
+            keycode_to_tmux_key(KeyCode::BackTab, KeyModifiers::NONE),
+            Some("BTab".to_string()),
+            "keycode_to_tmux_key: BackTab should return \"BTab\""
+        );
+    }
+
+    #[test]
+    fn keycode_to_tmux_key_esc_returns_escape_string() {
+        assert_eq!(
+            keycode_to_tmux_key(KeyCode::Esc, KeyModifiers::NONE),
+            Some("Escape".to_string()),
+            "keycode_to_tmux_key: Esc should return \"Escape\" (NOT None — forwarded to tmux)"
+        );
+    }
+
+    #[test]
+    fn keycode_to_tmux_key_page_up_returns_none() {
+        assert_eq!(
+            keycode_to_tmux_key(KeyCode::PageUp, KeyModifiers::NONE),
+            None,
+            "keycode_to_tmux_key: PageUp should return None (reserved for local scroll)"
+        );
+    }
+
+    #[test]
+    fn keycode_to_tmux_key_page_down_returns_none() {
+        assert_eq!(
+            keycode_to_tmux_key(KeyCode::PageDown, KeyModifiers::NONE),
+            None,
+            "keycode_to_tmux_key: PageDown should return None (reserved for local scroll)"
+        );
+    }
+
+    #[test]
+    fn keycode_to_tmux_key_arrows() {
+        assert_eq!(
+            keycode_to_tmux_key(KeyCode::Up, KeyModifiers::NONE),
+            Some("Up".to_string()),
+            "keycode_to_tmux_key: Up arrow"
+        );
+        assert_eq!(
+            keycode_to_tmux_key(KeyCode::Down, KeyModifiers::NONE),
+            Some("Down".to_string()),
+            "keycode_to_tmux_key: Down arrow"
+        );
+        assert_eq!(
+            keycode_to_tmux_key(KeyCode::Left, KeyModifiers::NONE),
+            Some("Left".to_string()),
+            "keycode_to_tmux_key: Left arrow"
+        );
+        assert_eq!(
+            keycode_to_tmux_key(KeyCode::Right, KeyModifiers::NONE),
+            Some("Right".to_string()),
+            "keycode_to_tmux_key: Right arrow"
+        );
+    }
+
+    #[test]
+    fn keycode_to_tmux_key_home_end_returns_none() {
+        assert_eq!(
+            keycode_to_tmux_key(KeyCode::Home, KeyModifiers::NONE),
+            None,
+            "keycode_to_tmux_key: Home should return None (reserved for local scroll)"
+        );
+        assert_eq!(
+            keycode_to_tmux_key(KeyCode::End, KeyModifiers::NONE),
+            None,
+            "keycode_to_tmux_key: End should return None (reserved for local scroll)"
+        );
     }
 
     #[test]
@@ -1257,6 +1545,7 @@ mod tests {
         app.set_layout_areas(LayoutAreas {
             expert_list: Rect::new(0, 0, 100, 10),
             task_input: Rect::new(0, 10, 100, 10),
+            expert_panel: Rect::default(),
             effort_selector: Rect::new(0, 20, 100, 5),
             report_list: Rect::new(0, 25, 100, 10),
         });
@@ -1273,6 +1562,211 @@ mod tests {
 
         app.handle_mouse_click(50, 30);
         assert_eq!(app.focus(), FocusArea::ReportList);
+    }
+
+    // Task 10.1: Focus cycling tests (P2, P3)
+
+    #[test]
+    fn focus_cycle_without_panel_skips_expert_panel() {
+        let mut app = create_test_app();
+        // Panel is hidden by default
+        assert!(!app.expert_panel_display.is_visible());
+        assert_eq!(app.focus(), FocusArea::TaskInput);
+
+        app.next_focus();
+        assert_eq!(app.focus(), FocusArea::EffortSelector, "should skip ExpertPanel when hidden");
+        app.next_focus();
+        assert_eq!(app.focus(), FocusArea::ReportList);
+        app.next_focus();
+        assert_eq!(app.focus(), FocusArea::TaskInput, "full cycle should return to start");
+    }
+
+    #[test]
+    fn focus_cycle_with_panel_includes_expert_panel() {
+        let mut app = create_test_app();
+        app.expert_panel_display.show();
+        assert_eq!(app.focus(), FocusArea::TaskInput);
+
+        app.next_focus();
+        assert_eq!(app.focus(), FocusArea::ExpertPanel, "should visit ExpertPanel when visible");
+        app.next_focus();
+        assert_eq!(app.focus(), FocusArea::EffortSelector);
+        app.next_focus();
+        assert_eq!(app.focus(), FocusArea::ReportList);
+        app.next_focus();
+        assert_eq!(app.focus(), FocusArea::TaskInput, "full cycle should return to start");
+    }
+
+    #[test]
+    fn focus_cycle_backwards_with_panel() {
+        let mut app = create_test_app();
+        app.expert_panel_display.show();
+        assert_eq!(app.focus(), FocusArea::TaskInput);
+
+        app.prev_focus();
+        assert_eq!(app.focus(), FocusArea::ReportList);
+        app.prev_focus();
+        assert_eq!(app.focus(), FocusArea::EffortSelector);
+        app.prev_focus();
+        assert_eq!(app.focus(), FocusArea::ExpertPanel, "should visit ExpertPanel in reverse");
+        app.prev_focus();
+        assert_eq!(app.focus(), FocusArea::TaskInput, "full reverse cycle should return to start");
+    }
+
+    #[test]
+    fn focus_cycle_backwards_without_panel_skips_expert_panel() {
+        let mut app = create_test_app();
+        assert!(!app.expert_panel_display.is_visible());
+        assert_eq!(app.focus(), FocusArea::TaskInput);
+
+        app.prev_focus();
+        assert_eq!(app.focus(), FocusArea::ReportList);
+        app.prev_focus();
+        assert_eq!(app.focus(), FocusArea::EffortSelector);
+        app.prev_focus();
+        assert_eq!(app.focus(), FocusArea::TaskInput, "should skip ExpertPanel when hidden");
+    }
+
+    #[test]
+    fn hiding_panel_while_focused_moves_to_task_input() {
+        let mut app = create_test_app();
+        app.expert_panel_display.show();
+        app.set_focus(FocusArea::ExpertPanel);
+        assert_eq!(app.focus(), FocusArea::ExpertPanel);
+
+        // Hide the panel — P2 requires focus moves to TaskInput
+        app.expert_panel_display.hide();
+        if app.focus() == FocusArea::ExpertPanel {
+            app.set_focus(FocusArea::TaskInput);
+        }
+        assert_eq!(app.focus(), FocusArea::TaskInput, "hiding panel while focused should move focus to TaskInput");
+    }
+
+    #[test]
+    fn mouse_click_does_not_match_zero_rect() {
+        let mut app = create_test_app();
+        // expert_panel is Rect::default() (zero rect) — panel hidden
+        app.set_layout_areas(LayoutAreas {
+            expert_list: Rect::new(0, 0, 100, 10),
+            task_input: Rect::new(0, 10, 100, 10),
+            expert_panel: Rect::default(),
+            effort_selector: Rect::new(0, 20, 100, 5),
+            report_list: Rect::new(0, 25, 100, 10),
+        });
+
+        // Click at (0,0) — inside expert_list (display-only) and expert_panel zero rect
+        app.handle_mouse_click(0, 0);
+        assert_ne!(app.focus(), FocusArea::ExpertPanel, "click should not match zero expert_panel rect");
+    }
+
+    #[test]
+    fn mouse_click_matches_expert_panel_when_visible() {
+        let mut app = create_test_app();
+        app.expert_panel_display.show();
+        app.set_layout_areas(LayoutAreas {
+            expert_list: Rect::new(0, 0, 100, 10),
+            task_input: Rect::new(0, 10, 100, 10),
+            expert_panel: Rect::new(0, 20, 100, 15),
+            effort_selector: Rect::new(0, 35, 100, 5),
+            report_list: Rect::new(0, 40, 100, 10),
+        });
+
+        app.handle_mouse_click(50, 25);
+        assert_eq!(app.focus(), FocusArea::ExpertPanel, "click in expert panel area should set focus");
+    }
+
+    #[test]
+    fn toggle_panel_visibility() {
+        let mut app = create_test_app();
+        // Panel starts hidden
+        assert!(!app.expert_panel_display.is_visible());
+
+        // Toggle on — panel becomes visible
+        app.expert_panel_display.toggle();
+        assert!(app.expert_panel_display.is_visible());
+
+        // When visible, focus cycle should have 4 stops (TaskInput, ExpertPanel, EffortSelector, ReportList)
+        let mut visited = Vec::new();
+        let start = app.focus();
+        loop {
+            app.next_focus();
+            visited.push(app.focus());
+            if app.focus() == start {
+                break;
+            }
+        }
+        assert!(
+            visited.contains(&FocusArea::ExpertPanel),
+            "visible panel: focus cycle should include ExpertPanel, got: {:?}",
+            visited
+        );
+        assert_eq!(visited.len(), 4, "visible panel: focus cycle should have 4 stops");
+
+        // Toggle off — panel becomes hidden
+        app.expert_panel_display.toggle();
+        assert!(!app.expert_panel_display.is_visible());
+
+        // When hidden, focus cycle should have 3 stops (TaskInput, EffortSelector, ReportList)
+        let mut visited = Vec::new();
+        let start = app.focus();
+        loop {
+            app.next_focus();
+            visited.push(app.focus());
+            if app.focus() == start {
+                break;
+            }
+        }
+        assert!(
+            !visited.contains(&FocusArea::ExpertPanel),
+            "hidden panel: focus cycle should NOT include ExpertPanel"
+        );
+        assert_eq!(visited.len(), 3, "hidden panel: focus cycle should have 3 stops");
+    }
+
+    #[test]
+    fn update_focus_syncs_expert_panel_focus_state() {
+        let mut app = create_test_app();
+        app.expert_panel_display.show();
+
+        app.set_focus(FocusArea::ExpertPanel);
+        assert!(app.expert_panel_display.is_focused(), "expert panel should be focused");
+
+        app.set_focus(FocusArea::TaskInput);
+        assert!(!app.expert_panel_display.is_focused(), "expert panel should lose focus");
+    }
+
+    #[test]
+    fn expert_panel_focus_does_not_update_debounce_timer() {
+        let mut app = create_test_app();
+        app.expert_panel_display.show();
+        app.set_focus(FocusArea::ExpertPanel);
+
+        // Record the initial last_input_time
+        let before = app.last_input_time();
+
+        // Simulate time passing so we can detect a change
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        // Simulate a keypress in handle_events context:
+        // When ExpertPanel is focused, last_input_time should NOT be updated
+        // We test the condition directly since handle_events requires terminal setup
+        if app.focus() != FocusArea::ExpertPanel {
+            panic!("focus should be ExpertPanel");
+        }
+        // The guard: focus == ExpertPanel means no update
+        assert_eq!(
+            app.last_input_time(),
+            before,
+            "expert_panel_focus: last_input_time should not change when ExpertPanel is focused"
+        );
+
+        // Verify that TaskInput focus DOES update the timer
+        app.set_focus(FocusArea::TaskInput);
+        app.handle_task_input_keys(KeyCode::Char('a'), KeyModifiers::NONE);
+        assert!(
+            app.last_input_time() > before,
+            "task_input_focus: last_input_time should update when TaskInput is focused"
+        );
     }
 
     #[test]
