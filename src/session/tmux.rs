@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
 use std::process::{Output, Stdio};
 use tokio::process::Command;
@@ -8,7 +8,12 @@ use crate::config::Config;
 fn check_tmux_output(output: Output, context: &str) -> Result<String> {
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("{}: tmux exited with {}: {}", context, output.status, stderr.trim());
+        bail!(
+            "{}: tmux exited with {}: {}",
+            context,
+            output.status,
+            stderr.trim()
+        );
     }
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
@@ -16,7 +21,12 @@ fn check_tmux_output(output: Output, context: &str) -> Result<String> {
 fn check_tmux_status(output: Output, context: &str) -> Result<()> {
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("{}: tmux exited with {}: {}", context, output.status, stderr.trim());
+        bail!(
+            "{}: tmux exited with {}: {}",
+            context,
+            output.status,
+            stderr.trim()
+        );
     }
     Ok(())
 }
@@ -165,13 +175,7 @@ impl TmuxManager {
 
         for i in 1..num_windows {
             Command::new("tmux")
-                .args([
-                    "new-window",
-                    "-t",
-                    &self.session_name,
-                    "-c",
-                    working_dir,
-                ])
+                .args(["new-window", "-t", &self.session_name, "-c", working_dir])
                 .output()
                 .await
                 .context(format!("Failed to create window {}", i))?;

@@ -185,7 +185,10 @@ mod tests {
         let mock = MockTmuxSender::new();
         let manager = create_mock_manager(mock.clone());
 
-        manager.launch_claude(0, "/tmp/workdir", None).await.unwrap();
+        manager
+            .launch_claude(0, "/tmp/workdir", None)
+            .await
+            .unwrap();
 
         let keys = mock.sent_keys();
         let cmd = keys
@@ -272,7 +275,10 @@ mod tests {
         let manager = create_mock_manager(mock);
 
         let ready = manager.wait_for_ready(0, 2).await.unwrap();
-        assert!(ready, "wait_for_ready: should return true when window contains 'bypass permissions'");
+        assert!(
+            ready,
+            "wait_for_ready: should return true when window contains 'bypass permissions'"
+        );
     }
 
     #[tokio::test]
@@ -281,7 +287,10 @@ mod tests {
         let manager = create_mock_manager(mock);
 
         let ready = manager.wait_for_ready(0, 1).await.unwrap();
-        assert!(!ready, "wait_for_ready: should return false when window never shows ready prompt");
+        assert!(
+            !ready,
+            "wait_for_ready: should return false when window never shows ready prompt"
+        );
     }
 
     #[tokio::test]

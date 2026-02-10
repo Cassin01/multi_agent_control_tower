@@ -109,7 +109,10 @@ impl MessagingDisplay {
                 // Filter by recipient if set
                 if let Some(ref recipient_filter) = self.filter.recipient_filter {
                     let recipient_str = format!("{:?}", msg.message.to);
-                    if !recipient_str.to_lowercase().contains(&recipient_filter.to_lowercase()) {
+                    if !recipient_str
+                        .to_lowercase()
+                        .contains(&recipient_filter.to_lowercase())
+                    {
                         return false;
                     }
                 }
@@ -234,15 +237,15 @@ impl MessagingDisplay {
             .map(|&idx| {
                 let msg = &self.messages[idx];
                 let (type_symbol, type_color) = Self::type_symbol(&msg.message.message_type);
-                let (priority_symbol, priority_color) = Self::priority_symbol(&msg.message.priority);
+                let (priority_symbol, priority_color) =
+                    Self::priority_symbol(&msg.message.priority);
 
                 let recipient = Self::recipient_display(&msg.message.to);
                 let subject = truncate_str(&msg.message.content.subject, 25);
 
                 // Calculate time ago
                 let time_ago = {
-                    let duration = chrono::Utc::now()
-                        .signed_duration_since(msg.message.created_at);
+                    let duration = chrono::Utc::now().signed_duration_since(msg.message.created_at);
                     if duration.num_hours() > 0 {
                         format!("{}h", duration.num_hours())
                     } else if duration.num_minutes() > 0 {
@@ -264,7 +267,10 @@ impl MessagingDisplay {
                 };
 
                 let spans = vec![
-                    Span::styled(type_symbol, Style::default().fg(type_color).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        type_symbol,
+                        Style::default().fg(type_color).add_modifier(Modifier::BOLD),
+                    ),
                     Span::raw(" "),
                     Span::styled(
                         format!("[{}{}]", msg.message.from_expert_id, recipient),
@@ -295,7 +301,11 @@ impl MessagingDisplay {
         let title = if self.filtered_indices.len() == self.messages.len() {
             format!("Messages [{}]", self.messages.len())
         } else {
-            format!("Messages [{}/{}]", self.filtered_indices.len(), self.messages.len())
+            format!(
+                "Messages [{}/{}]",
+                self.filtered_indices.len(),
+                self.messages.len()
+            )
         };
 
         let list = List::new(items)
@@ -536,24 +546,41 @@ mod tests {
 
     #[test]
     fn messaging_display_priority_symbol_returns_correct_values() {
-        assert_eq!(MessagingDisplay::priority_symbol(&MessagePriority::High).0, "⬆");
-        assert_eq!(MessagingDisplay::priority_symbol(&MessagePriority::Normal).0, " ");
-        assert_eq!(MessagingDisplay::priority_symbol(&MessagePriority::Low).0, "⬇");
+        assert_eq!(
+            MessagingDisplay::priority_symbol(&MessagePriority::High).0,
+            "⬆"
+        );
+        assert_eq!(
+            MessagingDisplay::priority_symbol(&MessagePriority::Normal).0,
+            " "
+        );
+        assert_eq!(
+            MessagingDisplay::priority_symbol(&MessagePriority::Low).0,
+            "⬇"
+        );
     }
 
     #[test]
     fn messaging_display_recipient_display_formats_correctly() {
         assert!(MessagingDisplay::recipient_display(&MessageRecipient::expert_id(5)).contains("5"));
-        assert!(MessagingDisplay::recipient_display(&MessageRecipient::expert_name("test".to_string())).contains("test"));
-        assert!(MessagingDisplay::recipient_display(&MessageRecipient::role("backend".to_string())).contains("@"));
+        assert!(
+            MessagingDisplay::recipient_display(&MessageRecipient::expert_name("test".to_string()))
+                .contains("test")
+        );
+        assert!(MessagingDisplay::recipient_display(&MessageRecipient::role(
+            "backend".to_string()
+        ))
+        .contains("@"));
     }
 }
 
 #[cfg(test)]
 mod property_tests {
     use super::*;
+    use crate::models::{
+        Message, MessageContent, MessagePriority, MessageRecipient, MessageType, QueuedMessage,
+    };
     use proptest::prelude::*;
-    use crate::models::{Message, MessageContent, MessageRecipient, MessageType, MessagePriority, QueuedMessage};
 
     fn arbitrary_message_type() -> impl Strategy<Value = MessageType> {
         prop_oneof![
@@ -588,15 +615,12 @@ mod property_tests {
             arbitrary_message_priority(),
             "[a-zA-Z0-9 ]{1,50}",
             "[a-zA-Z0-9 ]{1,200}",
-        ).prop_map(|(from_id, to, msg_type, priority, subject, body)| {
-            let content = MessageContent {
-                subject,
-                body,
-            };
-            let message = Message::new(from_id, to, msg_type, content)
-                .with_priority(priority);
-            QueuedMessage::new(message)
-        })
+        )
+            .prop_map(|(from_id, to, msg_type, priority, subject, body)| {
+                let content = MessageContent { subject, body };
+                let message = Message::new(from_id, to, msg_type, content).with_priority(priority);
+                QueuedMessage::new(message)
+            })
     }
 
     // Feature: inter-expert-messaging, Property 11: UI Display Completeness

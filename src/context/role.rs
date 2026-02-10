@@ -40,7 +40,11 @@ impl SessionExpertRoles {
     pub fn set_role(&mut self, expert_id: u32, role: String) {
         self.updated_at = Utc::now();
 
-        if let Some(assignment) = self.assignments.iter_mut().find(|a| a.expert_id == expert_id) {
+        if let Some(assignment) = self
+            .assignments
+            .iter_mut()
+            .find(|a| a.expert_id == expert_id)
+        {
             assignment.role = role;
             assignment.assigned_at = Utc::now();
         } else {
@@ -151,7 +155,6 @@ impl AvailableRoles {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -224,7 +227,11 @@ mod tests {
     fn available_roles_core_excluded() {
         let temp_dir = TempDir::new().unwrap();
 
-        std::fs::write(temp_dir.path().join("core.md"), "# Core\n\nCore instructions").unwrap();
+        std::fs::write(
+            temp_dir.path().join("core.md"),
+            "# Core\n\nCore instructions",
+        )
+        .unwrap();
 
         let roles = AvailableRoles::from_instructions_path(temp_dir.path()).unwrap();
         assert!(roles.find_by_name("core").is_none());

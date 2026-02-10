@@ -105,7 +105,6 @@ impl ExpertContext {
         self.worktree_path = Some(path);
         self.touch();
     }
-
 }
 
 #[cfg(test)]
@@ -209,7 +208,10 @@ mod tests {
     #[test]
     fn expert_context_serializes_worktree_fields_to_yaml() {
         let mut ctx = ExpertContext::new(0, "architect".to_string(), "abc123".to_string());
-        ctx.set_worktree("feature-branch".to_string(), "/tmp/wt/feature-branch".to_string());
+        ctx.set_worktree(
+            "feature-branch".to_string(),
+            "/tmp/wt/feature-branch".to_string(),
+        );
 
         let yaml = serde_yaml::to_string(&ctx).unwrap();
         assert!(

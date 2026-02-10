@@ -262,10 +262,10 @@ mod tests {
         );
 
         let initial_activity = expert.last_activity;
-        
+
         // Small delay to ensure timestamp difference
         std::thread::sleep(std::time::Duration::from_millis(1));
-        
+
         expert.update_activity();
         assert!(expert.last_activity > initial_activity);
     }

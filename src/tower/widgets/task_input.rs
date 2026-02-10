@@ -506,7 +506,8 @@ mod tests {
         // cursor at end (pos 5)
         input.move_cursor_line_start();
         assert_eq!(
-            input.cursor_position(), 0,
+            input.cursor_position(),
+            0,
             "move_cursor_line_start: single line should go to 0"
         );
     }
@@ -518,7 +519,8 @@ mod tests {
         // cursor at end (pos 7), on second line
         input.move_cursor_line_start();
         assert_eq!(
-            input.cursor_position(), 4,
+            input.cursor_position(),
+            4,
             "move_cursor_line_start: should go to start of second line (after newline)"
         );
     }
@@ -534,7 +536,8 @@ mod tests {
         }
         input.move_cursor_line_start();
         assert_eq!(
-            input.cursor_position(), 4,
+            input.cursor_position(),
+            4,
             "move_cursor_line_start: from middle of second line should go to start of that line"
         );
     }
@@ -544,7 +547,8 @@ mod tests {
         let mut input = TaskInput::new();
         input.move_cursor_line_start();
         assert_eq!(
-            input.cursor_position(), 0,
+            input.cursor_position(),
+            0,
             "move_cursor_line_start: empty content should stay at 0"
         );
     }
@@ -556,7 +560,8 @@ mod tests {
         // cursor at end (pos 6)
         input.move_cursor_line_start();
         assert_eq!(
-            input.cursor_position(), 4,
+            input.cursor_position(),
+            4,
             "move_cursor_line_start: Japanese multiline should go to start of second line"
         );
     }
@@ -570,7 +575,8 @@ mod tests {
         input.move_cursor_start();
         input.move_cursor_line_end();
         assert_eq!(
-            input.cursor_position(), 5,
+            input.cursor_position(),
+            5,
             "move_cursor_line_end: single line should go to end"
         );
     }
@@ -582,7 +588,8 @@ mod tests {
         input.move_cursor_start();
         input.move_cursor_line_end();
         assert_eq!(
-            input.cursor_position(), 3,
+            input.cursor_position(),
+            3,
             "move_cursor_line_end: first line should stop before newline"
         );
     }
@@ -598,7 +605,8 @@ mod tests {
         }
         input.move_cursor_line_end();
         assert_eq!(
-            input.cursor_position(), 7,
+            input.cursor_position(),
+            7,
             "move_cursor_line_end: second line should go to end of content"
         );
     }
@@ -608,7 +616,8 @@ mod tests {
         let mut input = TaskInput::new();
         input.move_cursor_line_end();
         assert_eq!(
-            input.cursor_position(), 0,
+            input.cursor_position(),
+            0,
             "move_cursor_line_end: empty content should stay at 0"
         );
     }
@@ -620,7 +629,8 @@ mod tests {
         input.move_cursor_start();
         input.move_cursor_line_end();
         assert_eq!(
-            input.cursor_position(), 3,
+            input.cursor_position(),
+            3,
             "move_cursor_line_end: Japanese first line should stop before newline"
         );
     }
@@ -633,7 +643,8 @@ mod tests {
         input.set_content("hello".to_string());
         input.move_cursor_up();
         assert_eq!(
-            input.cursor_position(), 0,
+            input.cursor_position(),
+            0,
             "move_cursor_up: on first line should go to position 0"
         );
     }
@@ -645,7 +656,8 @@ mod tests {
         // cursor at end of second line (pos 7, col 3)
         input.move_cursor_up();
         assert_eq!(
-            input.cursor_position(), 3,
+            input.cursor_position(),
+            3,
             "move_cursor_up: should go to same column on previous line"
         );
     }
@@ -657,7 +669,8 @@ mod tests {
         // cursor at end of second line (pos 8, col 5)
         input.move_cursor_up();
         assert_eq!(
-            input.cursor_position(), 2,
+            input.cursor_position(),
+            2,
             "move_cursor_up: should clamp to end of shorter previous line"
         );
     }
@@ -667,7 +680,8 @@ mod tests {
         let mut input = TaskInput::new();
         input.move_cursor_up();
         assert_eq!(
-            input.cursor_position(), 0,
+            input.cursor_position(),
+            0,
             "move_cursor_up: empty content should stay at 0"
         );
     }
@@ -679,7 +693,8 @@ mod tests {
         // cursor at end (pos 6, second line col 3)
         input.move_cursor_up();
         assert_eq!(
-            input.cursor_position(), 2,
+            input.cursor_position(),
+            2,
             "move_cursor_up: should clamp to end of shorter Japanese prev line"
         );
     }
@@ -691,7 +706,8 @@ mod tests {
         // cursor at end (pos 11, third line col 3)
         input.move_cursor_up();
         assert_eq!(
-            input.cursor_position(), 7,
+            input.cursor_position(),
+            7,
             "move_cursor_up: from third line should go to second line same col"
         );
     }
@@ -705,7 +721,8 @@ mod tests {
         input.move_cursor_start();
         input.move_cursor_down();
         assert_eq!(
-            input.cursor_position(), 5,
+            input.cursor_position(),
+            5,
             "move_cursor_down: on last line should go to end of content"
         );
     }
@@ -720,7 +737,8 @@ mod tests {
         input.move_cursor_right();
         input.move_cursor_down();
         assert_eq!(
-            input.cursor_position(), 6,
+            input.cursor_position(),
+            6,
             "move_cursor_down: should go to same column on next line"
         );
     }
@@ -736,7 +754,8 @@ mod tests {
         }
         input.move_cursor_down();
         assert_eq!(
-            input.cursor_position(), 8,
+            input.cursor_position(),
+            8,
             "move_cursor_down: should clamp to end of shorter next line"
         );
     }
@@ -746,7 +765,8 @@ mod tests {
         let mut input = TaskInput::new();
         input.move_cursor_down();
         assert_eq!(
-            input.cursor_position(), 0,
+            input.cursor_position(),
+            0,
             "move_cursor_down: empty content should stay at 0"
         );
     }
@@ -761,7 +781,8 @@ mod tests {
         input.move_cursor_right();
         input.move_cursor_down();
         assert_eq!(
-            input.cursor_position(), 5,
+            input.cursor_position(),
+            5,
             "move_cursor_down: should clamp to end of shorter Japanese next line"
         );
     }
@@ -775,7 +796,8 @@ mod tests {
         input.move_cursor_right();
         input.move_cursor_down();
         assert_eq!(
-            input.cursor_position(), 5,
+            input.cursor_position(),
+            5,
             "move_cursor_down: from first line should go to second line same col"
         );
     }
@@ -792,7 +814,8 @@ mod tests {
         }
         input.kill_line();
         assert_eq!(
-            input.content(), "hello",
+            input.content(),
+            "hello",
             "kill_line: should delete from cursor to end of line"
         );
         assert_eq!(input.cursor_position(), 5);
@@ -807,7 +830,8 @@ mod tests {
         input.move_cursor_line_end();
         input.kill_line();
         assert_eq!(
-            input.content(), "abcdef",
+            input.content(),
+            "abcdef",
             "kill_line: at end of line should delete newline to join lines"
         );
     }
@@ -819,7 +843,8 @@ mod tests {
         // cursor at end
         input.kill_line();
         assert_eq!(
-            input.content(), "hello",
+            input.content(),
+            "hello",
             "kill_line: at end of content should do nothing"
         );
     }
@@ -831,7 +856,8 @@ mod tests {
         input.move_cursor_start();
         input.kill_line();
         assert_eq!(
-            input.content(), "\nworld",
+            input.content(),
+            "\nworld",
             "kill_line: from start should clear entire first line content"
         );
     }
@@ -844,7 +870,8 @@ mod tests {
         input.move_cursor_right();
         input.kill_line();
         assert_eq!(
-            input.content(), "あ\nえお",
+            input.content(),
+            "あ\nえお",
             "kill_line: should work with Japanese characters"
         );
     }
@@ -854,7 +881,8 @@ mod tests {
         let mut input = TaskInput::new();
         input.kill_line();
         assert_eq!(
-            input.content(), "",
+            input.content(),
+            "",
             "kill_line: empty content should stay empty"
         );
     }
@@ -871,7 +899,8 @@ mod tests {
         }
         input.unix_line_discard();
         assert_eq!(
-            input.content(), " world",
+            input.content(),
+            " world",
             "unix_line_discard: should delete from start of line to cursor"
         );
         assert_eq!(input.cursor_position(), 0);
@@ -884,7 +913,8 @@ mod tests {
         input.move_cursor_start();
         input.unix_line_discard();
         assert_eq!(
-            input.content(), "hello",
+            input.content(),
+            "hello",
             "unix_line_discard: at start of line should do nothing"
         );
     }
@@ -896,7 +926,8 @@ mod tests {
         // cursor at end (pos 7, second line)
         input.unix_line_discard();
         assert_eq!(
-            input.content(), "abc\n",
+            input.content(),
+            "abc\n",
             "unix_line_discard: should delete second line content before cursor"
         );
         assert_eq!(input.cursor_position(), 4);
@@ -910,7 +941,8 @@ mod tests {
         input.move_cursor_left();
         input.unix_line_discard();
         assert_eq!(
-            input.content(), "う",
+            input.content(),
+            "う",
             "unix_line_discard: should work with Japanese characters"
         );
         assert_eq!(input.cursor_position(), 0);
@@ -921,7 +953,8 @@ mod tests {
         let mut input = TaskInput::new();
         input.unix_line_discard();
         assert_eq!(
-            input.content(), "",
+            input.content(),
+            "",
             "unix_line_discard: empty content should stay empty"
         );
     }

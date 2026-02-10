@@ -4,10 +4,10 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExpertConfig {
-    pub name: String,   // Display name only
+    pub name: String, // Display name only
     pub color: String,
     #[serde(default)]
-    pub role: String,   // Instruction file name (required for instruction loading)
+    pub role: String, // Instruction file name (required for instruction loading)
 }
 
 impl Default for ExpertConfig {

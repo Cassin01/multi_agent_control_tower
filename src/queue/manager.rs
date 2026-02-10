@@ -38,10 +38,7 @@ pub enum QueueError {
 
     /// Message validation error
     #[error("Message validation error: {field}: {reason}")]
-    Validation {
-        field: &'static str,
-        reason: String,
-    },
+    Validation { field: &'static str, reason: String },
 
     /// Message not found in queue
     #[error("Message not found: {message_id}")]
@@ -49,17 +46,11 @@ pub enum QueueError {
 
     /// Queue directory not accessible
     #[error("Queue directory error: {path}: {reason}")]
-    QueueDirectory {
-        path: String,
-        reason: String,
-    },
+    QueueDirectory { path: String, reason: String },
 
     /// Atomic write operation failed
     #[error("Atomic write failed for {path}: {reason}")]
-    AtomicWrite {
-        path: String,
-        reason: String,
-    },
+    AtomicWrite { path: String, reason: String },
 }
 
 #[allow(dead_code)]
@@ -74,7 +65,11 @@ impl QueueError {
     }
 
     /// Create a YAML parsing error
-    pub fn yaml_parsing(file_type: &'static str, path: impl Into<String>, details: impl Into<String>) -> Self {
+    pub fn yaml_parsing(
+        file_type: &'static str,
+        path: impl Into<String>,
+        details: impl Into<String>,
+    ) -> Self {
         Self::YamlParsing {
             file_type,
             path: path.into(),
@@ -217,11 +212,7 @@ impl QueueManager {
                         }
                     },
                     Err(e) => {
-                        tracing::error!(
-                            "Failed to read report file {}: {}",
-                            path.display(),
-                            e
-                        );
+                        tracing::error!("Failed to read report file {}: {}", path.display(), e);
                     }
                 }
             }
@@ -237,7 +228,7 @@ impl QueueManager {
         let path = self.message_file(&message.message_id);
         let yaml = serde_yaml::to_string(&queued_message)
             .context("Failed to serialize message to YAML")?;
-        
+
         // Atomic write: write to temp file first, then rename
         let temp_path = path.with_extension("yaml.tmp");
         fs::write(&temp_path, yaml)
@@ -246,7 +237,7 @@ impl QueueManager {
         fs::rename(&temp_path, &path)
             .await
             .context("Failed to atomically move message file")?;
-        
+
         tracing::debug!("Enqueued message {} to queue", message.message_id);
         Ok(())
     }
@@ -282,11 +273,7 @@ impl QueueManager {
                         }
                     },
                     Err(e) => {
-                        tracing::error!(
-                            "Failed to read message file {}: {}",
-                            path.display(),
-                            e
-                        );
+                        tracing::error!("Failed to read message file {}: {}", path.display(), e);
                     }
                 }
             }
@@ -294,10 +281,12 @@ impl QueueManager {
 
         // Sort by priority (high first), then by created_at (oldest first)
         messages.sort_by(|a, b| {
-            b.message.priority.cmp(&a.message.priority)
+            b.message
+                .priority
+                .cmp(&a.message.priority)
                 .then_with(|| a.message.created_at.cmp(&b.message.created_at))
         });
-        
+
         Ok(messages)
     }
 
@@ -330,15 +319,15 @@ impl QueueManager {
         let content = fs::read_to_string(&path)
             .await
             .context("Failed to read message file for update")?;
-        let mut queued_message: QueuedMessage = serde_yaml::from_str(&content)
-            .context("Failed to parse message file for update")?;
-        
+        let mut queued_message: QueuedMessage =
+            serde_yaml::from_str(&content).context("Failed to parse message file for update")?;
+
         queued_message.attempts = attempts;
         queued_message.message.delivery_attempts = attempts;
 
         let yaml = serde_yaml::to_string(&queued_message)
             .context("Failed to serialize updated message")?;
-        
+
         // Atomic write
         let temp_path = path.with_extension("yaml.tmp");
         fs::write(&temp_path, yaml)
@@ -347,13 +336,21 @@ impl QueueManager {
         fs::rename(&temp_path, &path)
             .await
             .context("Failed to atomically update message file")?;
-        
-        tracing::debug!("Updated delivery attempts for message {} to {}", message_id, attempts);
+
+        tracing::debug!(
+            "Updated delivery attempts for message {} to {}",
+            message_id,
+            attempts
+        );
         Ok(())
     }
 
     /// Update message status
-    pub async fn update_message_status(&self, message_id: &str, queued_message: &QueuedMessage) -> Result<()> {
+    pub async fn update_message_status(
+        &self,
+        message_id: &str,
+        queued_message: &QueuedMessage,
+    ) -> Result<()> {
         let path = self.message_file(message_id);
         if !path.exists() {
             return Ok(());
@@ -361,7 +358,7 @@ impl QueueManager {
 
         let yaml = serde_yaml::to_string(queued_message)
             .context("Failed to serialize message status update")?;
-        
+
         // Atomic write
         let temp_path = path.with_extension("yaml.tmp");
         fs::write(&temp_path, yaml)
@@ -370,7 +367,7 @@ impl QueueManager {
         fs::rename(&temp_path, &path)
             .await
             .context("Failed to atomically update message status")?;
-        
+
         tracing::debug!("Updated status for message {}", message_id);
         Ok(())
     }
@@ -382,7 +379,10 @@ impl QueueManager {
 
         for queued_msg in messages {
             let should_remove = if queued_msg.message.is_expired() {
-                tracing::info!("Removing expired message: {}", queued_msg.message.message_id);
+                tracing::info!(
+                    "Removing expired message: {}",
+                    queued_msg.message.message_id
+                );
                 true
             } else if queued_msg.message.has_exceeded_max_attempts() {
                 tracing::warn!(
@@ -402,7 +402,10 @@ impl QueueManager {
         }
 
         if !removed_messages.is_empty() {
-            tracing::info!("Cleaned up {} expired/failed messages", removed_messages.len());
+            tracing::info!(
+                "Cleaned up {} expired/failed messages",
+                removed_messages.len()
+            );
         }
 
         Ok(removed_messages)
@@ -411,7 +414,8 @@ impl QueueManager {
     /// Get pending messages (not expired, not exceeded max attempts)
     pub async fn get_pending_messages(&self) -> Result<Vec<QueuedMessage>> {
         let messages = self.read_queue().await?;
-        Ok(messages.into_iter()
+        Ok(messages
+            .into_iter()
             .filter(|msg| msg.should_retry())
             .collect())
     }
@@ -434,7 +438,11 @@ impl QueueManager {
                         processed_messages.push(message_id);
                         // Remove the processed file from outbox
                         if let Err(e) = fs::remove_file(&path).await {
-                            tracing::warn!("Failed to remove processed outbox file {}: {}", path.display(), e);
+                            tracing::warn!(
+                                "Failed to remove processed outbox file {}: {}",
+                                path.display(),
+                                e
+                            );
                         }
                     }
                     Err(e) => {
@@ -445,7 +453,10 @@ impl QueueManager {
         }
 
         if !processed_messages.is_empty() {
-            tracing::info!("Processed {} messages from outbox", processed_messages.len());
+            tracing::info!(
+                "Processed {} messages from outbox",
+                processed_messages.len()
+            );
         }
 
         Ok(processed_messages)
@@ -456,16 +467,16 @@ impl QueueManager {
         let content = fs::read_to_string(file_path)
             .await
             .context("Failed to read outbox file")?;
-        
-        let message: Message = serde_yaml::from_str(&content)
-            .context("Failed to parse message YAML from outbox")?;
-        
+
+        let message: Message =
+            serde_yaml::from_str(&content).context("Failed to parse message YAML from outbox")?;
+
         // Validate required fields are present
         self.validate_message(&message)?;
-        
+
         // Enqueue the message
         self.enqueue(&message).await?;
-        
+
         tracing::debug!("Processed outbox message: {}", message.message_id);
         Ok(message.message_id)
     }
@@ -475,15 +486,15 @@ impl QueueManager {
         if message.message_id.is_empty() {
             return Err(anyhow::anyhow!("Message ID is required"));
         }
-        
+
         if message.content.subject.is_empty() {
             return Err(anyhow::anyhow!("Message subject is required"));
         }
-        
+
         if message.content.body.is_empty() {
             return Err(anyhow::anyhow!("Message body is required"));
         }
-        
+
         // Additional validation can be added here
         Ok(())
     }
@@ -565,7 +576,7 @@ mod tests {
     }
 
     // Message queue tests
-    use crate::models::{MessageContent, MessageRecipient, MessageType, MessagePriority};
+    use crate::models::{MessageContent, MessagePriority, MessageRecipient, MessageType};
 
     fn create_test_message() -> Message {
         let content = MessageContent {
@@ -618,27 +629,42 @@ mod tests {
             subject: "Low Priority".to_string(),
             body: "Low priority message".to_string(),
         };
-        let low_msg = Message::new(0, MessageRecipient::expert_id(1), MessageType::Query, content1)
-            .with_priority(MessagePriority::Low);
-        
+        let low_msg = Message::new(
+            0,
+            MessageRecipient::expert_id(1),
+            MessageType::Query,
+            content1,
+        )
+        .with_priority(MessagePriority::Low);
+
         // Small delay to ensure different timestamps
         tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
-        
+
         let content2 = MessageContent {
             subject: "High Priority".to_string(),
             body: "High priority message".to_string(),
         };
-        let high_msg = Message::new(0, MessageRecipient::expert_id(2), MessageType::Query, content2)
-            .with_priority(MessagePriority::High);
-        
+        let high_msg = Message::new(
+            0,
+            MessageRecipient::expert_id(2),
+            MessageType::Query,
+            content2,
+        )
+        .with_priority(MessagePriority::High);
+
         tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
-        
+
         let content3 = MessageContent {
             subject: "Normal Priority".to_string(),
             body: "Normal priority message".to_string(),
         };
-        let normal_msg = Message::new(0, MessageRecipient::expert_id(3), MessageType::Query, content3)
-            .with_priority(MessagePriority::Normal);
+        let normal_msg = Message::new(
+            0,
+            MessageRecipient::expert_id(3),
+            MessageType::Query,
+            content3,
+        )
+        .with_priority(MessagePriority::Normal);
 
         // Enqueue in random order
         manager.enqueue(&low_msg).await.unwrap();
@@ -647,7 +673,7 @@ mod tests {
 
         let messages = manager.read_queue().await.unwrap();
         assert_eq!(messages.len(), 3);
-        
+
         // Should be ordered: High, Normal, Low
         assert_eq!(messages[0].message.priority, MessagePriority::High);
         assert_eq!(messages[1].message.priority, MessagePriority::Normal);
@@ -661,7 +687,10 @@ mod tests {
         let message = create_test_message();
         manager.enqueue(&message).await.unwrap();
 
-        manager.update_delivery_attempts(&message.message_id, 5).await.unwrap();
+        manager
+            .update_delivery_attempts(&message.message_id, 5)
+            .await
+            .unwrap();
 
         let messages = manager.read_queue().await.unwrap();
         assert_eq!(messages[0].attempts, 5);
@@ -677,8 +706,13 @@ mod tests {
             subject: "Expired Message".to_string(),
             body: "This message will expire".to_string(),
         };
-        let expired_msg = Message::new(0, MessageRecipient::expert_id(1), MessageType::Query, expired_content)
-            .with_ttl_seconds(0);
+        let expired_msg = Message::new(
+            0,
+            MessageRecipient::expert_id(1),
+            MessageType::Query,
+            expired_content,
+        )
+        .with_ttl_seconds(0);
 
         tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
 
@@ -686,7 +720,12 @@ mod tests {
             subject: "Normal Message".to_string(),
             body: "This message is normal".to_string(),
         };
-        let normal_msg = Message::new(0, MessageRecipient::expert_id(2), MessageType::Query, normal_content);
+        let normal_msg = Message::new(
+            0,
+            MessageRecipient::expert_id(2),
+            MessageType::Query,
+            normal_content,
+        );
 
         manager.enqueue(&expired_msg).await.unwrap();
         manager.enqueue(&normal_msg).await.unwrap();
@@ -711,7 +750,12 @@ mod tests {
             subject: "Pending Message".to_string(),
             body: "This message is pending".to_string(),
         };
-        let pending_msg = Message::new(0, MessageRecipient::expert_id(1), MessageType::Query, pending_content);
+        let pending_msg = Message::new(
+            0,
+            MessageRecipient::expert_id(1),
+            MessageType::Query,
+            pending_content,
+        );
 
         tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
 
@@ -719,8 +763,13 @@ mod tests {
             subject: "Expired Message".to_string(),
             body: "This message will expire".to_string(),
         };
-        let expired_msg = Message::new(0, MessageRecipient::expert_id(2), MessageType::Query, expired_content)
-            .with_ttl_seconds(0);
+        let expired_msg = Message::new(
+            0,
+            MessageRecipient::expert_id(2),
+            MessageType::Query,
+            expired_content,
+        )
+        .with_ttl_seconds(0);
 
         manager.enqueue(&pending_msg).await.unwrap();
         manager.enqueue(&expired_msg).await.unwrap();
@@ -740,7 +789,7 @@ mod tests {
         let message = create_test_message();
         let outbox_path = manager.outbox_path();
         let message_file = outbox_path.join(format!("{}.yaml", message.message_id));
-        
+
         // Write message to outbox
         let yaml_content = serde_yaml::to_string(&message).unwrap();
         fs::write(&message_file, yaml_content).await.unwrap();
@@ -765,9 +814,11 @@ mod tests {
 
         let outbox_path = manager.outbox_path();
         let invalid_file = outbox_path.join("invalid.yaml");
-        
+
         // Write invalid YAML to outbox
-        fs::write(&invalid_file, "invalid: yaml: content: [").await.unwrap();
+        fs::write(&invalid_file, "invalid: yaml: content: [")
+            .await
+            .unwrap();
 
         // Process outbox should not crash and return empty result
         let processed = manager.process_outbox().await.unwrap();
@@ -785,15 +836,13 @@ mod tests {
 #[cfg(test)]
 mod property_tests {
     use super::*;
+    use crate::models::{MessageContent, MessagePriority, MessageRecipient, MessageType};
     use proptest::prelude::*;
-    use crate::models::{MessageContent, MessageRecipient, MessageType, MessagePriority};
 
     // Generators for property-based testing
     fn arbitrary_message_content() -> impl Strategy<Value = MessageContent> {
-        (
-            "[a-zA-Z0-9 ]{1,100}",
-            "[a-zA-Z0-9 \n]{1,1000}",
-        ).prop_map(|(subject, body)| MessageContent { subject, body })
+        ("[a-zA-Z0-9 ]{1,100}", "[a-zA-Z0-9 \n]{1,1000}")
+            .prop_map(|(subject, body)| MessageContent { subject, body })
     }
 
     fn arbitrary_message_recipient() -> impl Strategy<Value = MessageRecipient> {
@@ -829,11 +878,14 @@ mod property_tests {
             arbitrary_message_content(),
             arbitrary_message_priority(),
             1u64..86400,
-        ).prop_map(|(from_expert_id, to, message_type, content, priority, ttl_seconds)| {
-            Message::new(from_expert_id, to, message_type, content)
-                .with_priority(priority)
-                .with_ttl_seconds(ttl_seconds)
-        })
+        )
+            .prop_map(
+                |(from_expert_id, to, message_type, content, priority, ttl_seconds)| {
+                    Message::new(from_expert_id, to, message_type, content)
+                        .with_priority(priority)
+                        .with_ttl_seconds(ttl_seconds)
+                },
+            )
     }
 
     async fn create_test_manager_for_props() -> (QueueManager, tempfile::TempDir) {
@@ -852,19 +904,19 @@ mod property_tests {
         ) {
             tokio_test::block_on(async {
                 let (manager, _temp) = create_test_manager_for_props().await;
-                
+
                 // Valid messages should always be accepted
                 let result = manager.enqueue(&message).await;
                 assert!(result.is_ok(), "Valid message should be accepted: {:?}", result);
-                
+
                 // Message should be retrievable from queue
                 let messages = manager.read_queue().await.unwrap();
                 assert!(!messages.is_empty(), "Enqueued message should be in queue");
-                
+
                 let found_message = messages.iter()
                     .find(|m| m.message.message_id == message.message_id);
                 assert!(found_message.is_some(), "Enqueued message should be findable in queue");
-                
+
                 // Message content should be preserved
                 let found = found_message.unwrap();
                 assert_eq!(found.message.content.subject, message.content.subject);
@@ -882,29 +934,29 @@ mod property_tests {
         ) {
             tokio_test::block_on(async {
                 let (manager, _temp) = create_test_manager_for_props().await;
-                
+
                 // Write message to outbox as YAML file
                 let outbox_path = manager.outbox_path();
                 let message_file = outbox_path.join(format!("{}.yaml", message.message_id));
                 let yaml_content = serde_yaml::to_string(&message).unwrap();
                 fs::write(&message_file, yaml_content).await.unwrap();
-                
+
                 // Process outbox
                 let processed = manager.process_outbox().await.unwrap();
-                
+
                 // Message should be processed successfully
                 assert_eq!(processed.len(), 1, "One message should be processed from outbox");
                 assert_eq!(processed[0], message.message_id, "Processed message ID should match");
-                
+
                 // Message should be in the queue with unique ID and timestamp
                 let queued_messages = manager.read_queue().await.unwrap();
                 assert_eq!(queued_messages.len(), 1, "One message should be in queue");
-                
+
                 let queued = &queued_messages[0];
                 assert_eq!(queued.message.message_id, message.message_id, "Message ID should be preserved");
                 assert!(!queued.message.message_id.is_empty(), "Message should have unique ID");
                 assert!(queued.message.created_at <= chrono::Utc::now(), "Message should have valid timestamp");
-                
+
                 // Message content should be preserved
                 assert_eq!(queued.message.content.subject, message.content.subject);
                 assert_eq!(queued.message.content.body, message.content.body);
@@ -912,7 +964,7 @@ mod property_tests {
                 assert_eq!(queued.message.message_type, message.message_type);
                 assert_eq!(queued.message.to, message.to);
                 assert_eq!(queued.message.from_expert_id, message.from_expert_id);
-                
+
                 // Outbox file should be removed after processing
                 assert!(!message_file.exists(), "Outbox file should be removed after processing");
             });
@@ -924,33 +976,33 @@ mod property_tests {
         ) {
             tokio_test::block_on(async {
                 let (manager, _temp) = create_test_manager_for_props().await;
-                
+
                 // Ensure unique message IDs by adding delays and modifying IDs
                 let mut unique_messages = Vec::new();
                 for (i, mut message) in messages.into_iter().enumerate() {
                     // Ensure unique ID by appending index
                     message.message_id = format!("{}-{}", message.message_id, i);
                     unique_messages.push(message);
-                    
+
                     // Small delay to ensure different timestamps for next message
                     if i < 9 {
                         tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
                     }
                 }
-                
+
                 // Enqueue all messages
                 for message in &unique_messages {
                     manager.enqueue(message).await.unwrap();
                 }
-                
+
                 // Queue length should match number of enqueued messages
                 let queue_len = manager.queue_len().await.unwrap();
                 assert_eq!(queue_len, unique_messages.len());
-                
+
                 // All messages should be retrievable
                 let queued_messages = manager.read_queue().await.unwrap();
                 assert_eq!(queued_messages.len(), unique_messages.len());
-                
+
                 // Each original message should have a corresponding queued message
                 for original in &unique_messages {
                     let found = queued_messages.iter()
@@ -966,15 +1018,15 @@ mod property_tests {
         ) {
             tokio_test::block_on(async {
                 let (manager, _temp) = create_test_manager_for_props().await;
-                
+
                 // Enqueue message
                 manager.enqueue(&message).await.unwrap();
                 assert_eq!(manager.queue_len().await.unwrap(), 1);
-                
+
                 // Dequeue message
                 manager.dequeue(&message.message_id).await.unwrap();
                 assert_eq!(manager.queue_len().await.unwrap(), 0);
-                
+
                 // Message should no longer be in queue
                 let messages = manager.read_queue().await.unwrap();
                 assert!(messages.is_empty());
@@ -987,29 +1039,29 @@ mod property_tests {
         ) {
             tokio_test::block_on(async {
                 let (manager, _temp) = create_test_manager_for_props().await;
-                
+
                 // Ensure messages have unique IDs and different timestamps
                 let mut unique_messages = Vec::new();
                 for (i, mut message) in messages.into_iter().enumerate() {
                     // Ensure unique ID
                     message.message_id = format!("{}-{}", message.message_id, i);
                     unique_messages.push(message);
-                    
+
                     // Small delay to ensure different timestamps
                     if i < 4 {
                         tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
                     }
                 }
-                
+
                 // Enqueue all messages
                 for message in &unique_messages {
                     manager.enqueue(message).await.unwrap();
                 }
-                
+
                 // Read queue and verify priority ordering
                 let queued_messages = manager.read_queue().await.unwrap();
                 assert_eq!(queued_messages.len(), unique_messages.len());
-                
+
                 // Messages should be sorted by priority (High > Normal > Low), then by timestamp
                 for i in 1..queued_messages.len() {
                     let prev = &queued_messages[i-1];

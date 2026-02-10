@@ -163,7 +163,10 @@ mod tests {
 
         detector.set_marker(0, "processing").unwrap();
         let content = std::fs::read_to_string(_tmp.path().join("expert0")).unwrap();
-        assert_eq!(content, "processing", "set_marker: should write content to file");
+        assert_eq!(
+            content, "processing",
+            "set_marker: should write content to file"
+        );
     }
 
     #[test]

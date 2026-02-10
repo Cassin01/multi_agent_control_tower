@@ -8,11 +8,7 @@ pub fn instruction_file_path(queue_path: &Path, expert_id: u32) -> PathBuf {
         .join(format!("expert{}.md", expert_id))
 }
 
-pub fn write_instruction_file(
-    queue_path: &Path,
-    expert_id: u32,
-    content: &str,
-) -> Result<PathBuf> {
+pub fn write_instruction_file(queue_path: &Path, expert_id: u32, content: &str) -> Result<PathBuf> {
     let path = instruction_file_path(queue_path, expert_id);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
@@ -65,7 +61,10 @@ mod tests {
 
         let path = write_instruction_file(tmp.path(), 0, content).unwrap();
 
-        assert!(path.exists(), "write_instruction_file: should create the file");
+        assert!(
+            path.exists(),
+            "write_instruction_file: should create the file"
+        );
         let read_back = std::fs::read_to_string(&path).unwrap();
         assert_eq!(
             read_back, content,

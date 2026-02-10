@@ -34,7 +34,9 @@ impl MessageRecipient {
     }
 
     pub fn expert_name(name: impl Into<String>) -> Self {
-        Self::ExpertName { expert_name: name.into() }
+        Self::ExpertName {
+            expert_name: name.into(),
+        }
     }
 
     pub fn role(role: impl Into<String>) -> Self {
@@ -46,10 +48,10 @@ impl MessageRecipient {
 #[serde(rename_all = "snake_case")]
 pub enum MessageType {
     #[default]
-    Query,      // Request information
-    Response,   // Reply to query
-    Notify,     // Information only
-    Delegate,   // Task handoff
+    Query, // Request information
+    Response, // Reply to query
+    Notify,   // Information only
+    Delegate, // Task handoff
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, PartialOrd, Ord)]
@@ -96,7 +98,7 @@ impl Message {
     ) -> Self {
         let now = Utc::now();
         let message_id = format!("msg-{}", now.format("%Y%m%d-%H%M%S%3f"));
-        
+
         Self {
             message_id,
             from_expert_id,
@@ -160,7 +162,7 @@ mod tests {
             body: "Test Body".to_string(),
         };
         let recipient = MessageRecipient::expert_id(1);
-        
+
         let message = Message::new(0, recipient, MessageType::Query, content);
 
         assert_eq!(message.from_expert_id, 0);
@@ -201,7 +203,7 @@ mod tests {
             body: "Body".to_string(),
         };
         let recipient = MessageRecipient::expert_id(1);
-        
+
         let message = Message::new(0, recipient, MessageType::Query, content)
             .with_priority(MessagePriority::High)
             .with_reply_to("original-msg-id".to_string())
@@ -220,11 +222,12 @@ mod tests {
             body: "Body".to_string(),
         };
         let recipient = MessageRecipient::expert_id(1);
-        
+
         // Message with very short TTL (already expired)
-        let expired_message = Message::new(0, recipient.clone(), MessageType::Query, content.clone())
-            .with_ttl_seconds(0);
-        
+        let expired_message =
+            Message::new(0, recipient.clone(), MessageType::Query, content.clone())
+                .with_ttl_seconds(0);
+
         // Message with no expiration
         let mut no_expiry_message = Message::new(0, recipient, MessageType::Query, content);
         no_expiry_message.expires_at = None;
@@ -240,9 +243,9 @@ mod tests {
             body: "Body".to_string(),
         };
         let recipient = MessageRecipient::expert_id(1);
-        
+
         let mut message = Message::new(0, recipient, MessageType::Query, content);
-        
+
         assert_eq!(message.delivery_attempts, 0);
         assert!(!message.has_exceeded_max_attempts());
 
@@ -261,7 +264,7 @@ mod tests {
             body: "What format should we use for dates?".to_string(),
         };
         let recipient = MessageRecipient::expert_name("Backend".to_string());
-        
+
         let message = Message::new(0, recipient, MessageType::Query, content)
             .with_priority(MessagePriority::High);
 
@@ -324,10 +327,8 @@ mod property_tests {
 
     // Generators for property-based testing
     fn arbitrary_message_content() -> impl Strategy<Value = MessageContent> {
-        (
-            "[a-zA-Z0-9 ]{1,100}",
-            "[a-zA-Z0-9 \n]{1,1000}",
-        ).prop_map(|(subject, body)| MessageContent { subject, body })
+        ("[a-zA-Z0-9 ]{1,100}", "[a-zA-Z0-9 \n]{1,1000}")
+            .prop_map(|(subject, body)| MessageContent { subject, body })
     }
 
     fn arbitrary_message_recipient() -> impl Strategy<Value = MessageRecipient> {
@@ -363,11 +364,14 @@ mod property_tests {
             arbitrary_message_content(),
             arbitrary_message_priority(),
             0u64..86400,
-        ).prop_map(|(from_expert_id, to, message_type, content, priority, ttl_seconds)| {
-            Message::new(from_expert_id, to, message_type, content)
-                .with_priority(priority)
-                .with_ttl_seconds(ttl_seconds)
-        })
+        )
+            .prop_map(
+                |(from_expert_id, to, message_type, content, priority, ttl_seconds)| {
+                    Message::new(from_expert_id, to, message_type, content)
+                        .with_priority(priority)
+                        .with_ttl_seconds(ttl_seconds)
+                },
+            )
     }
 
     // Feature: inter-expert-messaging, Property 5: Message Persistence Round-Trip
@@ -379,10 +383,10 @@ mod property_tests {
         ) {
             // Serialize message to YAML
             let yaml = serde_yaml::to_string(&message).unwrap();
-            
+
             // Deserialize back from YAML
             let deserialized: Message = serde_yaml::from_str(&yaml).unwrap();
-            
+
             // Verify all fields are preserved
             assert_eq!(message.message_id, deserialized.message_id);
             assert_eq!(message.from_expert_id, deserialized.from_expert_id);
@@ -393,10 +397,10 @@ mod property_tests {
             assert_eq!(message.content.body, deserialized.content.body);
             assert_eq!(message.delivery_attempts, deserialized.delivery_attempts);
             assert_eq!(message.metadata, deserialized.metadata);
-            
+
             // Timestamps should be preserved (within reasonable precision)
             assert_eq!(message.created_at.timestamp(), deserialized.created_at.timestamp());
-            
+
             // TTL should be preserved if present
             if let (Some(orig), Some(deser)) = (message.expires_at, deserialized.expires_at) {
                 assert_eq!(orig.timestamp(), deser.timestamp());

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use ratatui::{
     layout::Rect,
@@ -22,6 +22,7 @@ pub struct StatusDisplay {
     state: ListState,
     focused: bool,
     expert_roles: HashMap<u32, String>,
+    expert_reports: HashSet<u32>,
 }
 
 impl StatusDisplay {
@@ -31,6 +32,7 @@ impl StatusDisplay {
             state: ListState::default(),
             focused: false,
             expert_roles: HashMap::new(),
+            expert_reports: HashSet::new(),
         }
     }
 
@@ -45,6 +47,23 @@ impl StatusDisplay {
 
     pub fn set_expert_roles(&mut self, roles: HashMap<u32, String>) {
         self.expert_roles = roles;
+    }
+
+    pub fn set_expert_reports(&mut self, ids: HashSet<u32>) {
+        self.expert_reports = ids;
+    }
+
+    #[allow(dead_code)]
+    pub fn has_report(&self, expert_id: u32) -> bool {
+        self.expert_reports.contains(&expert_id)
+    }
+
+    fn report_symbol(has_report: bool) -> (&'static str, Color) {
+        if has_report {
+            ("󰧮", Color::Yellow)
+        } else {
+            (" ", Color::Reset)
+        }
     }
 
     pub fn set_focused(&mut self, focused: bool) {
@@ -111,9 +130,12 @@ impl StatusDisplay {
 
                 let role = self.expert_roles.get(&entry.expert_id);
                 let role_display = match role {
-                    Some(r) => format!(" ({})", r),
-                    None => String::new(),
+                    Some(r) => format!("{:<12}", format!(" ({})", r)),
+                    None => format!("{:<12}", ""),
                 };
+
+                let (report_sym, report_color) =
+                    Self::report_symbol(self.expert_reports.contains(&entry.expert_id));
 
                 let spans = vec![
                     Span::styled(
@@ -123,10 +145,12 @@ impl StatusDisplay {
                     Span::styled(entry.state.symbol(), status_style),
                     Span::raw(" "),
                     Span::styled(
-                        format!("{:<12}", entry.expert_name),
+                        format!("{:<8}", entry.expert_name),
                         Style::default().add_modifier(Modifier::BOLD),
                     ),
                     Span::styled(role_display, Style::default().fg(Color::Cyan)),
+                    Span::raw(" "),
+                    Span::styled(report_sym, Style::default().fg(report_color)),
                 ];
 
                 ListItem::new(Line::from(spans))
@@ -266,9 +290,7 @@ mod tests {
     #[test]
     fn selected_returns_expert_entry() {
         let mut display = StatusDisplay::new();
-        display.set_experts(vec![
-            create_test_entry(5, "devops", ExpertState::Busy),
-        ]);
+        display.set_experts(vec![create_test_entry(5, "devops", ExpertState::Busy)]);
 
         display.next();
         let selected = display.selected().unwrap();
@@ -287,5 +309,58 @@ mod tests {
             create_test_entry(1, "b", ExpertState::Busy),
         ]);
         assert_eq!(display.expert_count(), 2);
+    }
+
+    #[test]
+    fn set_expert_reports_stores_ids() {
+        let mut display = StatusDisplay::new();
+        let ids: HashSet<u32> = [1, 3].into_iter().collect();
+        display.set_expert_reports(ids.clone());
+        assert!(
+            display.has_report(1),
+            "has_report: should return true for stored expert id 1"
+        );
+        assert!(
+            display.has_report(3),
+            "has_report: should return true for stored expert id 3"
+        );
+        assert!(
+            !display.has_report(0),
+            "has_report: should return false for unstored expert id 0"
+        );
+        assert!(
+            !display.has_report(2),
+            "has_report: should return false for unstored expert id 2"
+        );
+    }
+
+    #[test]
+    fn set_expert_reports_empty_set() {
+        let mut display = StatusDisplay::new();
+        display.set_expert_reports(HashSet::new());
+        assert!(
+            !display.has_report(0),
+            "has_report: should return false when reports set is empty"
+        );
+    }
+
+    #[test]
+    fn has_report_returns_correct_value() {
+        let mut display = StatusDisplay::new();
+        assert!(
+            !display.has_report(5),
+            "has_report: should return false before any reports are set"
+        );
+
+        let ids: HashSet<u32> = [5].into_iter().collect();
+        display.set_expert_reports(ids);
+        assert!(
+            display.has_report(5),
+            "has_report: should return true after setting report for id 5"
+        );
+        assert!(
+            !display.has_report(99),
+            "has_report: should return false for id not in the set"
+        );
     }
 }
