@@ -1,4 +1,5 @@
 use ansi_to_tui::IntoText;
+use sha2::{Sha256, Digest};
 use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
@@ -16,6 +17,8 @@ pub struct ExpertPanelDisplay {
     visible: bool,
     focused: bool,
     auto_scroll: bool,
+    last_render_size: (u16, u16),
+    content_hash: [u8; 32],
 }
 
 impl Default for ExpertPanelDisplay {
@@ -35,6 +38,8 @@ impl ExpertPanelDisplay {
             visible: false,
             focused: false,
             auto_scroll: true,
+            last_render_size: (0, 0),
+            content_hash: [0u8; 32],
         }
     }
 
@@ -66,12 +71,17 @@ impl ExpertPanelDisplay {
         self.expert_id
     }
 
+    pub fn last_render_size(&self) -> (u16, u16) {
+        self.last_render_size
+    }
+
     pub fn set_expert(&mut self, id: u32, name: String) {
         if self.expert_id != Some(id) {
             self.scroll_offset = 0;
             self.content = Text::default();
             self.raw_line_count = 0;
             self.auto_scroll = true;
+            self.content_hash = [0u8; 32];
         }
         self.expert_id = Some(id);
         self.expert_name = Some(name);
@@ -85,6 +95,20 @@ impl ExpertPanelDisplay {
         }
     }
 
+    /// Update content only if the raw pane capture has changed (SHA-256 hash comparison).
+    /// Returns `true` if content was updated, `false` if skipped (unchanged).
+    pub fn try_set_content(&mut self, raw: &str) -> bool {
+        let hash: [u8; 32] = Sha256::digest(raw.as_bytes()).into();
+        if hash == self.content_hash {
+            return false;
+        }
+        self.content_hash = hash;
+        let line_count = raw.lines().count();
+        let text = Self::parse_ansi(raw);
+        self.set_content(text, line_count);
+        true
+    }
+
     pub fn scroll_up(&mut self) {
         self.scroll_offset = self.scroll_offset.saturating_sub(1);
         self.auto_scroll = false;
@@ -92,6 +116,11 @@ impl ExpertPanelDisplay {
 
     pub fn scroll_down(&mut self) {
         self.scroll_offset = self.scroll_offset.saturating_add(1);
+    }
+
+    pub fn scroll_to_top(&mut self) {
+        self.scroll_offset = 0;
+        self.auto_scroll = false;
     }
 
     pub fn scroll_to_bottom(&mut self) {
@@ -125,9 +154,17 @@ impl ExpertPanelDisplay {
             .borders(Borders::ALL)
             .border_style(Style::default().fg(border_color));
 
-        let visible_height = area.height.saturating_sub(2) as usize;
+        let inner_width = area.width.saturating_sub(2);
+        let inner_height = area.height.saturating_sub(2);
+        self.last_render_size = (inner_width, inner_height);
+
+        let visible_height = inner_height as usize;
         let max_scroll = self.raw_line_count.saturating_sub(visible_height) as u16;
         self.scroll_offset = self.scroll_offset.min(max_scroll);
+
+        if self.scroll_offset >= max_scroll {
+            self.auto_scroll = true;
+        }
 
         let paragraph = Paragraph::new(self.content.clone())
             .block(block)
@@ -273,6 +310,159 @@ mod tests {
         let offset = panel.scroll_offset;
         panel.set_content(Text::raw("a\nb\nc"), 3);
         assert_eq!(panel.scroll_offset, offset, "should not auto_scroll when disabled");
+    }
+
+    #[test]
+    fn scroll_down_to_bottom_re_enables_auto_scroll() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.set_content(Text::raw("a\nb\nc\nd\ne\nf\ng\nh\ni\nj"), 10);
+        panel.scroll_up();
+        assert!(!panel.auto_scroll, "scroll_up should disable auto_scroll");
+
+        // visible_height = 7 - 2 = 5, max_scroll = 10 - 5 = 5
+        // Scroll back to bottom
+        for _ in 0..20 {
+            panel.scroll_down();
+        }
+        // After render, if offset >= max_scroll, auto_scroll should re-enable
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let backend = TestBackend::new(40, 7);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| {
+            panel.render(frame, frame.area());
+        }).unwrap();
+
+        assert!(panel.auto_scroll, "scroll_down to bottom should re-enable auto_scroll after render");
+    }
+
+    #[test]
+    fn scroll_offset_above_bottom_does_not_re_enable_auto_scroll() {
+        let mut panel = ExpertPanelDisplay::new();
+        // 20 lines of content, visible_height=5 (area 7 - 2 borders), max_scroll=15
+        let content = (0..20).map(|i| format!("line{}", i)).collect::<Vec<_>>().join("\n");
+        panel.set_content(Text::raw(content), 20);
+        // scroll_up multiple times to move well above bottom
+        for _ in 0..5 {
+            panel.scroll_up();
+        }
+        assert!(!panel.auto_scroll, "scroll_up should disable auto_scroll");
+
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let backend = TestBackend::new(40, 7);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| {
+            panel.render(frame, frame.area());
+        }).unwrap();
+
+        // offset = 19 - 5 = 14, max_scroll = 15, so offset < max_scroll
+        assert!(!panel.auto_scroll, "scroll_offset above bottom should not re-enable auto_scroll");
+    }
+
+    #[test]
+    fn scroll_to_top_sets_offset_to_zero() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.set_content(Text::raw("a\nb\nc\nd\ne"), 5);
+        assert!(panel.scroll_offset > 0, "auto_scroll should set offset > 0");
+
+        panel.scroll_to_top();
+        assert_eq!(panel.scroll_offset, 0, "scroll_to_top should set offset to 0");
+    }
+
+    #[test]
+    fn scroll_to_top_disables_auto_scroll() {
+        let mut panel = ExpertPanelDisplay::new();
+        assert!(panel.auto_scroll, "auto_scroll should start enabled");
+
+        panel.scroll_to_top();
+        assert!(!panel.auto_scroll, "scroll_to_top should disable auto_scroll");
+    }
+
+    #[test]
+    fn last_render_size_starts_at_zero() {
+        let panel = ExpertPanelDisplay::new();
+        assert_eq!(
+            panel.last_render_size(),
+            (0, 0),
+            "last_render_size should start at (0, 0)"
+        );
+    }
+
+    #[test]
+    fn render_updates_last_render_size() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.set_content(Text::raw("hello"), 1);
+
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let backend = TestBackend::new(40, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| {
+            panel.render(frame, frame.area());
+        }).unwrap();
+
+        // inner dimensions = (40 - 2, 10 - 2) = (38, 8)
+        assert_eq!(
+            panel.last_render_size(),
+            (38, 8),
+            "render should store inner dimensions (area - borders)"
+        );
+    }
+
+    // Content hash detection tests (Phase 2, Issue 3.3)
+
+    #[test]
+    fn try_set_content_returns_true_on_new_content() {
+        let mut panel = ExpertPanelDisplay::new();
+        assert!(panel.try_set_content("hello"), "first set should return true");
+    }
+
+    #[test]
+    fn try_set_content_returns_false_on_same_content() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.try_set_content("hello");
+        assert!(!panel.try_set_content("hello"), "same content should return false");
+    }
+
+    #[test]
+    fn try_set_content_returns_true_on_different_content() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.try_set_content("hello");
+        assert!(panel.try_set_content("world"), "different content should return true");
+    }
+
+    #[test]
+    fn try_set_content_updates_line_count() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.try_set_content("a\nb\nc");
+        assert_eq!(panel.raw_line_count, 3, "try_set_content should update line count");
+    }
+
+    #[test]
+    fn try_set_content_respects_auto_scroll() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.try_set_content("a\nb\nc\nd\ne");
+        assert_eq!(panel.scroll_offset, 4, "try_set_content should auto-scroll to bottom");
+    }
+
+    #[test]
+    fn set_expert_resets_content_hash() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.set_expert(1, "Alice".to_string());
+        panel.try_set_content("hello");
+        assert!(!panel.try_set_content("hello"), "same content should be skipped");
+
+        panel.set_expert(2, "Bob".to_string());
+        assert!(panel.try_set_content("hello"), "after expert change, same content should be accepted");
+    }
+
+    #[test]
+    fn try_set_content_skips_ansi_parsing_when_unchanged() {
+        let mut panel = ExpertPanelDisplay::new();
+        let ansi_content = "\x1b[31mred text\x1b[0m normal";
+        assert!(panel.try_set_content(ansi_content), "first set should parse");
+        assert!(!panel.try_set_content(ansi_content), "second set should skip parsing");
     }
 
     // ANSI parsing tests (P10)

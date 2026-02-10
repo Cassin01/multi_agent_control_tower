@@ -22,6 +22,10 @@ pub trait TmuxSender: Send + Sync {
     async fn capture_pane_with_escapes(&self, pane_id: u32) -> Result<String> {
         self.capture_pane(pane_id).await
     }
+
+    async fn resize_pane(&self, _pane_id: u32, _width: u16, _height: u16) -> Result<()> {
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]
@@ -60,6 +64,7 @@ impl TmuxSender for TmuxManager {
             .args([
                 "capture-pane",
                 "-e",
+                "-J",
                 "-p",
                 "-t",
                 &format!("{}:0.{}", self.session_name, pane_id),
@@ -72,6 +77,23 @@ impl TmuxSender for TmuxManager {
             ))?;
 
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+
+    async fn resize_pane(&self, pane_id: u32, width: u16, height: u16) -> Result<()> {
+        Command::new("tmux")
+            .args([
+                "resize-pane",
+                "-t",
+                &format!("{}:0.{}", self.session_name, pane_id),
+                "-x",
+                &width.to_string(),
+                "-y",
+                &height.to_string(),
+            ])
+            .output()
+            .await
+            .context(format!("Failed to resize pane {}", pane_id))?;
+        Ok(())
     }
 }
 
@@ -279,6 +301,28 @@ mod tests {
         let manager = TmuxManager::from_config(&config);
 
         assert!(manager.session_name().starts_with("macot-"));
+    }
+
+    #[tokio::test]
+    async fn resize_pane_default_is_noop() {
+        struct NoopSender;
+
+        #[async_trait::async_trait]
+        impl TmuxSender for NoopSender {
+            async fn send_keys(&self, _pane_id: u32, _keys: &str) -> Result<()> {
+                Ok(())
+            }
+            async fn capture_pane(&self, _pane_id: u32) -> Result<String> {
+                Ok(String::new())
+            }
+        }
+
+        let sender = NoopSender;
+        let result = sender.resize_pane(0, 80, 24).await;
+        assert!(
+            result.is_ok(),
+            "resize_pane: default trait impl should be a no-op that returns Ok"
+        );
     }
 
     /// Mock TmuxSender that only implements the required methods (not `capture_pane_with_escapes`).

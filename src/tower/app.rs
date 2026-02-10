@@ -63,8 +63,8 @@ fn keycode_to_tmux_key(code: KeyCode, modifiers: KeyModifiers) -> Option<String>
         KeyCode::Down => Some("Down".to_string()),
         KeyCode::Left => Some("Left".to_string()),
         KeyCode::Right => Some("Right".to_string()),
-        KeyCode::Home => Some("Home".to_string()),
-        KeyCode::End => Some("End".to_string()),
+        KeyCode::Home => None,
+        KeyCode::End => None,
         KeyCode::PageUp => None,
         KeyCode::PageDown => None,
         KeyCode::Delete => Some("DC".to_string()),
@@ -106,6 +106,8 @@ pub struct TowerApp {
     last_input_time: Instant,
     last_panel_poll: Instant,
     layout_areas: LayoutAreas,
+
+    last_panel_size: (u16, u16),
 
     worktree_manager: WorktreeManager,
     worktree_launch_state: WorktreeLaunchState,
@@ -194,6 +196,8 @@ impl TowerApp {
             last_input_time: Instant::now(),
             last_panel_poll: Instant::now(),
             layout_areas: LayoutAreas::default(),
+
+            last_panel_size: (0, 0),
 
             worktree_manager,
             worktree_launch_state: WorktreeLaunchState::default(),
@@ -454,7 +458,7 @@ impl TowerApp {
             return Ok(());
         }
 
-        const PANEL_POLL_INTERVAL: Duration = Duration::from_millis(1000);
+        const PANEL_POLL_INTERVAL: Duration = Duration::from_millis(250);
         if self.last_panel_poll.elapsed() < PANEL_POLL_INTERVAL {
             return Ok(());
         }
@@ -467,11 +471,21 @@ impl TowerApp {
         }
 
         if let Some(expert_id) = self.expert_panel_display.expert_id() {
+            let current_size = self.expert_panel_display.last_render_size();
+            if current_size != self.last_panel_size && current_size.0 > 0 && current_size.1 > 0 {
+                if let Err(e) = self
+                    .claude
+                    .resize_pane(expert_id, current_size.0, current_size.1)
+                    .await
+                {
+                    tracing::warn!("Failed to resize pane for expert {}: {}", expert_id, e);
+                }
+                self.last_panel_size = current_size;
+            }
+
             match self.claude.capture_pane_with_escapes(expert_id).await {
                 Ok(raw) => {
-                    let line_count = raw.lines().count();
-                    let text = ExpertPanelDisplay::parse_ansi(&raw);
-                    self.expert_panel_display.set_content(text, line_count);
+                    self.expert_panel_display.try_set_content(&raw);
                 }
                 Err(e) => {
                     tracing::warn!("Failed to capture expert {} pane: {}", expert_id, e);
@@ -784,6 +798,14 @@ impl TowerApp {
             }
             KeyCode::PageDown => {
                 self.expert_panel_display.scroll_down();
+                return Ok(());
+            }
+            KeyCode::Home => {
+                self.expert_panel_display.scroll_to_top();
+                return Ok(());
+            }
+            KeyCode::End => {
+                self.expert_panel_display.scroll_to_bottom();
                 return Ok(());
             }
             _ => {}
@@ -1401,16 +1423,16 @@ mod tests {
     }
 
     #[test]
-    fn keycode_to_tmux_key_home_end() {
+    fn keycode_to_tmux_key_home_end_returns_none() {
         assert_eq!(
             keycode_to_tmux_key(KeyCode::Home, KeyModifiers::NONE),
-            Some("Home".to_string()),
-            "keycode_to_tmux_key: Home"
+            None,
+            "keycode_to_tmux_key: Home should return None (reserved for local scroll)"
         );
         assert_eq!(
             keycode_to_tmux_key(KeyCode::End, KeyModifiers::NONE),
-            Some("End".to_string()),
-            "keycode_to_tmux_key: End"
+            None,
+            "keycode_to_tmux_key: End should return None (reserved for local scroll)"
         );
     }
 
