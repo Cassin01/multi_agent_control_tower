@@ -54,13 +54,13 @@ impl UI {
                 .direction(Direction::Vertical)
                 .margin(1)
                 .constraints([
-                    Constraint::Length(3),            // [0] Header
+                    Constraint::Length(3),             // [0] Header
                     Constraint::Length(expert_height), // [1] Expert List
-                    Constraint::Min(5),               // [2] Task Input (shrunk)
-                    panel_constraint,                 // [3] Expert Panel
-                    Constraint::Length(3),            // [4] Effort Selector
-                    Constraint::Length(4),            // [5] Report Display (shrunk)
-                    Constraint::Length(3),            // [6] Footer
+                    Constraint::Min(5),                // [2] Task Input (shrunk)
+                    panel_constraint,                  // [3] Expert Panel
+                    Constraint::Length(3),             // [4] Effort Selector
+                    Constraint::Length(4),             // [5] Report Display (shrunk)
+                    Constraint::Length(3),             // [6] Footer
                 ])
                 .split(frame.area());
 
@@ -85,12 +85,12 @@ impl UI {
                 .direction(Direction::Vertical)
                 .margin(1)
                 .constraints([
-                    Constraint::Length(3),            // [0] Header
+                    Constraint::Length(3),             // [0] Header
                     Constraint::Length(expert_height), // [1] Expert List
-                    Constraint::Min(8),               // [2] Task Input
-                    Constraint::Length(3),            // [3] Effort Selector
-                    Constraint::Length(6),            // [4] Report Display
-                    Constraint::Length(3),            // [5] Footer
+                    Constraint::Min(8),                // [2] Task Input
+                    Constraint::Length(3),             // [3] Effort Selector
+                    Constraint::Length(6),             // [4] Report Display
+                    Constraint::Length(3),             // [5] Footer
                 ])
                 .split(frame.area());
 
@@ -165,14 +165,12 @@ impl UI {
     fn render_header(frame: &mut Frame, area: Rect, app: &mut TowerApp) {
         let summary = app.status_display().get_status_summary();
 
-        let mut title = vec![
-            Span::styled(
-                " MACOT ",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ];
+        let mut title = vec![Span::styled(
+            " MACOT ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )];
 
         // Show subtitle only when width is sufficient
         if area.width >= 100 {

@@ -4,8 +4,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::experts::ExpertRegistry;
 use crate::models::{
-    ExpertId, Message, MessageId, MessageRecipient, QueuedMessage,
-    MAX_DELIVERY_ATTEMPTS,
+    ExpertId, Message, MessageId, MessageRecipient, QueuedMessage, MAX_DELIVERY_ATTEMPTS,
 };
 use crate::session::TmuxSender;
 
@@ -73,7 +72,7 @@ pub struct ProcessingStats {
 }
 
 /// MessageRouter handles message routing logic and delivery coordination
-/// 
+///
 /// The MessageRouter is responsible for:
 /// - Processing queued messages in priority order
 /// - Finding appropriate recipients using targeting strategies (ID, name, role)
@@ -102,7 +101,7 @@ impl<T: TmuxSender> MessageRouter<T> {
     }
 
     /// Process the message queue, attempting delivery for all pending messages
-    /// 
+    ///
     /// This method:
     /// 1. Cleans up expired messages
     /// 2. Retrieves pending messages in priority order
@@ -150,7 +149,7 @@ impl<T: TmuxSender> MessageRouter<T> {
                         // Update delivery attempts and status
                         let mut updated_message = queued_message.clone();
                         updated_message.mark_delivery_attempt();
-                        
+
                         if let Some(error) = &result.error {
                             updated_message.mark_failed(error.clone());
                         }
@@ -183,14 +182,17 @@ impl<T: TmuxSender> MessageRouter<T> {
 
         debug!(
             "Queue processing complete. Delivered: {}, Failed: {}, Expired: {}, Skipped: {}",
-            stats.messages_delivered, stats.messages_failed, stats.messages_expired, stats.messages_skipped
+            stats.messages_delivered,
+            stats.messages_failed,
+            stats.messages_expired,
+            stats.messages_skipped
         );
 
         Ok(stats)
     }
 
     /// Attempt delivery of a single message
-    /// 
+    ///
     /// This method:
     /// 1. Finds the appropriate recipient using targeting logic
     /// 2. Checks if the recipient is idle (non-blocking delivery)
@@ -201,10 +203,12 @@ impl<T: TmuxSender> MessageRouter<T> {
         queued_message: &QueuedMessage,
     ) -> Result<DeliveryResult, RouterError> {
         let message = &queued_message.message;
-        
+
         debug!(
             "Attempting delivery of message {} (attempt {}/{})",
-            message.message_id, queued_message.attempts + 1, MAX_DELIVERY_ATTEMPTS
+            message.message_id,
+            queued_message.attempts + 1,
+            MAX_DELIVERY_ATTEMPTS
         );
 
         // Find recipient expert
@@ -236,7 +240,10 @@ impl<T: TmuxSender> MessageRouter<T> {
                     "Successfully delivered message {} to expert {}",
                     message.message_id, expert_id
                 );
-                Ok(DeliveryResult::success(message.message_id.clone(), expert_id))
+                Ok(DeliveryResult::success(
+                    message.message_id.clone(),
+                    expert_id,
+                ))
             }
             Err(e) => {
                 let error = format!("Tmux delivery failed: {}", e);
@@ -247,7 +254,7 @@ impl<T: TmuxSender> MessageRouter<T> {
     }
 
     /// Find the appropriate recipient expert based on targeting strategy
-    /// 
+    ///
     /// Supports three targeting strategies:
     /// 1. ExpertId: Direct targeting by expert ID
     /// 2. ExpertName: Targeting by expert name (case-insensitive)
@@ -279,17 +286,14 @@ impl<T: TmuxSender> MessageRouter<T> {
             MessageRecipient::Role { role } => {
                 // Role-based targeting - find first idle expert with matching role
                 let idle_experts = self.expert_registry.get_idle_experts_by_role_str(role);
-                
+
                 if idle_experts.is_empty() {
                     debug!("No idle experts found for role '{}'", role);
                     Ok(None)
                 } else {
                     // Return first idle expert with the role
                     let expert_id = idle_experts[0];
-                    debug!(
-                        "Found idle expert {} for role '{}'",
-                        expert_id, role
-                    );
+                    debug!("Found idle expert {} for role '{}'", expert_id, role);
                     Ok(Some(expert_id))
                 }
             }
@@ -308,7 +312,7 @@ impl<T: TmuxSender> MessageRouter<T> {
     }
 
     /// Deliver a message to an expert via tmux
-    /// 
+    ///
     /// This method formats the message for delivery and sends it to the expert's
     /// tmux pane using the standardized message format.
     pub async fn deliver_via_tmux(
@@ -323,19 +327,27 @@ impl<T: TmuxSender> MessageRouter<T> {
             .ok_or_else(|| RouterError::ExpertNotFound(expert_id.to_string()))?;
 
         // Parse window ID from tmux_window string
-        let window_id: u32 = expert_info
-            .tmux_window
-            .parse()
-            .map_err(|e| RouterError::Tmux(format!("Invalid window ID '{}': {}", expert_info.tmux_window, e)))?;
+        let window_id: u32 = expert_info.tmux_window.parse().map_err(|e| {
+            RouterError::Tmux(format!(
+                "Invalid window ID '{}': {}",
+                expert_info.tmux_window, e
+            ))
+        })?;
 
         // Format message for delivery
-        let formatted_message = self.format_message_for_delivery(message, expert_info.name.as_str());
+        let formatted_message =
+            self.format_message_for_delivery(message, expert_info.name.as_str());
 
         // Send message via tmux
         self.tmux_sender
             .send_keys_with_enter(window_id, &formatted_message)
             .await
-            .map_err(|e| RouterError::Tmux(format!("Failed to send message to window {}: {}", window_id, e)))?;
+            .map_err(|e| {
+                RouterError::Tmux(format!(
+                    "Failed to send message to window {}: {}",
+                    window_id, e
+                ))
+            })?;
 
         debug!(
             "Delivered message {} to expert {} (window {})",
@@ -346,7 +358,7 @@ impl<T: TmuxSender> MessageRouter<T> {
     }
 
     /// Format a message for standardized delivery to experts
-    /// 
+    ///
     /// Creates a consistent message format that includes all required information
     /// for the receiving expert to understand and process the message.
     fn format_message_for_delivery(&self, message: &Message, recipient_name: &str) -> String {
@@ -424,16 +436,16 @@ impl<T: TmuxSender> MessageRouter<T> {
     }
 
     /// Process outbox messages and add them to the queue
-    /// 
+    ///
     /// This method processes messages from the outbox directory and moves
     /// valid messages to the main queue for delivery processing.
     pub async fn process_outbox(&mut self) -> Result<Vec<MessageId>, RouterError> {
         let processed = self.queue_manager.process_outbox().await?;
-        
+
         if !processed.is_empty() {
             info!("Processed {} messages from outbox", processed.len());
         }
-        
+
         Ok(processed)
     }
 
@@ -442,13 +454,13 @@ impl<T: TmuxSender> MessageRouter<T> {
     pub async fn get_queue_stats(&self) -> Result<QueueStats, RouterError> {
         let all_messages = self.queue_manager.read_queue().await?;
         let pending_messages = self.queue_manager.get_pending_messages().await?;
-        
+
         let mut stats = QueueStats {
             total_messages: all_messages.len(),
             pending_messages: pending_messages.len(),
             ..Default::default()
         };
-        
+
         // Count by priority
         for message in &all_messages {
             match message.message.priority {
@@ -457,7 +469,7 @@ impl<T: TmuxSender> MessageRouter<T> {
                 crate::models::MessagePriority::Low => stats.low_priority += 1,
             }
         }
-        
+
         // Count by status
         for message in &all_messages {
             if message.is_expired() {
@@ -466,7 +478,7 @@ impl<T: TmuxSender> MessageRouter<T> {
                 stats.failed_messages += 1;
             }
         }
-        
+
         Ok(stats)
     }
 }
@@ -504,9 +516,11 @@ mod mock_tmux {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::mock_tmux::MockTmuxSender;
-    use crate::models::{ExpertInfo, ExpertState, MessageContent, MessageType, MessagePriority, Role};
+    use super::*;
+    use crate::models::{
+        ExpertInfo, ExpertState, MessageContent, MessagePriority, MessageType, Role,
+    };
     use tempfile::TempDir;
 
     async fn create_test_router() -> (MessageRouter<MockTmuxSender>, TempDir) {
@@ -531,7 +545,7 @@ mod tests {
             "test-session".to_string(),
             "1".to_string(),
         );
-        
+
         expert_registry.register_expert(expert1).unwrap();
         expert_registry.register_expert(expert2).unwrap();
 
@@ -557,11 +571,11 @@ mod tests {
     #[tokio::test]
     async fn find_recipient_by_expert_id() {
         let (router, _temp) = create_test_router().await;
-        
+
         let recipient = MessageRecipient::expert_id(1);
         let result = router.find_recipient(&recipient).await.unwrap();
         assert_eq!(result, Some(1));
-        
+
         let recipient = MessageRecipient::expert_id(999);
         let result = router.find_recipient(&recipient).await.unwrap();
         assert_eq!(result, None);
@@ -570,11 +584,11 @@ mod tests {
     #[tokio::test]
     async fn find_recipient_by_expert_name() {
         let (router, _temp) = create_test_router().await;
-        
+
         let recipient = MessageRecipient::expert_name("backend-dev".to_string());
         let result = router.find_recipient(&recipient).await.unwrap();
         assert_eq!(result, Some(1));
-        
+
         let recipient = MessageRecipient::expert_name("nonexistent".to_string());
         let result = router.find_recipient(&recipient).await.unwrap();
         assert_eq!(result, None);
@@ -583,10 +597,13 @@ mod tests {
     #[tokio::test]
     async fn find_recipient_by_role_returns_idle_expert() {
         let (mut router, _temp) = create_test_router().await;
-        
+
         // Set expert 1 to idle
-        router.expert_registry_mut().update_expert_state(1, ExpertState::Idle).unwrap();
-        
+        router
+            .expert_registry_mut()
+            .update_expert_state(1, ExpertState::Idle)
+            .unwrap();
+
         let recipient = MessageRecipient::role("developer".to_string());
         let result = router.find_recipient(&recipient).await.unwrap();
         assert_eq!(result, Some(1));
@@ -595,7 +612,7 @@ mod tests {
     #[tokio::test]
     async fn find_recipient_by_role_returns_none_when_no_idle_experts() {
         let (router, _temp) = create_test_router().await;
-        
+
         // Both experts are offline by default
         let recipient = MessageRecipient::role("developer".to_string());
         let result = router.find_recipient(&recipient).await.unwrap();
@@ -605,18 +622,24 @@ mod tests {
     #[tokio::test]
     async fn is_expert_idle_returns_correct_status() {
         let (mut router, _temp) = create_test_router().await;
-        
+
         // Initially offline (not idle)
         assert!(!router.is_expert_idle(1).await.unwrap());
-        
+
         // Set to idle
-        router.expert_registry_mut().update_expert_state(1, ExpertState::Idle).unwrap();
+        router
+            .expert_registry_mut()
+            .update_expert_state(1, ExpertState::Idle)
+            .unwrap();
         assert!(router.is_expert_idle(1).await.unwrap());
-        
+
         // Set to busy
-        router.expert_registry_mut().update_expert_state(1, ExpertState::Busy).unwrap();
+        router
+            .expert_registry_mut()
+            .update_expert_state(1, ExpertState::Busy)
+            .unwrap();
         assert!(!router.is_expert_idle(1).await.unwrap());
-        
+
         // Nonexistent expert
         assert!(!router.is_expert_idle(999).await.unwrap());
     }
@@ -624,10 +647,10 @@ mod tests {
     #[tokio::test]
     async fn format_message_for_delivery_creates_standard_format() {
         let (router, _temp) = create_test_router().await;
-        
+
         let message = create_test_message();
         let formatted = router.format_message_for_delivery(&message, "backend-dev");
-        
+
         assert!(formatted.contains("📨 INCOMING MESSAGE"));
         assert!(formatted.contains("From: Unknown (Expert 0)"));
         assert!(formatted.contains("To: backend-dev"));
@@ -641,7 +664,7 @@ mod tests {
     #[tokio::test]
     async fn process_queue_handles_empty_queue() {
         let (mut router, _temp) = create_test_router().await;
-        
+
         let stats = router.process_queue().await.unwrap();
         assert_eq!(stats.messages_processed, 0);
         assert_eq!(stats.messages_delivered, 0);
@@ -651,28 +674,38 @@ mod tests {
     #[tokio::test]
     async fn get_queue_stats_returns_correct_counts() {
         let (mut router, _temp) = create_test_router().await;
-        
+
         // Add some test messages with unique IDs
         let content1 = MessageContent {
             subject: "High Priority Message".to_string(),
             body: "This is a high priority message".to_string(),
         };
-        let message1 = Message::new(0, MessageRecipient::expert_id(1), MessageType::Query, content1)
-            .with_priority(MessagePriority::High);
-        
+        let message1 = Message::new(
+            0,
+            MessageRecipient::expert_id(1),
+            MessageType::Query,
+            content1,
+        )
+        .with_priority(MessagePriority::High);
+
         // Small delay to ensure different timestamps and IDs
         tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
-        
+
         let content2 = MessageContent {
             subject: "Low Priority Message".to_string(),
             body: "This is a low priority message".to_string(),
         };
-        let message2 = Message::new(0, MessageRecipient::expert_id(2), MessageType::Query, content2)
-            .with_priority(MessagePriority::Low);
-        
+        let message2 = Message::new(
+            0,
+            MessageRecipient::expert_id(2),
+            MessageType::Query,
+            content2,
+        )
+        .with_priority(MessagePriority::Low);
+
         router.queue_manager_mut().enqueue(&message1).await.unwrap();
         router.queue_manager_mut().enqueue(&message2).await.unwrap();
-        
+
         let stats = router.get_queue_stats().await.unwrap();
         assert_eq!(stats.total_messages, 2);
         assert_eq!(stats.high_priority, 1);
@@ -683,7 +716,7 @@ mod tests {
     #[tokio::test]
     async fn process_outbox_delegates_to_queue_manager() {
         let (mut router, _temp) = create_test_router().await;
-        
+
         // Process outbox (should be empty)
         let processed = router.process_outbox().await.unwrap();
         assert!(processed.is_empty());
@@ -692,10 +725,12 @@ mod tests {
 
 #[cfg(test)]
 mod property_tests {
-    use super::*;
     use super::mock_tmux::MockTmuxSender;
+    use super::*;
+    use crate::models::{
+        ExpertInfo, ExpertState, MessageContent, MessagePriority, MessageType, QueuedMessage, Role,
+    };
     use proptest::prelude::*;
-    use crate::models::{ExpertInfo, ExpertState, Role, MessageContent, MessageType, MessagePriority, QueuedMessage};
     use tempfile::TempDir;
 
     // Generators for property-based testing
@@ -723,9 +758,10 @@ mod property_tests {
             arbitrary_role(),
             "[a-zA-Z0-9-]{1,20}",
             "[0-9]{1,2}",
-        ).prop_map(|(name, role, session, pane)| {
-            ExpertInfo::new(crate::experts::AUTO_ASSIGN_ID, name, role, session, pane)
-        })
+        )
+            .prop_map(|(name, role, session, pane)| {
+                ExpertInfo::new(crate::experts::AUTO_ASSIGN_ID, name, role, session, pane)
+            })
     }
 
     fn arbitrary_message_recipient() -> impl Strategy<Value = MessageRecipient> {
@@ -737,10 +773,8 @@ mod property_tests {
     }
 
     fn arbitrary_message_content() -> impl Strategy<Value = MessageContent> {
-        (
-            "[a-zA-Z0-9 ]{1,100}",
-            "[a-zA-Z0-9 \n]{1,1000}",
-        ).prop_map(|(subject, body)| MessageContent { subject, body })
+        ("[a-zA-Z0-9 ]{1,100}", "[a-zA-Z0-9 \n]{1,1000}")
+            .prop_map(|(subject, body)| MessageContent { subject, body })
     }
 
     fn arbitrary_message() -> impl Strategy<Value = Message> {
@@ -748,9 +782,10 @@ mod property_tests {
             0u32..100,
             arbitrary_message_recipient(),
             arbitrary_message_content(),
-        ).prop_map(|(from_expert_id, to, content)| {
-            Message::new(from_expert_id, to, MessageType::Query, content)
-        })
+        )
+            .prop_map(|(from_expert_id, to, content)| {
+                Message::new(from_expert_id, to, MessageType::Query, content)
+            })
     }
 
     #[allow(dead_code)]
@@ -762,7 +797,9 @@ mod property_tests {
         ]
     }
 
-    async fn create_test_router_with_experts(experts: Vec<ExpertInfo>) -> (MessageRouter<MockTmuxSender>, TempDir, Vec<ExpertId>) {
+    async fn create_test_router_with_experts(
+        experts: Vec<ExpertInfo>,
+    ) -> (MessageRouter<MockTmuxSender>, TempDir, Vec<ExpertId>) {
         let temp_dir = TempDir::new().unwrap();
         let queue_manager = QueueManager::new(temp_dir.path().to_path_buf());
         queue_manager.init().await.unwrap();
@@ -794,16 +831,16 @@ mod property_tests {
         ) {
             tokio_test::block_on(async {
                 let (mut router, _temp, expert_ids) = create_test_router_with_experts(experts).await;
-                
+
                 // Set some experts to idle for role-based targeting
                 for (i, &expert_id) in expert_ids.iter().enumerate() {
                     let state = if i % 3 == 0 { ExpertState::Idle } else { ExpertState::Busy };
                     router.expert_registry_mut().update_expert_state(expert_id, state).unwrap();
                 }
-                
+
                 for message in messages {
                     let result = router.find_recipient(&message.to).await.unwrap();
-                    
+
                     match &message.to {
                         MessageRecipient::ExpertId { expert_id } => {
                             // Requirement 2.1: Message should deliver only to specific expert by ID
@@ -830,7 +867,7 @@ mod property_tests {
                                 // Expert must be idle (non-blocking delivery)
                                 assert!(expert_info.is_idle());
                             }
-                            
+
                             // If no expert found, verify no idle experts exist with that role
                             if result.is_none() {
                                 let idle_experts_for_role = router.expert_registry().get_idle_experts_by_role_str(role);
@@ -850,17 +887,17 @@ mod property_tests {
         ) {
             tokio_test::block_on(async {
                 let (mut router, _temp, expert_ids) = create_test_router_with_experts(experts).await;
-                
+
                 if target_expert_index >= expert_ids.len() {
                     return; // Skip if index out of bounds
                 }
-                
+
                 let target_expert_id = expert_ids[target_expert_index];
                 let target_expert = router.expert_registry().get_expert(target_expert_id).unwrap().clone();
-                
+
                 // Set target expert to idle
                 router.expert_registry_mut().update_expert_state(target_expert_id, ExpertState::Idle).unwrap();
-                
+
                 // Set other experts to busy
                 for &other_index in &other_expert_indices {
                     if other_index < expert_ids.len() && other_index != target_expert_index {
@@ -868,21 +905,21 @@ mod property_tests {
                         router.expert_registry_mut().update_expert_state(other_id, ExpertState::Busy).unwrap();
                     }
                 }
-                
+
                 // Test targeting by ID - should find exactly the target expert
                 let by_id = MessageRecipient::expert_id(target_expert_id);
                 let result = router.find_recipient(&by_id).await.unwrap();
                 assert_eq!(result, Some(target_expert_id));
-                
+
                 // Test targeting by name - should find exactly the target expert
                 let by_name = MessageRecipient::expert_name(target_expert.name.clone());
                 let result = router.find_recipient(&by_name).await.unwrap();
                 assert_eq!(result, Some(target_expert_id));
-                
+
                 // Test targeting by role - should find the target expert if it's the only idle one with that role
                 let by_role = MessageRecipient::role(target_expert.role.as_str().to_string());
                 let result = router.find_recipient(&by_role).await.unwrap();
-                
+
                 // Should either find the target expert or no expert (if others with same role are also idle)
                 if let Some(found_id) = result {
                     let found_expert = router.expert_registry().get_expert(found_id).unwrap();
@@ -899,7 +936,7 @@ mod property_tests {
         ) {
             tokio_test::block_on(async {
                 let (mut router, _temp, expert_ids) = create_test_router_with_experts(experts).await;
-                
+
                 // Set random states for experts
                 for (i, &expert_id) in expert_ids.iter().enumerate() {
                     let state = match i % 3 {
@@ -909,19 +946,19 @@ mod property_tests {
                     };
                     router.expert_registry_mut().update_expert_state(expert_id, state).unwrap();
                 }
-                
+
                 // Multiple calls to find_recipient should return consistent results
                 let result1 = router.find_recipient(&recipient).await.unwrap();
                 let result2 = router.find_recipient(&recipient).await.unwrap();
                 let result3 = router.find_recipient(&recipient).await.unwrap();
-                
+
                 assert_eq!(result1, result2);
                 assert_eq!(result2, result3);
-                
+
                 // If a recipient is found, it should match the targeting criteria
                 if let Some(found_id) = result1 {
                     let expert_info = router.expert_registry().get_expert(found_id).unwrap();
-                    
+
                     match &recipient {
                         MessageRecipient::ExpertId { expert_id } => {
                             assert_eq!(found_id, *expert_id);
@@ -948,25 +985,25 @@ mod property_tests {
         ) {
             tokio_test::block_on(async {
                 let (mut router, _temp, expert_ids) = create_test_router_with_experts(experts).await;
-                
+
                 // Apply random states to experts, ensuring we have a mix of idle and non-idle
                 for (expert_id, state) in expert_ids.iter().zip(expert_states.iter()) {
                     router.expert_registry_mut().update_expert_state(*expert_id, state.clone()).unwrap();
                 }
-                
+
                 for message in messages {
                     // Create a queued message for delivery attempt
                     let queued_message = QueuedMessage::new(message.clone());
-                    
+
                     // Attempt delivery
                     let delivery_result = router.attempt_delivery(&queued_message).await.unwrap();
-                    
+
                     // Find the target expert for this message
                     let target_expert_id = router.find_recipient(&message.to).await.unwrap();
-                    
+
                     if let Some(expert_id) = target_expert_id {
                         let expert_info = router.expert_registry().get_expert(expert_id).unwrap();
-                        
+
                         // Requirement 3.1: Message should only be delivered when target expert is idle
                         // Requirement 3.2: Delivery should be skipped when expert is busy
                         if expert_info.is_idle() {
@@ -976,7 +1013,7 @@ mod property_tests {
                             if !delivery_result.success {
                                 // If delivery failed, it should be due to tmux error, not idle state
                                 if let Some(error) = &delivery_result.error {
-                                    assert!(error.contains("Tmux") || error.contains("tmux") || 
+                                    assert!(error.contains("Tmux") || error.contains("tmux") ||
                                            error.contains("Failed to send message") ||
                                            error.contains("pane"));
                                 }
@@ -989,11 +1026,11 @@ mod property_tests {
                                 assert!(error.contains("not idle") || error.contains("is not idle"));
                             }
                         }
-                        
+
                         // Verify that the delivery decision is consistent with expert state
                         let is_expert_idle = router.is_expert_idle(expert_id).await.unwrap();
                         assert_eq!(is_expert_idle, expert_info.is_idle());
-                        
+
                         // If expert is not idle, delivery should definitely fail
                         if !is_expert_idle {
                             assert!(!delivery_result.success);
@@ -1002,7 +1039,7 @@ mod property_tests {
                         // No target expert found - delivery should fail
                         assert!(!delivery_result.success);
                         if let Some(error) = &delivery_result.error {
-                            assert!(error.contains("No recipient found") || 
+                            assert!(error.contains("No recipient found") ||
                                    error.contains("not found"));
                         }
                     }
@@ -1019,20 +1056,20 @@ mod property_tests {
             tokio_test::block_on(async {
                 let (mut router, _temp, expert_ids) = create_test_router_with_experts(vec![expert]).await;
                 let expert_id = expert_ids[0];
-                
+
                 // Create a message targeting this specific expert
                 let mut test_message = message;
                 test_message.to = MessageRecipient::expert_id(expert_id);
                 let queued_message = QueuedMessage::new(test_message);
-                
+
                 // Test delivery behavior across different state transitions
                 for state in state_sequence {
                     // Update expert state
                     router.expert_registry_mut().update_expert_state(expert_id, state.clone()).unwrap();
-                    
+
                     // Attempt delivery
                     let delivery_result = router.attempt_delivery(&queued_message).await.unwrap();
-                    
+
                     // Verify non-blocking delivery enforcement
                     match state {
                         ExpertState::Idle => {
@@ -1053,7 +1090,7 @@ mod property_tests {
                             }
                         }
                     }
-                    
+
                     // Verify state consistency
                     let is_idle = router.is_expert_idle(expert_id).await.unwrap();
                     assert_eq!(is_idle, matches!(state, ExpertState::Idle));
@@ -1068,26 +1105,26 @@ mod property_tests {
         ) {
             tokio_test::block_on(async {
                 let (mut router, _temp, expert_ids) = create_test_router_with_experts(experts).await;
-                
+
                 // Set all experts to busy initially
                 for &expert_id in &expert_ids {
                     router.expert_registry_mut().update_expert_state(expert_id, ExpertState::Busy).unwrap();
                 }
-                
+
                 for message in messages {
                     let queued_message = QueuedMessage::new(message.clone());
-                    
+
                     // First delivery attempt - should fail due to busy state
                     let first_result = router.attempt_delivery(&queued_message).await.unwrap();
                     assert!(!first_result.success);
-                    
+
                     // Find target expert and set to idle
                     if let Some(target_expert_id) = router.find_recipient(&message.to).await.unwrap() {
                         router.expert_registry_mut().update_expert_state(target_expert_id, ExpertState::Idle).unwrap();
-                        
+
                         // Second delivery attempt - should now proceed (may fail at tmux level)
                         let second_result = router.attempt_delivery(&queued_message).await.unwrap();
-                        
+
                         // Should not be blocked by idle state anymore
                         if !second_result.success {
                             if let Some(error) = &second_result.error {
@@ -1095,10 +1132,10 @@ mod property_tests {
                                 assert!(!error.contains("not idle"));
                             }
                         }
-                        
+
                         // Set back to busy
                         router.expert_registry_mut().update_expert_state(target_expert_id, ExpertState::Busy).unwrap();
-                        
+
                         // Third delivery attempt - should fail again due to busy state
                         let third_result = router.attempt_delivery(&queued_message).await.unwrap();
                         assert!(!third_result.success);
@@ -1121,10 +1158,10 @@ mod property_tests {
                 let (mut router, _temp, _expert_ids) = create_test_router_with_experts(vec![
                     ExpertInfo::new(recipient_expert_id, "test-expert".to_string(), Role::Developer, "test-session".to_string(), "0".to_string())
                 ]).await;
-                
+
                 // Set the expert to idle so messages can be delivered
                 router.expert_registry_mut().update_expert_state(recipient_expert_id, ExpertState::Idle).unwrap();
-                
+
                 // Create messages with different priorities targeting the same recipient
                 let mut test_messages = Vec::new();
                 let base_time = chrono::Utc::now();
@@ -1146,26 +1183,26 @@ mod property_tests {
 
                     test_messages.push(new_message);
                 }
-                
+
                 // Enqueue all messages
                 for message in &test_messages {
                     router.queue_manager_mut().enqueue(message).await.unwrap();
                 }
-                
+
                 // Get pending messages - should be sorted by priority then FIFO
                 let pending_messages = router.queue_manager().get_pending_messages().await.unwrap();
-                
+
                 // Skip test if no messages were enqueued (edge case)
                 if pending_messages.is_empty() {
                     return;
                 }
-                
+
                 // Verify priority ordering: High > Normal > Low
                 // Within same priority: FIFO (earlier created_at first)
                 for i in 1..pending_messages.len() {
                     let prev = &pending_messages[i - 1];
                     let curr = &pending_messages[i];
-                    
+
                     // Requirement 6.2: Higher priority messages should be delivered before lower priority
                     if prev.message.priority != curr.message.priority {
                         assert!(
@@ -1185,7 +1222,7 @@ mod property_tests {
                         );
                     }
                 }
-                
+
                 // Verify that all high priority messages come before normal priority messages
                 let high_priority_count = pending_messages.iter()
                     .filter(|msg| msg.message.priority == MessagePriority::High)
@@ -1196,7 +1233,7 @@ mod property_tests {
                 let low_priority_count = pending_messages.iter()
                     .filter(|msg| msg.message.priority == MessagePriority::Low)
                     .count();
-                
+
                 // Verify priority grouping
                 if high_priority_count > 0 {
                     // All high priority messages should be at the beginning
@@ -1208,7 +1245,7 @@ mod property_tests {
                         );
                     }
                 }
-                
+
                 if normal_priority_count > 0 {
                     // All normal priority messages should come after high priority
                     for i in high_priority_count..(high_priority_count + normal_priority_count) {
@@ -1219,7 +1256,7 @@ mod property_tests {
                         );
                     }
                 }
-                
+
                 if low_priority_count > 0 {
                     // All low priority messages should come last
                     for i in (high_priority_count + normal_priority_count)..pending_messages.len() {
@@ -1230,18 +1267,18 @@ mod property_tests {
                         );
                     }
                 }
-                
+
                 // Test delivery order by processing the queue
                 let _processing_stats = router.process_queue().await.unwrap();
-                
+
                 // Since tmux delivery will fail in test environment, we need to check the order
                 // in which delivery was attempted by examining the queue processing
                 // The queue manager should have attempted delivery in priority order
-                
+
                 // Verify that the queue processing attempted messages in correct order
                 // by checking that higher priority messages were processed first
                 let remaining_messages = router.queue_manager().get_pending_messages().await.unwrap();
-                
+
                 // In a real scenario, high priority messages would be delivered first
                 // In our test environment, all deliveries fail due to tmux, but the order should be maintained
                 // We can verify this by checking that the queue still maintains priority order
@@ -1445,13 +1482,17 @@ mod property_tests {
 /// Validates: Requirements 1.1, 3.4, 4.2, 7.2
 #[cfg(test)]
 mod integration_tests {
-    use super::*;
     use super::mock_tmux::MockTmuxSender;
-    use crate::models::{ExpertInfo, ExpertState, MessageContent, MessageType, MessagePriority, Role};
+    use super::*;
+    use crate::models::{
+        ExpertInfo, ExpertState, MessageContent, MessagePriority, MessageType, Role,
+    };
     use tempfile::TempDir;
     use tokio::fs;
 
-    async fn create_integration_test_router(num_experts: usize) -> (MessageRouter<MockTmuxSender>, TempDir, Vec<ExpertId>) {
+    async fn create_integration_test_router(
+        num_experts: usize,
+    ) -> (MessageRouter<MockTmuxSender>, TempDir, Vec<ExpertId>) {
         let temp_dir = TempDir::new().unwrap();
         let queue_manager = QueueManager::new(temp_dir.path().to_path_buf());
         queue_manager.init().await.unwrap();
@@ -1482,7 +1523,8 @@ mod integration_tests {
         let (mut router, temp_dir, expert_ids) = create_integration_test_router(3).await;
 
         // Set expert 1 to idle for message delivery
-        router.expert_registry_mut()
+        router
+            .expert_registry_mut()
             .update_expert_state(expert_ids[1], ExpertState::Idle)
             .unwrap();
 
@@ -1505,7 +1547,11 @@ mod integration_tests {
 
         // Process outbox - message should be moved to queue
         let processed = router.process_outbox().await.unwrap();
-        assert_eq!(processed.len(), 1, "One message should be processed from outbox");
+        assert_eq!(
+            processed.len(),
+            1,
+            "One message should be processed from outbox"
+        );
         assert_eq!(processed[0], message.message_id);
 
         // Message should now be in the queue
@@ -1514,7 +1560,10 @@ mod integration_tests {
         assert_eq!(queue_stats.pending_messages, 1, "Message should be pending");
 
         // Outbox file should be removed
-        assert!(!message_file.exists(), "Outbox file should be removed after processing");
+        assert!(
+            !message_file.exists(),
+            "Outbox file should be removed after processing"
+        );
     }
 
     /// Test message persistence across simulated restart
@@ -1582,13 +1631,19 @@ mod integration_tests {
 
             // Message should still be in queue
             let stats = router.get_queue_stats().await.unwrap();
-            assert_eq!(stats.total_messages, 1, "Message should persist after restart");
+            assert_eq!(
+                stats.total_messages, 1,
+                "Message should persist after restart"
+            );
 
             // Verify message content is intact
             let messages = router.queue_manager().get_pending_messages().await.unwrap();
             assert_eq!(messages.len(), 1);
             assert_eq!(messages[0].message.content.subject, "Persistence Test");
-            assert_eq!(messages[0].message.content.body, "This message should persist");
+            assert_eq!(
+                messages[0].message.content.body,
+                "This message should persist"
+            );
         }
     }
 
@@ -1600,7 +1655,8 @@ mod integration_tests {
 
         // Set all experts to idle
         for &expert_id in &expert_ids {
-            router.expert_registry_mut()
+            router
+                .expert_registry_mut()
                 .update_expert_state(expert_id, ExpertState::Idle)
                 .unwrap();
         }
@@ -1631,7 +1687,11 @@ mod integration_tests {
 
         // Verify all messages are in queue
         let stats = router.get_queue_stats().await.unwrap();
-        assert_eq!(stats.total_messages, expert_ids.len(), "All messages should be in queue");
+        assert_eq!(
+            stats.total_messages,
+            expert_ids.len(),
+            "All messages should be in queue"
+        );
 
         // Process the queue (delivery will fail due to tmux in test, but logic should work)
         let processing_stats = router.process_queue().await.unwrap();
@@ -1667,14 +1727,18 @@ mod integration_tests {
 
         // First attempt: recipient is offline (default state)
         let stats1 = router.process_queue().await.unwrap();
-        assert_eq!(stats1.messages_delivered, 0, "Should not deliver to offline expert");
+        assert_eq!(
+            stats1.messages_delivered, 0,
+            "Should not deliver to offline expert"
+        );
 
         // Message should still be in queue
         let queue_stats = router.get_queue_stats().await.unwrap();
         assert!(queue_stats.total_messages >= 1 || stats1.messages_failed >= 1);
 
         // Set recipient to idle
-        router.expert_registry_mut()
+        router
+            .expert_registry_mut()
             .update_expert_state(recipient_id, ExpertState::Idle)
             .unwrap();
 
@@ -1684,7 +1748,8 @@ mod integration_tests {
         assert_eq!(is_idle, Some(true), "Recipient should be idle");
 
         // Set recipient to busy
-        router.expert_registry_mut()
+        router
+            .expert_registry_mut()
             .update_expert_state(recipient_id, ExpertState::Busy)
             .unwrap();
 
@@ -1719,7 +1784,8 @@ mod integration_tests {
                 MessageRecipient::expert_id(recipient_id),
                 MessageType::Notify,
                 content,
-            ).with_priority(*priority);
+            )
+            .with_priority(*priority);
 
             router.queue_manager_mut().enqueue(&message).await.unwrap();
             tokio::time::sleep(tokio::time::Duration::from_millis(2)).await;
@@ -1754,7 +1820,8 @@ mod integration_tests {
             MessageRecipient::expert_id(recipient_id),
             MessageType::Notify,
             expired_content,
-        ).with_ttl_seconds(0);
+        )
+        .with_ttl_seconds(0);
 
         // Small delay after creating expired message
         tokio::time::sleep(tokio::time::Duration::from_millis(2)).await;
@@ -1771,20 +1838,35 @@ mod integration_tests {
             valid_content,
         );
 
-        router.queue_manager_mut().enqueue(&expired_message).await.unwrap();
-        router.queue_manager_mut().enqueue(&valid_message).await.unwrap();
+        router
+            .queue_manager_mut()
+            .enqueue(&expired_message)
+            .await
+            .unwrap();
+        router
+            .queue_manager_mut()
+            .enqueue(&valid_message)
+            .await
+            .unwrap();
 
         // Delay to ensure expiration is detected (same as unit test)
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
         // Process queue - should clean up expired messages as part of processing
         let stats = router.process_queue().await.unwrap();
-        assert!(stats.messages_expired >= 1, "At least one message should expire. Got stats: {:?}", stats);
+        assert!(
+            stats.messages_expired >= 1,
+            "At least one message should expire. Got stats: {:?}",
+            stats
+        );
 
         // Only valid message should remain (or be processed)
         let remaining = router.queue_manager().read_queue().await.unwrap();
         assert!(
-            remaining.is_empty() || remaining.iter().all(|m| m.message.content.subject == "Valid Message"),
+            remaining.is_empty()
+                || remaining
+                    .iter()
+                    .all(|m| m.message.content.subject == "Valid Message"),
             "Only valid messages should remain"
         );
     }
@@ -1829,7 +1911,8 @@ mod integration_tests {
         let mut router = MessageRouter::new(queue_manager, expert_registry, MockTmuxSender);
 
         // Set only backend_expert2 to idle
-        router.expert_registry_mut()
+        router
+            .expert_registry_mut()
             .update_expert_state(backend2_id, ExpertState::Idle)
             .unwrap();
 

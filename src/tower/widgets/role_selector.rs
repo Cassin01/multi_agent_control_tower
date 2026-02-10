@@ -104,7 +104,8 @@ impl RoleSelector {
         }
 
         let popup_width = 50.min(area.width.saturating_sub(4));
-        let popup_height = (self.available_roles.len() as u16 + 6).min(area.height.saturating_sub(4));
+        let popup_height =
+            (self.available_roles.len() as u16 + 6).min(area.height.saturating_sub(4));
 
         let popup_area = centered_rect(popup_width, popup_height, area);
 
@@ -119,16 +120,11 @@ impl RoleSelector {
             ])
             .split(popup_area);
 
-        let title = format!(
-            "Select Role for Expert {}",
-            self.expert_id.unwrap_or(0)
-        );
-        let header = Paragraph::new(Line::from(vec![
-            Span::styled(
-                format!("Current: {}", self.current_role),
-                Style::default().fg(Color::Yellow),
-            ),
-        ]))
+        let title = format!("Select Role for Expert {}", self.expert_id.unwrap_or(0));
+        let header = Paragraph::new(Line::from(vec![Span::styled(
+            format!("Current: {}", self.current_role),
+            Style::default().fg(Color::Yellow),
+        )]))
         .block(
             Block::default()
                 .borders(Borders::ALL)
@@ -154,7 +150,10 @@ impl RoleSelector {
                 };
 
                 let spans = vec![
-                    Span::styled(format!("[{}] ", idx + 1), Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        format!("[{}] ", idx + 1),
+                        Style::default().fg(Color::DarkGray),
+                    ),
                     Span::styled(format!("{} ", marker), style),
                     Span::styled(format!("{:<12}", role.display_name), style),
                     Span::styled(

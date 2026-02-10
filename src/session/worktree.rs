@@ -63,7 +63,10 @@ pub struct WorktreeManager {
 impl WorktreeManager {
     pub fn new(git_root: PathBuf) -> Self {
         let macot_path = git_root.join(".macot");
-        Self { git_root, macot_path }
+        Self {
+            git_root,
+            macot_path,
+        }
     }
 
     pub async fn resolve(project_path: PathBuf) -> Result<Self> {

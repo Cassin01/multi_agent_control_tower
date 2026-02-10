@@ -79,7 +79,10 @@ impl HelpModal {
             Self::key_line("\u{2191} / \u{2193}", "Select previous / next expert"),
             Self::key_line("Ctrl+O", "Change expert role"),
             Self::key_line("Ctrl+R", "Reset selected expert"),
-            Self::key_line("Ctrl+W", "Launch expert in worktree (uses task input as branch name)"),
+            Self::key_line(
+                "Ctrl+W",
+                "Launch expert in worktree (uses task input as branch name)",
+            ),
             Self::nested_subsection_title("Cursor Movement"),
             Self::key_line("Ctrl+B / Ctrl+F", "Move cursor left / right"),
             Self::key_line("Ctrl+A / Ctrl+E", "Move to line start / end"),
@@ -87,7 +90,10 @@ impl HelpModal {
             Self::nested_subsection_title("Editing"),
             Self::key_line("Ctrl+H", "Delete character before cursor (backspace)"),
             Self::key_line("Ctrl+D", "Delete character at cursor (delete)"),
-            Self::key_line("Ctrl+U", "Delete from line start to cursor (unix-line-discard)"),
+            Self::key_line(
+                "Ctrl+U",
+                "Delete from line start to cursor (unix-line-discard)",
+            ),
             Self::key_line("Ctrl+K", "Delete from cursor to line end (kill-line)"),
             Self::nested_subsection_title("Submit"),
             Self::key_line("Ctrl+S", "Assign task to selected expert"),
@@ -147,10 +153,7 @@ impl HelpModal {
     fn key_line(key: &'static str, description: &'static str) -> Line<'static> {
         Line::from(vec![
             Span::raw("  "),
-            Span::styled(
-                format!("{:20}", key),
-                Style::default().fg(Color::Yellow),
-            ),
+            Span::styled(format!("{:20}", key), Style::default().fg(Color::Yellow)),
             Span::raw(description),
         ])
     }

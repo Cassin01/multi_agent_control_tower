@@ -89,7 +89,11 @@ pub async fn execute(args: Args) -> Result<()> {
 
         let instruction = load_instruction(&config, expert_id, &expert.name)?;
         let instruction_file = if !instruction.is_empty() {
-            Some(write_instruction_file(&config.queue_path, expert_id, &instruction)?)
+            Some(write_instruction_file(
+                &config.queue_path,
+                expert_id,
+                &instruction,
+            )?)
         } else {
             None
         };
@@ -98,11 +102,7 @@ pub async fn execute(args: Args) -> Result<()> {
             tmux.set_pane_title(expert_id, &expert_name).await?;
 
             claude
-                .launch_claude(
-                    expert_id,
-                    &working_dir,
-                    instruction_file.as_deref(),
-                )
+                .launch_claude(expert_id, &working_dir, instruction_file.as_deref())
                 .await?;
 
             let ready = claude.wait_for_ready(expert_id, timeout).await?;

@@ -1,5 +1,7 @@
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
+use crossterm::event::{
+    self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
+};
 use ratatui::layout::Rect;
 use std::time::{Duration, Instant};
 
@@ -7,15 +9,15 @@ use crate::config::Config;
 use crate::context::{AvailableRoles, ContextStore, Decision, ExpertContext, SessionExpertRoles};
 use crate::experts::ExpertRegistry;
 use crate::instructions::{load_instruction_with_template, write_instruction_file};
-use crate::models::{ExpertInfo, Role};
-use crate::utils::sanitize_branch_name;
-use crate::queue::{MessageRouter, QueueManager};
 use crate::models::ExpertState;
+use crate::models::{ExpertInfo, Role};
+use crate::queue::{MessageRouter, QueueManager};
 use crate::session::{
-    ClaudeManager, ExpertStateDetector, TmuxManager, WorktreeLaunchResult,
-    WorktreeLaunchState, WorktreeManager,
+    ClaudeManager, ExpertStateDetector, TmuxManager, WorktreeLaunchResult, WorktreeLaunchState,
+    WorktreeManager,
 };
 use crate::tower::widgets::ExpertEntry;
+use crate::utils::sanitize_branch_name;
 
 /// Message polling interval for the messaging system (3 seconds)
 const MESSAGE_POLL_INTERVAL: Duration = Duration::from_millis(3000);
@@ -339,7 +341,10 @@ impl TowerApp {
 
     pub async fn refresh_reports(&mut self) -> Result<()> {
         let reports = self.queue.list_reports().await?;
+        let report_expert_ids: std::collections::HashSet<u32> =
+            reports.iter().map(|r| r.expert_id).collect();
         self.report_display.set_reports(reports);
+        self.status_display.set_expert_reports(report_expert_ids);
         Ok(())
     }
 
@@ -406,7 +411,10 @@ impl TowerApp {
             for (i, _) in self.config.experts.iter().enumerate() {
                 let expert_id = i as u32;
                 let expert_state = self.detector.detect_state(expert_id);
-                if let Err(e) = router.expert_registry_mut().update_expert_state(expert_id, expert_state) {
+                if let Err(e) = router
+                    .expert_registry_mut()
+                    .update_expert_state(expert_id, expert_state)
+                {
                     tracing::warn!("Failed to update expert {} state: {}", expert_id, e);
                 }
             }
@@ -419,7 +427,10 @@ impl TowerApp {
             // Process the queue
             match router.process_queue().await {
                 Ok(stats) => {
-                    if stats.messages_delivered > 0 || stats.messages_failed > 0 || stats.messages_expired > 0 {
+                    if stats.messages_delivered > 0
+                        || stats.messages_failed > 0
+                        || stats.messages_expired > 0
+                    {
                         tracing::info!(
                             "Message queue processed: {} delivered, {} failed, {} expired",
                             stats.messages_delivered,
@@ -430,7 +441,11 @@ impl TowerApp {
                     // Mark delivered experts as processing
                     for eid in &stats.delivered_expert_ids {
                         if let Err(e) = self.detector.set_marker(*eid, "processing") {
-                            tracing::warn!("Failed to set processing marker for expert {}: {}", eid, e);
+                            tracing::warn!(
+                                "Failed to set processing marker for expert {}: {}",
+                                eid,
+                                e
+                            );
                         }
                     }
                 }
@@ -582,132 +597,139 @@ impl TowerApp {
                     return Ok(());
                 }
                 Event::Key(key) => {
-                if key.kind != KeyEventKind::Press {
-                    return Ok(());
-                }
-
-                // Update input time for key presses to pause polling during interaction.
-                // Skip when ExpertPanel is focused: keys are forwarded to tmux, and
-                // the debounce would freeze the panel's live capture for 500ms per keystroke.
-                if self.focus != FocusArea::ExpertPanel {
-                    self.last_input_time = Instant::now();
-                }
-                tracing::debug!("Key pressed: {:?}, focus: {:?}", key.code, self.focus);
-
-                self.clear_message();
-
-                if key.modifiers.contains(KeyModifiers::CONTROL) {
-                    match key.code {
-                        KeyCode::Char('c') | KeyCode::Char('q') => {
-                            self.quit();
-                            return Ok(());
-                        }
-                        KeyCode::Char('i') => {
-                            self.help_modal.toggle();
-                            return Ok(());
-                        }
-                        KeyCode::Char('j') => {
-                            self.expert_panel_display.toggle();
-                            if !self.expert_panel_display.is_visible()
-                                && self.focus == FocusArea::ExpertPanel
-                            {
-                                self.set_focus(FocusArea::TaskInput);
-                            }
-                            return Ok(());
-                        }
-                        _ => {}
-                    }
-                }
-
-                if self.help_modal.is_visible() {
-                    match key.code {
-                        KeyCode::Enter | KeyCode::Char('q') => {
-                            self.help_modal.hide();
-                        }
-                        _ => {}
-                    }
-                    return Ok(());
-                }
-
-                if self.report_display.view_mode() == ViewMode::Detail {
-                    match key.code {
-                        KeyCode::Enter | KeyCode::Char('q') => {
-                            self.report_display.close_detail();
-                        }
-                        KeyCode::Up | KeyCode::Char('k') => self.report_display.scroll_up(),
-                        KeyCode::Down | KeyCode::Char('j') => self.report_display.scroll_down(),
-                        _ => {}
-                    }
-                    return Ok(());
-                }
-
-                if self.role_selector.is_visible() {
-                    match key.code {
-                        KeyCode::Char('q') => {
-                            self.role_selector.hide();
-                        }
-                        KeyCode::Enter => {
-                            self.confirm_role_selection().await?;
-                        }
-                        KeyCode::Up | KeyCode::Char('k') => self.role_selector.prev(),
-                        KeyCode::Down | KeyCode::Char('j') => self.role_selector.next(),
-                        _ => {}
-                    }
-                    return Ok(());
-                }
-
-                match self.focus {
-                    FocusArea::ExpertList => {} // Display only, not selectable
-                    FocusArea::TaskInput => self.handle_task_input_keys(key.code, key.modifiers),
-                    FocusArea::ExpertPanel => {
-                        self.handle_expert_panel_keys(key.code, key.modifiers).await?;
+                    if key.kind != KeyEventKind::Press {
                         return Ok(());
                     }
-                    FocusArea::EffortSelector => self.handle_effort_selector_keys(key.code),
-                    FocusArea::ReportList => self.handle_report_list_keys(key.code, key.modifiers),
-                }
 
-                if key.code == KeyCode::Char('t') && key.modifiers.contains(KeyModifiers::CONTROL) {
-                    if key.modifiers.contains(KeyModifiers::SHIFT) {
-                        self.prev_focus();
-                    } else {
-                        self.next_focus();
+                    // Update input time for key presses to pause polling during interaction.
+                    // Skip when ExpertPanel is focused: keys are forwarded to tmux, and
+                    // the debounce would freeze the panel's live capture for 500ms per keystroke.
+                    if self.focus != FocusArea::ExpertPanel {
+                        self.last_input_time = Instant::now();
                     }
-                }
+                    tracing::debug!("Key pressed: {:?}, focus: {:?}", key.code, self.focus);
 
-                if key.code == KeyCode::Char('s')
-                    && key.modifiers.contains(KeyModifiers::CONTROL)
-                    && self.focus == FocusArea::TaskInput
-                {
-                    self.assign_task().await?;
-                }
+                    self.clear_message();
 
-                if self.focus == FocusArea::TaskInput {
-                    match key.code {
-                        KeyCode::Up => self.status_display.prev(),
-                        KeyCode::Down => self.status_display.next(),
-                        _ => {}
-                    }
                     if key.modifiers.contains(KeyModifiers::CONTROL) {
-                        if let KeyCode::Char('o') = key.code {
-                            self.open_role_selector();
+                        match key.code {
+                            KeyCode::Char('c') | KeyCode::Char('q') => {
+                                self.quit();
+                                return Ok(());
+                            }
+                            KeyCode::Char('i') => {
+                                self.help_modal.toggle();
+                                return Ok(());
+                            }
+                            KeyCode::Char('j') => {
+                                self.expert_panel_display.toggle();
+                                if !self.expert_panel_display.is_visible()
+                                    && self.focus == FocusArea::ExpertPanel
+                                {
+                                    self.set_focus(FocusArea::TaskInput);
+                                }
+                                return Ok(());
+                            }
+                            _ => {}
                         }
                     }
-                }
 
-                if key.code == KeyCode::Char('r')
-                    && key.modifiers.contains(KeyModifiers::CONTROL)
-                    && self.focus == FocusArea::TaskInput
-                {
-                    self.reset_expert().await?;
-                }
+                    if self.help_modal.is_visible() {
+                        match key.code {
+                            KeyCode::Enter | KeyCode::Char('q') => {
+                                self.help_modal.hide();
+                            }
+                            _ => {}
+                        }
+                        return Ok(());
+                    }
 
-                if key.code == KeyCode::Char('w')
-                    && key.modifiers.contains(KeyModifiers::CONTROL)
-                    && self.focus == FocusArea::TaskInput
-                {
-                    self.launch_expert_in_worktree().await?;
-                }
+                    if self.report_display.view_mode() == ViewMode::Detail {
+                        match key.code {
+                            KeyCode::Enter | KeyCode::Char('q') => {
+                                self.report_display.close_detail();
+                            }
+                            KeyCode::Up | KeyCode::Char('k') => self.report_display.scroll_up(),
+                            KeyCode::Down | KeyCode::Char('j') => self.report_display.scroll_down(),
+                            _ => {}
+                        }
+                        return Ok(());
+                    }
+
+                    if self.role_selector.is_visible() {
+                        match key.code {
+                            KeyCode::Char('q') => {
+                                self.role_selector.hide();
+                            }
+                            KeyCode::Enter => {
+                                self.confirm_role_selection().await?;
+                            }
+                            KeyCode::Up | KeyCode::Char('k') => self.role_selector.prev(),
+                            KeyCode::Down | KeyCode::Char('j') => self.role_selector.next(),
+                            _ => {}
+                        }
+                        return Ok(());
+                    }
+
+                    match self.focus {
+                        FocusArea::ExpertList => {} // Display only, not selectable
+                        FocusArea::TaskInput => {
+                            self.handle_task_input_keys(key.code, key.modifiers)
+                        }
+                        FocusArea::ExpertPanel => {
+                            self.handle_expert_panel_keys(key.code, key.modifiers)
+                                .await?;
+                            return Ok(());
+                        }
+                        FocusArea::EffortSelector => self.handle_effort_selector_keys(key.code),
+                        FocusArea::ReportList => {
+                            self.handle_report_list_keys(key.code, key.modifiers)
+                        }
+                    }
+
+                    if key.code == KeyCode::Char('t')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                        if key.modifiers.contains(KeyModifiers::SHIFT) {
+                            self.prev_focus();
+                        } else {
+                            self.next_focus();
+                        }
+                    }
+
+                    if key.code == KeyCode::Char('s')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                        && self.focus == FocusArea::TaskInput
+                    {
+                        self.assign_task().await?;
+                    }
+
+                    if self.focus == FocusArea::TaskInput {
+                        match key.code {
+                            KeyCode::Up => self.status_display.prev(),
+                            KeyCode::Down => self.status_display.next(),
+                            _ => {}
+                        }
+                        if key.modifiers.contains(KeyModifiers::CONTROL) {
+                            if let KeyCode::Char('o') = key.code {
+                                self.open_role_selector();
+                            }
+                        }
+                    }
+
+                    if key.code == KeyCode::Char('r')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                        && self.focus == FocusArea::TaskInput
+                    {
+                        self.reset_expert().await?;
+                    }
+
+                    if key.code == KeyCode::Char('w')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                        && self.focus == FocusArea::TaskInput
+                    {
+                        self.launch_expert_in_worktree().await?;
+                    }
                 }
                 _ => {}
             }
@@ -787,9 +809,7 @@ impl TowerApp {
                 match code {
                     KeyCode::Up | KeyCode::Char('k') => self.report_display.scroll_up(),
                     KeyCode::Down | KeyCode::Char('j') => self.report_display.scroll_down(),
-                    KeyCode::Enter | KeyCode::Char('q') => {
-                        self.report_display.close_detail()
-                    }
+                    KeyCode::Enter | KeyCode::Char('q') => self.report_display.close_detail(),
                     _ => {}
                 }
                 if code == KeyCode::Char('q') && modifiers.contains(KeyModifiers::CONTROL) {
@@ -799,7 +819,11 @@ impl TowerApp {
         }
     }
 
-    async fn handle_expert_panel_keys(&mut self, code: KeyCode, modifiers: KeyModifiers) -> Result<()> {
+    async fn handle_expert_panel_keys(
+        &mut self,
+        code: KeyCode,
+        modifiers: KeyModifiers,
+    ) -> Result<()> {
         match code {
             KeyCode::PageUp => {
                 self.expert_panel_display.scroll_up();
@@ -880,8 +904,7 @@ impl TowerApp {
 
         let task_prompt = format!(
             "New task assigned:\n{}\n\nEffort level: {:?}",
-            description,
-            effort_level,
+            description, effort_level,
         );
         self.claude
             .send_keys_with_enter(expert_id, &task_prompt)
@@ -958,18 +981,9 @@ impl TowerApp {
             None
         };
 
-        let working_dir = self
-            .config
-            .project_path
-            .to_str()
-            .unwrap_or(".")
-            .to_string();
+        let working_dir = self.config.project_path.to_str().unwrap_or(".").to_string();
         self.claude
-            .launch_claude(
-                expert_id,
-                &working_dir,
-                instruction_file.as_deref(),
-            )
+            .launch_claude(expert_id, &working_dir, instruction_file.as_deref())
             .await?;
 
         if instruction_result.used_general_fallback {
@@ -1029,7 +1043,10 @@ impl TowerApp {
             .map(|s| s.to_string())
             .unwrap_or_else(|| self.config.get_expert_role(expert_id));
 
-        self.set_message(format!("Resetting {} (role: {})...", expert_name, instruction_role));
+        self.set_message(format!(
+            "Resetting {} (role: {})...",
+            expert_name, instruction_role
+        ));
 
         self.claude.send_exit(expert_id).await?;
         tokio::time::sleep(Duration::from_secs(3)).await;
@@ -1056,18 +1073,9 @@ impl TowerApp {
             None
         };
 
-        let working_dir = self
-            .config
-            .project_path
-            .to_str()
-            .unwrap_or(".")
-            .to_string();
+        let working_dir = self.config.project_path.to_str().unwrap_or(".").to_string();
         self.claude
-            .launch_claude(
-                expert_id,
-                &working_dir,
-                instruction_file.as_deref(),
-            )
+            .launch_claude(expert_id, &working_dir, instruction_file.as_deref())
             .await?;
 
         if instruction_result.used_general_fallback {
@@ -1089,7 +1097,9 @@ impl TowerApp {
 
         let feature_input = self.task_input.content().trim().to_string();
         if feature_input.is_empty() {
-            self.set_message("Enter a feature name in the task input before launching worktree".to_string());
+            self.set_message(
+                "Enter a feature name in the task input before launching worktree".to_string(),
+            );
             return Ok(());
         }
 
@@ -1140,24 +1150,23 @@ impl TowerApp {
 
             let worktree_path = worktree_manager.create_worktree(&branch_clone).await?;
 
-            worktree_manager
-                .setup_macot_symlink(&worktree_path)
-                .await?;
+            worktree_manager.setup_macot_symlink(&worktree_path).await?;
 
             let wt_path_str = worktree_path
                 .to_str()
-                .ok_or_else(|| anyhow::anyhow!("Worktree path contains non-UTF8 characters: {:?}", worktree_path))?
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Worktree path contains non-UTF8 characters: {:?}",
+                        worktree_path
+                    )
+                })?
                 .to_string();
 
             let mut expert_ctx = context_store
                 .load_expert_context(&session_hash, expert_id)
                 .await?
                 .unwrap_or_else(|| {
-                    ExpertContext::new(
-                        expert_id,
-                        expert_name_clone.clone(),
-                        session_hash.clone(),
-                    )
+                    ExpertContext::new(expert_id, expert_name_clone.clone(), session_hash.clone())
                 });
             expert_ctx.clear_session();
             expert_ctx.set_worktree(branch_clone.clone(), wt_path_str.clone());
@@ -1182,11 +1191,7 @@ impl TowerApp {
             };
 
             claude
-                .launch_claude(
-                    expert_id,
-                    &wt_path_str,
-                    instruction_file.as_deref(),
-                )
+                .launch_claude(expert_id, &wt_path_str, instruction_file.as_deref())
                 .await?;
 
             let ready = claude.wait_for_ready(expert_id, ready_timeout).await?;
@@ -1574,11 +1579,19 @@ mod tests {
         assert_eq!(app.focus(), FocusArea::TaskInput);
 
         app.next_focus();
-        assert_eq!(app.focus(), FocusArea::EffortSelector, "should skip ExpertPanel when hidden");
+        assert_eq!(
+            app.focus(),
+            FocusArea::EffortSelector,
+            "should skip ExpertPanel when hidden"
+        );
         app.next_focus();
         assert_eq!(app.focus(), FocusArea::ReportList);
         app.next_focus();
-        assert_eq!(app.focus(), FocusArea::TaskInput, "full cycle should return to start");
+        assert_eq!(
+            app.focus(),
+            FocusArea::TaskInput,
+            "full cycle should return to start"
+        );
     }
 
     #[test]
@@ -1588,13 +1601,21 @@ mod tests {
         assert_eq!(app.focus(), FocusArea::TaskInput);
 
         app.next_focus();
-        assert_eq!(app.focus(), FocusArea::ExpertPanel, "should visit ExpertPanel when visible");
+        assert_eq!(
+            app.focus(),
+            FocusArea::ExpertPanel,
+            "should visit ExpertPanel when visible"
+        );
         app.next_focus();
         assert_eq!(app.focus(), FocusArea::EffortSelector);
         app.next_focus();
         assert_eq!(app.focus(), FocusArea::ReportList);
         app.next_focus();
-        assert_eq!(app.focus(), FocusArea::TaskInput, "full cycle should return to start");
+        assert_eq!(
+            app.focus(),
+            FocusArea::TaskInput,
+            "full cycle should return to start"
+        );
     }
 
     #[test]
@@ -1608,9 +1629,17 @@ mod tests {
         app.prev_focus();
         assert_eq!(app.focus(), FocusArea::EffortSelector);
         app.prev_focus();
-        assert_eq!(app.focus(), FocusArea::ExpertPanel, "should visit ExpertPanel in reverse");
+        assert_eq!(
+            app.focus(),
+            FocusArea::ExpertPanel,
+            "should visit ExpertPanel in reverse"
+        );
         app.prev_focus();
-        assert_eq!(app.focus(), FocusArea::TaskInput, "full reverse cycle should return to start");
+        assert_eq!(
+            app.focus(),
+            FocusArea::TaskInput,
+            "full reverse cycle should return to start"
+        );
     }
 
     #[test]
@@ -1624,7 +1653,11 @@ mod tests {
         app.prev_focus();
         assert_eq!(app.focus(), FocusArea::EffortSelector);
         app.prev_focus();
-        assert_eq!(app.focus(), FocusArea::TaskInput, "should skip ExpertPanel when hidden");
+        assert_eq!(
+            app.focus(),
+            FocusArea::TaskInput,
+            "should skip ExpertPanel when hidden"
+        );
     }
 
     #[test]
@@ -1639,7 +1672,11 @@ mod tests {
         if app.focus() == FocusArea::ExpertPanel {
             app.set_focus(FocusArea::TaskInput);
         }
-        assert_eq!(app.focus(), FocusArea::TaskInput, "hiding panel while focused should move focus to TaskInput");
+        assert_eq!(
+            app.focus(),
+            FocusArea::TaskInput,
+            "hiding panel while focused should move focus to TaskInput"
+        );
     }
 
     #[test]
@@ -1656,7 +1693,11 @@ mod tests {
 
         // Click at (0,0) — inside expert_list (display-only) and expert_panel zero rect
         app.handle_mouse_click(0, 0);
-        assert_ne!(app.focus(), FocusArea::ExpertPanel, "click should not match zero expert_panel rect");
+        assert_ne!(
+            app.focus(),
+            FocusArea::ExpertPanel,
+            "click should not match zero expert_panel rect"
+        );
     }
 
     #[test]
@@ -1672,7 +1713,11 @@ mod tests {
         });
 
         app.handle_mouse_click(50, 25);
-        assert_eq!(app.focus(), FocusArea::ExpertPanel, "click in expert panel area should set focus");
+        assert_eq!(
+            app.focus(),
+            FocusArea::ExpertPanel,
+            "click in expert panel area should set focus"
+        );
     }
 
     #[test]
@@ -1700,7 +1745,11 @@ mod tests {
             "visible panel: focus cycle should include ExpertPanel, got: {:?}",
             visited
         );
-        assert_eq!(visited.len(), 4, "visible panel: focus cycle should have 4 stops");
+        assert_eq!(
+            visited.len(),
+            4,
+            "visible panel: focus cycle should have 4 stops"
+        );
 
         // Toggle off — panel becomes hidden
         app.expert_panel_display.toggle();
@@ -1720,7 +1769,11 @@ mod tests {
             !visited.contains(&FocusArea::ExpertPanel),
             "hidden panel: focus cycle should NOT include ExpertPanel"
         );
-        assert_eq!(visited.len(), 3, "hidden panel: focus cycle should have 3 stops");
+        assert_eq!(
+            visited.len(),
+            3,
+            "hidden panel: focus cycle should have 3 stops"
+        );
     }
 
     #[test]
@@ -1729,10 +1782,16 @@ mod tests {
         app.expert_panel_display.show();
 
         app.set_focus(FocusArea::ExpertPanel);
-        assert!(app.expert_panel_display.is_focused(), "expert panel should be focused");
+        assert!(
+            app.expert_panel_display.is_focused(),
+            "expert panel should be focused"
+        );
 
         app.set_focus(FocusArea::TaskInput);
-        assert!(!app.expert_panel_display.is_focused(), "expert panel should lose focus");
+        assert!(
+            !app.expert_panel_display.is_focused(),
+            "expert panel should lose focus"
+        );
     }
 
     #[test]

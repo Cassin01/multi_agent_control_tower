@@ -40,11 +40,11 @@ pub fn render_template(
 }
 
 /// Load instruction with separate paths for core and role instructions.
-/// 
+///
 /// - `core_path`: Project's instructions folder (for core.md and templates)
 /// - `role_instructions_path`: User's config folder (~/.config/macot/instructions/)
 /// - `role_name`: The role to load instructions for
-/// 
+///
 /// Fallback chain for role instructions:
 /// 1. User custom: role_instructions_path/{role}.md
 /// 2. Embedded default for the requested role
@@ -94,10 +94,7 @@ pub fn load_instruction_with_template(
 
 /// Load role instruction with fallback chain.
 /// Returns (content, used_general_fallback)
-fn load_role_instruction(
-    role_instructions_path: &Path,
-    role_name: &str,
-) -> (String, bool) {
+fn load_role_instruction(role_instructions_path: &Path, role_name: &str) -> (String, bool) {
     // 1. Try user custom instruction
     let user_path = role_instructions_path.join(format!("{}.md", role_name));
     if user_path.exists() {

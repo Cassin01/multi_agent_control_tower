@@ -9,7 +9,9 @@ pub enum MessageStatus {
     #[default]
     Pending,
     Delivering,
-    Failed { reason: String },
+    Failed {
+        reason: String,
+    },
     Expired,
 }
 

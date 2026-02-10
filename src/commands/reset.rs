@@ -157,11 +157,7 @@ async fn reset_expert(
 
     println!("  Restarting Claude...");
     claude
-        .launch_claude(
-            expert_id,
-            &project_path,
-            instruction_file.as_deref(),
-        )
+        .launch_claude(expert_id, &project_path, instruction_file.as_deref())
         .await?;
 
     println!("Expert {} reset complete.", expert_id);

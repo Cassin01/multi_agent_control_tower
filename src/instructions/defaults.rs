@@ -23,7 +23,14 @@ pub fn get_default(role: &str) -> Option<&'static str> {
 
 /// List of all default role names.
 pub fn default_role_names() -> &'static [&'static str] {
-    &["architect", "backend", "frontend", "general", "planner", "tester"]
+    &[
+        "architect",
+        "backend",
+        "frontend",
+        "general",
+        "planner",
+        "tester",
+    ]
 }
 
 #[cfg(test)]

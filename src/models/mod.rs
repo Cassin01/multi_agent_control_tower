@@ -9,8 +9,8 @@ pub use effort::{EffortConfig, EffortLevel};
 pub use expert::{ExpertInfo, ExpertState, Role};
 #[allow(unused_imports)]
 pub use message::{
-    Message, MessageContent, MessageId, MessagePriority, MessageRecipient, MessageType,
-    ExpertId, MAX_DELIVERY_ATTEMPTS, DEFAULT_MESSAGE_TTL_SECS,
+    ExpertId, Message, MessageContent, MessageId, MessagePriority, MessageRecipient, MessageType,
+    DEFAULT_MESSAGE_TTL_SECS, MAX_DELIVERY_ATTEMPTS,
 };
 #[allow(unused_imports)]
 pub use queued_message::{MessageStatus, QueuedMessage};

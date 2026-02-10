@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use thiserror::Error;
 
-use crate::models::{ExpertInfo, ExpertState, Role, ExpertId};
+use crate::models::{ExpertId, ExpertInfo, ExpertState, Role};
 
 /// Sentinel value indicating the registry should auto-assign an ID.
 /// Pass this as the `id` field in `ExpertInfo::new` when the caller does
@@ -12,16 +12,16 @@ pub const AUTO_ASSIGN_ID: ExpertId = u32::MAX;
 pub enum RegistryError {
     #[error("Expert not found: {0}")]
     ExpertNotFound(ExpertId),
-    
+
     #[error("Expert name already exists: {0}")]
     DuplicateName(String),
-    
+
     #[error("Invalid expert state transition from {from:?} to {to:?}")]
     InvalidStateTransition { from: ExpertState, to: ExpertState },
 }
 
 /// Registry for tracking expert states and capabilities
-/// 
+///
 /// The ExpertRegistry maintains a centralized view of all experts in the system,
 /// providing efficient lookups by ID, name, and role. It tracks expert states
 /// to support non-blocking message delivery and role-based recipient targeting.
@@ -29,13 +29,13 @@ pub enum RegistryError {
 pub struct ExpertRegistry {
     /// Primary storage of expert information indexed by ID
     experts: HashMap<ExpertId, ExpertInfo>,
-    
+
     /// Fast lookup from expert name to ID
     name_to_id: HashMap<String, ExpertId>,
-    
+
     /// Fast lookup from role to list of expert IDs
     role_to_ids: HashMap<Role, Vec<ExpertId>>,
-    
+
     /// Next available expert ID for registration
     next_id: ExpertId,
 }
@@ -52,10 +52,13 @@ impl ExpertRegistry {
     }
 
     /// Register a new expert in the registry
-    /// 
+    ///
     /// Returns the assigned expert ID. Expert names must be unique.
     /// The expert is initially registered in Offline state.
-    pub fn register_expert(&mut self, mut expert_info: ExpertInfo) -> Result<ExpertId, RegistryError> {
+    pub fn register_expert(
+        &mut self,
+        mut expert_info: ExpertInfo,
+    ) -> Result<ExpertId, RegistryError> {
         // Check for duplicate names
         if self.name_to_id.contains_key(&expert_info.name) {
             return Err(RegistryError::DuplicateName(expert_info.name.clone()));
@@ -83,24 +86,27 @@ impl ExpertRegistry {
         self.name_to_id.insert(name, expert_id);
 
         // Add to role lookup
-        self.role_to_ids
-            .entry(role)
-            .or_default()
-            .push(expert_id);
+        self.role_to_ids.entry(role).or_default().push(expert_id);
 
         Ok(expert_id)
     }
 
     /// Update the state of an expert
-    /// 
+    ///
     /// This method updates the expert's state and last activity timestamp.
     /// State transitions are validated to ensure consistency.
-    pub fn update_expert_state(&mut self, expert_id: ExpertId, new_state: ExpertState) -> Result<(), RegistryError> {
+    pub fn update_expert_state(
+        &mut self,
+        expert_id: ExpertId,
+        new_state: ExpertState,
+    ) -> Result<(), RegistryError> {
         // First check if expert exists and get current state
-        let current_state = self.experts
+        let current_state = self
+            .experts
             .get(&expert_id)
             .ok_or(RegistryError::ExpertNotFound(expert_id))?
-            .state.clone();
+            .state
+            .clone();
 
         // Validate state transition (basic validation - can be extended)
         if !self.is_valid_state_transition(&current_state, &new_state) {
@@ -111,7 +117,8 @@ impl ExpertRegistry {
         }
 
         // Now update the state
-        let expert = self.experts
+        let expert = self
+            .experts
             .get_mut(&expert_id)
             .ok_or(RegistryError::ExpertNotFound(expert_id))?;
 
@@ -139,10 +146,7 @@ impl ExpertRegistry {
     /// Find all expert IDs with the specified role
     #[allow(dead_code)]
     pub fn find_by_role(&self, role: &Role) -> Vec<ExpertId> {
-        self.role_to_ids
-            .get(role)
-            .cloned()
-            .unwrap_or_default()
+        self.role_to_ids.get(role).cloned().unwrap_or_default()
     }
 
     /// Find all expert IDs with a role matching the given string
@@ -163,13 +167,15 @@ impl ExpertRegistry {
     pub fn get_idle_experts(&self) -> Vec<ExpertId> {
         self.experts
             .iter()
-            .filter_map(|(&id, expert)| {
-                if expert.is_idle() {
-                    Some(id)
-                } else {
-                    None
-                }
-            })
+            .filter_map(
+                |(&id, expert)| {
+                    if expert.is_idle() {
+                        Some(id)
+                    } else {
+                        None
+                    }
+                },
+            )
             .collect()
     }
 
@@ -204,9 +210,7 @@ impl ExpertRegistry {
 
     /// Check if a specific expert is idle
     pub fn is_expert_idle(&self, expert_id: ExpertId) -> Option<bool> {
-        self.experts
-            .get(&expert_id)
-            .map(|expert| expert.is_idle())
+        self.experts.get(&expert_id).map(|expert| expert.is_idle())
     }
 
     /// Get expert information by ID
@@ -264,7 +268,7 @@ impl ExpertRegistry {
     }
 
     /// Validate if a state transition is allowed
-    /// 
+    ///
     /// Currently allows all transitions, but can be extended with business logic
     fn is_valid_state_transition(&self, _from: &ExpertState, _to: &ExpertState) -> bool {
         // For now, allow all state transitions
@@ -348,15 +352,28 @@ mod tests {
         let expert_id = registry.register_expert(expert).unwrap();
 
         // Initially offline
-        assert_eq!(registry.get_expert(expert_id).unwrap().state, ExpertState::Offline);
+        assert_eq!(
+            registry.get_expert(expert_id).unwrap().state,
+            ExpertState::Offline
+        );
 
         // Update to idle
-        registry.update_expert_state(expert_id, ExpertState::Idle).unwrap();
-        assert_eq!(registry.get_expert(expert_id).unwrap().state, ExpertState::Idle);
+        registry
+            .update_expert_state(expert_id, ExpertState::Idle)
+            .unwrap();
+        assert_eq!(
+            registry.get_expert(expert_id).unwrap().state,
+            ExpertState::Idle
+        );
 
         // Update to busy
-        registry.update_expert_state(expert_id, ExpertState::Busy).unwrap();
-        assert_eq!(registry.get_expert(expert_id).unwrap().state, ExpertState::Busy);
+        registry
+            .update_expert_state(expert_id, ExpertState::Busy)
+            .unwrap();
+        assert_eq!(
+            registry.get_expert(expert_id).unwrap().state,
+            ExpertState::Busy
+        );
     }
 
     #[test]
@@ -381,7 +398,7 @@ mod tests {
     #[test]
     fn find_by_role_returns_all_matching_experts() {
         let mut registry = ExpertRegistry::new();
-        
+
         let dev1 = create_test_expert("dev1", Role::Developer);
         let dev2 = create_test_expert("dev2", Role::Developer);
         let analyst = create_test_expert("analyst1", Role::Analyst);
@@ -402,7 +419,7 @@ mod tests {
     #[test]
     fn find_by_role_str_matches_role_strings() {
         let mut registry = ExpertRegistry::new();
-        
+
         let dev = create_test_expert("dev", Role::Developer);
         let specialist = create_test_expert("spec", Role::specialist("backend"));
 
@@ -422,7 +439,7 @@ mod tests {
     #[test]
     fn get_idle_experts_filters_by_state() {
         let mut registry = ExpertRegistry::new();
-        
+
         let expert1 = create_test_expert("expert1", Role::Developer);
         let expert2 = create_test_expert("expert2", Role::Analyst);
         let expert3 = create_test_expert("expert3", Role::Reviewer);
@@ -435,9 +452,15 @@ mod tests {
         assert!(registry.get_idle_experts().is_empty());
 
         // Set some to idle
-        registry.update_expert_state(id1, ExpertState::Idle).unwrap();
-        registry.update_expert_state(id2, ExpertState::Idle).unwrap();
-        registry.update_expert_state(id3, ExpertState::Busy).unwrap();
+        registry
+            .update_expert_state(id1, ExpertState::Idle)
+            .unwrap();
+        registry
+            .update_expert_state(id2, ExpertState::Idle)
+            .unwrap();
+        registry
+            .update_expert_state(id3, ExpertState::Busy)
+            .unwrap();
 
         let idle_experts = registry.get_idle_experts();
         assert_eq!(idle_experts.len(), 2);
@@ -449,7 +472,7 @@ mod tests {
     #[test]
     fn get_idle_experts_by_role_filters_by_role_and_state() {
         let mut registry = ExpertRegistry::new();
-        
+
         let dev1 = create_test_expert("dev1", Role::Developer);
         let dev2 = create_test_expert("dev2", Role::Developer);
         let analyst = create_test_expert("analyst", Role::Analyst);
@@ -459,9 +482,15 @@ mod tests {
         let analyst_id = registry.register_expert(analyst).unwrap();
 
         // Set states
-        registry.update_expert_state(dev1_id, ExpertState::Idle).unwrap();
-        registry.update_expert_state(dev2_id, ExpertState::Busy).unwrap();
-        registry.update_expert_state(analyst_id, ExpertState::Idle).unwrap();
+        registry
+            .update_expert_state(dev1_id, ExpertState::Idle)
+            .unwrap();
+        registry
+            .update_expert_state(dev2_id, ExpertState::Busy)
+            .unwrap();
+        registry
+            .update_expert_state(analyst_id, ExpertState::Idle)
+            .unwrap();
 
         let idle_developers = registry.get_idle_experts_by_role(&Role::Developer);
         assert_eq!(idle_developers, vec![dev1_id]);
@@ -473,7 +502,7 @@ mod tests {
     #[test]
     fn get_idle_experts_by_role_str_filters_by_role_string_and_state() {
         let mut registry = ExpertRegistry::new();
-        
+
         let dev = create_test_expert("dev", Role::Developer);
         let backend_spec = create_test_expert("backend", Role::specialist("backend"));
 
@@ -481,8 +510,12 @@ mod tests {
         let backend_id = registry.register_expert(backend_spec).unwrap();
 
         // Set to idle
-        registry.update_expert_state(dev_id, ExpertState::Idle).unwrap();
-        registry.update_expert_state(backend_id, ExpertState::Idle).unwrap();
+        registry
+            .update_expert_state(dev_id, ExpertState::Idle)
+            .unwrap();
+        registry
+            .update_expert_state(backend_id, ExpertState::Idle)
+            .unwrap();
 
         let idle_developers = registry.get_idle_experts_by_role_str("developer");
         assert_eq!(idle_developers, vec![dev_id]);
@@ -501,11 +534,15 @@ mod tests {
         assert_eq!(registry.is_expert_idle(expert_id), Some(false));
 
         // Set to idle
-        registry.update_expert_state(expert_id, ExpertState::Idle).unwrap();
+        registry
+            .update_expert_state(expert_id, ExpertState::Idle)
+            .unwrap();
         assert_eq!(registry.is_expert_idle(expert_id), Some(true));
 
         // Set to busy
-        registry.update_expert_state(expert_id, ExpertState::Busy).unwrap();
+        registry
+            .update_expert_state(expert_id, ExpertState::Busy)
+            .unwrap();
         assert_eq!(registry.is_expert_idle(expert_id), Some(false));
 
         // Nonexistent expert
@@ -545,7 +582,7 @@ mod tests {
     #[test]
     fn get_all_experts_returns_all_registered() {
         let mut registry = ExpertRegistry::new();
-        
+
         let expert1 = create_test_expert("expert1", Role::Developer);
         let expert2 = create_test_expert("expert2", Role::Analyst);
 
@@ -554,7 +591,7 @@ mod tests {
 
         let all_experts = registry.get_all_experts();
         assert_eq!(all_experts.len(), 2);
-        
+
         let names: Vec<&str> = all_experts.iter().map(|e| e.name.as_str()).collect();
         assert!(names.contains(&"expert1"));
         assert!(names.contains(&"expert2"));
@@ -598,9 +635,10 @@ mod property_tests {
             arbitrary_role(),
             "[a-zA-Z0-9-]{1,20}",
             "[0-9]{1,2}",
-        ).prop_map(|(name, role, session, window)| {
-            ExpertInfo::new(AUTO_ASSIGN_ID, name, role, session, window)
-        })
+        )
+            .prop_map(|(name, role, session, window)| {
+                ExpertInfo::new(AUTO_ASSIGN_ID, name, role, session, window)
+            })
     }
 
     // Feature: inter-expert-messaging, Property 9: Expert State Tracking
@@ -628,14 +666,14 @@ mod property_tests {
             for (expert_index, new_state) in state_changes {
                 if expert_index < expert_ids.len() {
                     let expert_id = expert_ids[expert_index];
-                    
+
                     // Update the expert state
                     registry.update_expert_state(expert_id, new_state.clone()).unwrap();
-                    
+
                     // Verify the state was accurately tracked
                     let expert_info = registry.get_expert(expert_id).unwrap();
                     assert_eq!(expert_info.state, new_state);
-                    
+
                     // Verify state-based queries return correct information
                     match new_state {
                         ExpertState::Idle => {
@@ -647,17 +685,17 @@ mod property_tests {
                             assert!(!registry.get_idle_experts().contains(&expert_id));
                         }
                     }
-                    
+
                     // Verify role-based idle queries work correctly
                     let expert_role = &expert_info.role;
                     let idle_experts_by_role = registry.get_idle_experts_by_role(expert_role);
-                    
+
                     if new_state == ExpertState::Idle {
                         assert!(idle_experts_by_role.contains(&expert_id));
                     } else {
                         assert!(!idle_experts_by_role.contains(&expert_id));
                     }
-                    
+
                     // Verify last activity timestamp was updated
                     let current_time = chrono::Utc::now();
                     let time_diff = current_time.signed_duration_since(expert_info.last_activity);
@@ -687,18 +725,18 @@ mod property_tests {
                 let expert_info = registry.get_expert(expert_id).unwrap();
                 let is_idle_direct = registry.is_expert_idle(expert_id).unwrap();
                 let is_idle_computed = expert_info.is_idle();
-                
+
                 // Direct query and computed state should match
                 assert_eq!(is_idle_direct, is_idle_computed);
-                
+
                 // Idle experts list should be consistent
                 let idle_experts = registry.get_idle_experts();
                 assert_eq!(idle_experts.contains(&expert_id), is_idle_direct);
-                
+
                 // Role-based idle lookup should be consistent
                 let idle_by_role = registry.get_idle_experts_by_role(&expert_info.role);
                 assert_eq!(idle_by_role.contains(&expert_id), is_idle_direct);
-                
+
                 // String-based role lookup should be consistent
                 let idle_by_role_str = registry.get_idle_experts_by_role_str(expert_info.role.as_str());
                 assert_eq!(idle_by_role_str.contains(&expert_id), is_idle_direct);
@@ -712,21 +750,21 @@ mod property_tests {
         ) {
             let mut registry = ExpertRegistry::new();
             let expert_id = registry.register_expert(expert).unwrap();
-            
+
             // Test that state information supports delivery decisions
             for state in state_sequence {
                 registry.update_expert_state(expert_id, state.clone()).unwrap();
-                
+
                 // Message router should be able to determine delivery eligibility
                 let can_deliver = registry.is_expert_idle(expert_id).unwrap();
                 let expected_can_deliver = matches!(state, ExpertState::Idle);
-                
+
                 assert_eq!(can_deliver, expected_can_deliver);
-                
+
                 // Role-based delivery targeting should work correctly
                 let expert_info = registry.get_expert(expert_id).unwrap();
                 let idle_experts_for_role = registry.get_idle_experts_by_role(&expert_info.role);
-                
+
                 if expected_can_deliver {
                     assert!(idle_experts_for_role.contains(&expert_id));
                 } else {
