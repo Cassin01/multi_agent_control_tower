@@ -122,8 +122,8 @@ Terminal (W × H)
    → stored in last_render_size
     ↓
 ④ ExpertPanelDisplay::preview_size()
-   preview_width  = inner_width - PREVIEW_WIDTH_MARGIN (1)
-   preview_height = inner_height
+   preview_width  = inner_width  - PREVIEW_WIDTH_MARGIN  (1)
+   preview_height = inner_height - PREVIEW_HEIGHT_MARGIN (0)
     ↓
 ⑤ poll_expert_panel()
    if size_changed: resize ALL expert panes (mirrors SetSessionPreviewSize())
@@ -177,8 +177,8 @@ Terminal (W × H)
 ┌─────────────────────────────────────────────────────────────────┐
 │              ExpertPanelDisplay::preview_size()    [NEW]          │
 │                                                                  │
-│   preview_width  = inner_width - PREVIEW_WIDTH_MARGIN (1)        │
-│   preview_height = inner_height                                  │
+│   preview_width  = inner_width  - PREVIEW_WIDTH_MARGIN  (1)      │
+│   preview_height = inner_height - PREVIEW_HEIGHT_MARGIN (0)      │
 └───────────────────────────┬─────────────────────────────────────┘
                             │
                             ▼
@@ -223,6 +223,7 @@ Terminal (W × H)
 | `Borders::ALL` width | 2 total | `expert_panel_display.rs` | Left + right border |
 | `Borders::ALL` height | 2 total | `expert_panel_display.rs` | Top + bottom border |
 | `PREVIEW_WIDTH_MARGIN` | 1 | `expert_panel_display.rs` | Safety margin for edge cases |
+| `PREVIEW_HEIGHT_MARGIN` | 0 | `expert_panel_display.rs` | Height margin (reserved for future use) |
 
 ### Why PREVIEW_WIDTH_MARGIN = 1
 
@@ -434,22 +435,6 @@ If users experience wrapping issues, `PREVIEW_WIDTH_MARGIN` could be made config
 # macot.yaml
 ui:
   preview_width_margin: 1  # default
-```
-
-### Vertical Padding
-
-Add height margin for a potential truncation indicator (like claude-squad's `"..."` line):
-
-```rust
-const PREVIEW_HEIGHT_MARGIN: u16 = 0;  // future use
-
-pub fn preview_size(&self) -> (u16, u16) {
-    let (w, h) = self.last_render_size;
-    (
-        w.saturating_sub(PREVIEW_WIDTH_MARGIN),
-        h.saturating_sub(PREVIEW_HEIGHT_MARGIN),
-    )
-}
 ```
 
 ---
