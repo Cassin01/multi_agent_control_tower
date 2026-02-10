@@ -21,60 +21,60 @@ fn check_tmux_status(output: Output, context: &str) -> Result<()> {
     Ok(())
 }
 
-/// Trait for sending keys to and capturing output from tmux panes.
+/// Trait for sending keys to and capturing output from tmux windows.
 /// Extracted to allow mocking in tests.
 #[async_trait::async_trait]
 pub trait TmuxSender: Send + Sync {
-    async fn send_keys(&self, pane_id: u32, keys: &str) -> Result<()>;
-    async fn capture_pane(&self, pane_id: u32) -> Result<String>;
+    async fn send_keys(&self, window_id: u32, keys: &str) -> Result<()>;
+    async fn capture_pane(&self, window_id: u32) -> Result<String>;
 
-    async fn send_keys_with_enter(&self, pane_id: u32, keys: &str) -> Result<()> {
-        self.send_keys(pane_id, "C-u").await?;
-        self.send_keys(pane_id, keys).await?;
-        self.send_keys(pane_id, "Enter").await?;
+    async fn send_keys_with_enter(&self, window_id: u32, keys: &str) -> Result<()> {
+        self.send_keys(window_id, "C-u").await?;
+        self.send_keys(window_id, keys).await?;
+        self.send_keys(window_id, "Enter").await?;
         Ok(())
     }
 
-    async fn capture_pane_with_escapes(&self, pane_id: u32) -> Result<String> {
-        self.capture_pane(pane_id).await
+    async fn capture_pane_with_escapes(&self, window_id: u32) -> Result<String> {
+        self.capture_pane(window_id).await
     }
 
-    async fn resize_pane(&self, _pane_id: u32, _width: u16, _height: u16) -> Result<()> {
+    async fn resize_pane(&self, _window_id: u32, _width: u16, _height: u16) -> Result<()> {
         Ok(())
     }
 }
 
 #[async_trait::async_trait]
 impl TmuxSender for TmuxManager {
-    async fn send_keys(&self, pane_id: u32, keys: &str) -> Result<()> {
+    async fn send_keys(&self, window_id: u32, keys: &str) -> Result<()> {
         let output = Command::new("tmux")
             .args([
                 "send-keys",
                 "-t",
-                &format!("{}:0.{}", self.session_name, pane_id),
+                &format!("{}:{}", self.session_name, window_id),
                 keys,
             ])
             .output()
             .await
-            .context(format!("Failed to send keys to pane {}", pane_id))?;
-        check_tmux_status(output, &format!("send-keys to pane {}", pane_id))
+            .context(format!("Failed to send keys to window {}", window_id))?;
+        check_tmux_status(output, &format!("send-keys to window {}", window_id))
     }
 
-    async fn capture_pane(&self, pane_id: u32) -> Result<String> {
+    async fn capture_pane(&self, window_id: u32) -> Result<String> {
         let output = Command::new("tmux")
             .args([
                 "capture-pane",
                 "-t",
-                &format!("{}:0.{}", self.session_name, pane_id),
+                &format!("{}:{}", self.session_name, window_id),
                 "-p",
             ])
             .output()
             .await
-            .context(format!("Failed to capture pane {}", pane_id))?;
-        check_tmux_output(output, &format!("capture-pane {}", pane_id))
+            .context(format!("Failed to capture window {}", window_id))?;
+        check_tmux_output(output, &format!("capture-pane {}", window_id))
     }
 
-    async fn capture_pane_with_escapes(&self, pane_id: u32) -> Result<String> {
+    async fn capture_pane_with_escapes(&self, window_id: u32) -> Result<String> {
         let output = Command::new("tmux")
             .args([
                 "capture-pane",
@@ -82,23 +82,23 @@ impl TmuxSender for TmuxManager {
                 "-J",
                 "-p",
                 "-t",
-                &format!("{}:0.{}", self.session_name, pane_id),
+                &format!("{}:{}", self.session_name, window_id),
             ])
             .output()
             .await
             .context(format!(
-                "Failed to capture pane {} with escapes",
-                pane_id
+                "Failed to capture window {} with escapes",
+                window_id
             ))?;
-        check_tmux_output(output, &format!("capture-pane-with-escapes {}", pane_id))
+        check_tmux_output(output, &format!("capture-pane-with-escapes {}", window_id))
     }
 
-    async fn resize_pane(&self, pane_id: u32, width: u16, height: u16) -> Result<()> {
+    async fn resize_pane(&self, window_id: u32, width: u16, height: u16) -> Result<()> {
         let output = Command::new("tmux")
             .args([
                 "resize-pane",
                 "-t",
-                &format!("{}:0.{}", self.session_name, pane_id),
+                &format!("{}:{}", self.session_name, window_id),
                 "-x",
                 &width.to_string(),
                 "-y",
@@ -106,8 +106,8 @@ impl TmuxSender for TmuxManager {
             ])
             .output()
             .await
-            .context(format!("Failed to resize pane {}", pane_id))?;
-        check_tmux_status(output, &format!("resize-pane {}", pane_id))
+            .context(format!("Failed to resize window {}", window_id))?;
+        check_tmux_status(output, &format!("resize-pane {}", window_id))
     }
 }
 
@@ -149,7 +149,7 @@ impl TmuxManager {
             .unwrap_or(false)
     }
 
-    pub async fn create_session(&self, num_panes: u32, working_dir: &str) -> Result<()> {
+    pub async fn create_session(&self, num_windows: u32, working_dir: &str) -> Result<()> {
         Command::new("tmux")
             .args([
                 "new-session",
@@ -163,28 +163,18 @@ impl TmuxManager {
             .await
             .context("Failed to create tmux session")?;
 
-        for i in 1..num_panes {
+        for i in 1..num_windows {
             Command::new("tmux")
                 .args([
-                    "split-window",
+                    "new-window",
                     "-t",
-                    &format!("{}:0", self.session_name),
+                    &self.session_name,
                     "-c",
                     working_dir,
                 ])
                 .output()
                 .await
-                .context(format!("Failed to create pane {}", i))?;
-
-            Command::new("tmux")
-                .args([
-                    "select-layout",
-                    "-t",
-                    &format!("{}:0", self.session_name),
-                    "tiled",
-                ])
-                .output()
-                .await?;
+                .context(format!("Failed to create window {}", i))?;
         }
 
         Ok(())
@@ -225,18 +215,18 @@ impl TmuxManager {
         Ok(())
     }
 
-    pub async fn set_pane_title(&self, pane_id: u32, title: &str) -> Result<()> {
+    pub async fn set_pane_title(&self, window_id: u32, title: &str) -> Result<()> {
         Command::new("tmux")
             .args([
                 "select-pane",
                 "-t",
-                &format!("{}:0.{}", self.session_name, pane_id),
+                &format!("{}:{}", self.session_name, window_id),
                 "-T",
                 title,
             ])
             .output()
             .await
-            .context(format!("Failed to set pane title for pane {}", pane_id))?;
+            .context(format!("Failed to set pane title for window {}", window_id))?;
         Ok(())
     }
 
@@ -380,10 +370,10 @@ mod tests {
 
         #[async_trait::async_trait]
         impl TmuxSender for NoopSender {
-            async fn send_keys(&self, _pane_id: u32, _keys: &str) -> Result<()> {
+            async fn send_keys(&self, _window_id: u32, _keys: &str) -> Result<()> {
                 Ok(())
             }
-            async fn capture_pane(&self, _pane_id: u32) -> Result<String> {
+            async fn capture_pane(&self, _window_id: u32) -> Result<String> {
                 Ok(String::new())
             }
         }
@@ -404,11 +394,11 @@ mod tests {
 
     #[async_trait::async_trait]
     impl TmuxSender for MockTmuxSender {
-        async fn send_keys(&self, _pane_id: u32, _keys: &str) -> Result<()> {
+        async fn send_keys(&self, _window_id: u32, _keys: &str) -> Result<()> {
             Ok(())
         }
 
-        async fn capture_pane(&self, _pane_id: u32) -> Result<String> {
+        async fn capture_pane(&self, _window_id: u32) -> Result<String> {
             Ok(self.capture_output.clone())
         }
     }

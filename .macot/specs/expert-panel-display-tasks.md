@@ -55,8 +55,8 @@ The design document defines requirements implicitly through its correctness prop
   - Ensure all tests pass, ask the user if questions arise.
 
 - [x] 5. Extend `TmuxSender` trait with `capture_pane_with_escapes`
-  - Add `capture_pane_with_escapes(&self, pane_id: u32) -> Result<String>` to `TmuxSender` trait in `src/session/tmux.rs` with default implementation that falls back to `capture_pane`
-  - Implement concrete `TmuxManager` version using `tmux capture-pane -e -p -t {session}:0.{pane_id}` (the `-e` flag preserves ANSI escape sequences)
+  - Add `capture_pane_with_escapes(&self, window_id: u32) -> Result<String>` to `TmuxSender` trait in `src/session/tmux.rs` with default implementation that falls back to `capture_pane`
+  - Implement concrete `TmuxManager` version using `tmux capture-pane -e -p -t {session}:{window_id}` (the `-e` flag preserves ANSI escape sequences)
   - _Requirements: P10_
 
   - [x] 5.1 Write test for `capture_pane_with_escapes` default fallback

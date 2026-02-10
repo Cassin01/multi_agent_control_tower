@@ -132,7 +132,7 @@ impl TowerApp {
             };
 
         // Initialize expert registry with configured experts
-        // Expert IDs match config indices (0-based), which also match tmux pane indices
+        // Expert IDs match config indices (0-based), which also match tmux window indices
         let mut expert_registry = ExpertRegistry::new();
         for (i, expert_config) in config.experts.iter().enumerate() {
             let role_name = if expert_config.role.is_empty() {
@@ -483,7 +483,7 @@ impl TowerApp {
                     .resize_pane(expert_id, current_size.0, current_size.1)
                     .await
                 {
-                    tracing::warn!("Failed to resize pane for expert {}: {}", expert_id, e);
+                    tracing::warn!("Failed to resize window for expert {}: {}", expert_id, e);
                 }
                 self.last_panel_size = current_size;
             }
@@ -493,7 +493,7 @@ impl TowerApp {
                     self.expert_panel_display.try_set_content(&raw);
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to capture expert {} pane: {}", expert_id, e);
+                    tracing::warn!("Failed to capture expert {} window: {}", expert_id, e);
                 }
             }
         }

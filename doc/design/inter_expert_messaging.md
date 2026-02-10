@@ -3,7 +3,7 @@
 ## 1. Overview
 
 ### 1.1 Purpose
-Enable message-based communication between experts (Claude instances in tmux panes) through the Control Tower, allowing coordination, task delegation, and knowledge sharing.
+Enable message-based communication between experts (Claude instances in tmux windows) through the Control Tower, allowing coordination, task delegation, and knowledge sharing.
 
 ### 1.2 Current State
 - Message model exists at `src/models/message.rs` with types: Query, Response, Notify, Delegate

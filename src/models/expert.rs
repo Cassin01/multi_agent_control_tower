@@ -87,7 +87,8 @@ pub struct ExpertInfo {
     pub name: String,
     pub role: Role,
     pub tmux_session: String,
-    pub tmux_pane: String,
+    #[serde(alias = "tmux_pane")]
+    pub tmux_window: String,
     pub state: ExpertState,
     pub last_activity: DateTime<Utc>,
 }
@@ -98,14 +99,14 @@ impl ExpertInfo {
         name: String,
         role: Role,
         tmux_session: String,
-        tmux_pane: String,
+        tmux_window: String,
     ) -> Self {
         Self {
             id,
             name,
             role,
             tmux_session,
-            tmux_pane,
+            tmux_window,
             state: ExpertState::default(),
             last_activity: Utc::now(),
         }
@@ -164,7 +165,7 @@ mod tests {
         assert_eq!(expert.name, "architect");
         assert_eq!(expert.role, Role::Analyst);
         assert_eq!(expert.tmux_session, "session-1");
-        assert_eq!(expert.tmux_pane, "0");
+        assert_eq!(expert.tmux_window, "0");
         assert_eq!(expert.state, ExpertState::Offline);
         assert!(expert.is_offline());
     }
