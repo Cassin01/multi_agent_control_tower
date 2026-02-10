@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
 use std::path::PathBuf;
 
@@ -6,7 +6,7 @@ use crate::commands::common;
 use crate::config::Config;
 use crate::context::ContextStore;
 use crate::instructions::{load_instruction_with_template, write_instruction_file};
-use crate::session::{ClaudeManager, TmuxManager};
+use crate::session::{ClaudeManager, ExpertStateDetector, TmuxManager};
 
 #[derive(ClapArgs)]
 pub struct Args {
@@ -103,6 +103,11 @@ async fn reset_expert(
     println!("  Sending /exit to Claude...");
     claude.send_exit(expert_id).await?;
     tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+
+    let detector = ExpertStateDetector::new(config.queue_path.join("status"));
+    detector
+        .set_marker(expert_id, "pending")
+        .context("Failed to reset expert status")?;
 
     if full {
         println!("  Clearing context (full)...");

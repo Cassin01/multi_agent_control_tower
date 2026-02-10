@@ -7,7 +7,7 @@ use crate::config::Config;
 use crate::context::ContextStore;
 use crate::instructions::{load_instruction_with_template, write_instruction_file};
 use crate::queue::QueueManager;
-use crate::session::{ClaudeManager, TmuxManager};
+use crate::session::{ClaudeManager, ExpertStateDetector, TmuxManager};
 
 #[derive(ClapArgs)]
 pub struct Args {
@@ -52,6 +52,13 @@ pub async fn execute(args: Args) -> Result<()> {
 
     let queue = QueueManager::new(config.queue_path.clone());
     queue.init().await.context("Failed to initialize queue")?;
+
+    let detector = ExpertStateDetector::new(config.queue_path.join("status"));
+    for i in 0..config.num_experts() {
+        detector
+            .set_marker(i, "pending")
+            .context("Failed to initialize expert status")?;
+    }
 
     let context_store = ContextStore::new(config.queue_path.clone());
     context_store
