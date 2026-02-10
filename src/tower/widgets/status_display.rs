@@ -130,8 +130,8 @@ impl StatusDisplay {
 
                 let role = self.expert_roles.get(&entry.expert_id);
                 let role_display = match role {
-                    Some(r) => format!("{:<12}", format!(" ({})", r)),
-                    None => format!("{:<12}", ""),
+                    Some(r) => format!("{:<11}", format!("({})", r)),
+                    None => format!("{:<11}", ""),
                 };
 
                 let (report_sym, report_color) =

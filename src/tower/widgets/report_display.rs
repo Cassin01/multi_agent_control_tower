@@ -52,6 +52,16 @@ impl ReportDisplay {
         }
     }
 
+    pub fn open_detail_for_expert(&mut self, expert_id: u32) -> bool {
+        if let Some(report) = self.reports.iter().find(|r| r.expert_id == expert_id).cloned() {
+            self.detail_modal.show(report);
+            self.view_mode = ViewMode::Detail;
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn close_detail(&mut self) {
         self.detail_modal.hide();
         self.view_mode = ViewMode::List;
@@ -304,5 +314,47 @@ mod tests {
         let mut display = ReportDisplay::new();
         display.open_detail();
         assert_eq!(display.view_mode(), ViewMode::List);
+    }
+
+    #[test]
+    fn open_detail_for_expert_opens_matching_report() {
+        let mut display = ReportDisplay::new();
+        display.set_reports(vec![
+            create_test_report(0, "architect", TaskStatus::Done, "First"),
+            create_test_report(1, "frontend", TaskStatus::InProgress, "Second"),
+        ]);
+
+        let result = display.open_detail_for_expert(1);
+        assert!(
+            result,
+            "open_detail_for_expert: should return true when report exists"
+        );
+        assert_eq!(
+            display.view_mode(),
+            ViewMode::Detail,
+            "open_detail_for_expert: should switch to Detail mode"
+        );
+    }
+
+    #[test]
+    fn open_detail_for_expert_returns_false_when_no_report() {
+        let mut display = ReportDisplay::new();
+        display.set_reports(vec![create_test_report(
+            0,
+            "architect",
+            TaskStatus::Done,
+            "First",
+        )]);
+
+        let result = display.open_detail_for_expert(99);
+        assert!(
+            !result,
+            "open_detail_for_expert: should return false when no report exists"
+        );
+        assert_eq!(
+            display.view_mode(),
+            ViewMode::List,
+            "open_detail_for_expert: should remain in List mode"
+        );
     }
 }
