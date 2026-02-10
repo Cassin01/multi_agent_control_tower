@@ -6,7 +6,7 @@ macot spawns a team of specialized Claude agents inside tmux, then gives you a t
 
 ## Features
 
-- **Parallel AI agents** — Run multiple Claude CLI instances simultaneously, each in its own tmux pane
+- **Parallel AI agents** — Run multiple Claude CLI instances simultaneously, each in its own tmux window
 - **Role-based experts** — Assign specialized roles (architect, frontend, backend, tester) with dedicated instruction sets
 - **Terminal UI dashboard** — Monitor agent status, assign tasks, and review reports through a ratatui-powered TUI
 - **Hub-spoke coordination** — All communication flows through the control tower, preventing race conditions between agents

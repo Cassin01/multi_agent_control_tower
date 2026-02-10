@@ -57,8 +57,8 @@ impl<T: TmuxSender> ClaudeManager<T> {
         self.tmux.send_keys_with_enter(expert_id, keys).await
     }
 
-    pub async fn resize_pane(&self, pane_id: u32, width: u16, height: u16) -> Result<()> {
-        self.tmux.resize_pane(pane_id, width, height).await
+    pub async fn resize_pane(&self, window_id: u32, width: u16, height: u16) -> Result<()> {
+        self.tmux.resize_pane(window_id, width, height).await
     }
 
     pub async fn send_exit(&self, expert_id: u32) -> Result<()> {
@@ -130,15 +130,15 @@ mod tests {
 
     #[async_trait::async_trait]
     impl TmuxSender for MockTmuxSender {
-        async fn send_keys(&self, pane_id: u32, keys: &str) -> Result<()> {
+        async fn send_keys(&self, window_id: u32, keys: &str) -> Result<()> {
             self.sent_keys
                 .lock()
                 .unwrap()
-                .push((pane_id, keys.to_string()));
+                .push((window_id, keys.to_string()));
             Ok(())
         }
 
-        async fn capture_pane(&self, _pane_id: u32) -> Result<String> {
+        async fn capture_pane(&self, _window_id: u32) -> Result<String> {
             Ok(self.capture_response.lock().unwrap().clone())
         }
     }
@@ -227,7 +227,7 @@ mod tests {
         let keys = mock.sent_keys();
         assert!(
             keys.iter().any(|(id, k)| *id == 2 && k == "/clear"),
-            "send_clear: should send /clear to correct pane"
+            "send_clear: should send /clear to correct window"
         );
     }
 
@@ -272,7 +272,7 @@ mod tests {
         let manager = create_mock_manager(mock);
 
         let ready = manager.wait_for_ready(0, 2).await.unwrap();
-        assert!(ready, "wait_for_ready: should return true when pane contains 'bypass permissions'");
+        assert!(ready, "wait_for_ready: should return true when window contains 'bypass permissions'");
     }
 
     #[tokio::test]
@@ -281,7 +281,7 @@ mod tests {
         let manager = create_mock_manager(mock);
 
         let ready = manager.wait_for_ready(0, 1).await.unwrap();
-        assert!(!ready, "wait_for_ready: should return false when pane never shows ready prompt");
+        assert!(!ready, "wait_for_ready: should return false when window never shows ready prompt");
     }
 
     #[tokio::test]

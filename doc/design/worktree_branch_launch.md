@@ -2,12 +2,12 @@
 
 ## Overview
 
-Allow launching an expert's Claude instance in a separate git worktree branch via `Ctrl+W` from the Expert selection screen. The expert's tmux pane closes Claude, creates a worktree, moves into it, and relaunches Claude with role initialization. Session data (`.macot/`) remains at the original project location via symlink.
+Allow launching an expert's Claude instance in a separate git worktree branch via `Ctrl+W` from the Expert selection screen. The expert's tmux window closes Claude, creates a worktree, moves into it, and relaunches Claude with role initialization. Session data (`.macot/`) remains at the original project location via symlink.
 
 ## Requirements
 
 1. `Ctrl+W` on Expert selection screen triggers worktree launch for the selected expert
-2. Pane execution sequence: close Claude -> create worktree -> cd -> relaunch Claude -> init role
+2. Window execution sequence: close Claude -> create worktree -> cd -> relaunch Claude -> init role
 3. `.macot` session data stays at original location regardless of which branch an expert works in
 4. Worktrees created at `.macot/worktrees/<branch>/`
 
@@ -35,7 +35,7 @@ project_path/                       Config.with_project_path()
 - `session_hash` is SHA256(project_path) (loader.rs:162-176)
 - `ContextStore` stores all data under `queue_path/sessions/{hash}/` (store.rs:17-22)
 - The tower process always runs from the original project_path
-- Only the expert's tmux pane changes working directory
+- Only the expert's tmux window changes working directory
 
 **Session Isolation**: When launching an expert into a worktree, the existing `claude_session.session_id` must be cleared first. `launch_claude()` (claude.rs:30-38) adds `--resume <session_id>` whenever `ExpertContext.claude_session.session_id` is `Some`. A stale session ID would attempt to resume a session that was started in the original working directory, causing path confusion or outright failure in the new worktree. Calling `ExpertContext::clear_session()` before `launch_claude()` ensures the expert starts a fresh Claude session in the worktree.
 
@@ -317,7 +317,7 @@ pub async fn launch_expert_in_worktree(&mut self) -> Result<()> {
     let ready_timeout = config.timeouts.agent_ready;
 
     let handle = tokio::spawn(async move {
-        // 1. Exit Claude in the pane
+        // 1. Exit Claude in the window
         claude.send_exit(expert_id).await?;
         tokio::time::sleep(Duration::from_secs(3)).await;
 

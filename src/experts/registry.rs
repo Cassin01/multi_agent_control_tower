@@ -598,8 +598,8 @@ mod property_tests {
             arbitrary_role(),
             "[a-zA-Z0-9-]{1,20}",
             "[0-9]{1,2}",
-        ).prop_map(|(name, role, session, pane)| {
-            ExpertInfo::new(AUTO_ASSIGN_ID, name, role, session, pane)
+        ).prop_map(|(name, role, session, window)| {
+            ExpertInfo::new(AUTO_ASSIGN_ID, name, role, session, window)
         })
     }
 

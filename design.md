@@ -55,7 +55,7 @@ The central coordination UI that provides:
 - Report viewing
 
 ### Expert Agents
-Claude CLI instances running in tmux panes:
+Claude CLI instances running in tmux windows:
 - Each expert has a unique ID and name
 - Experts receive tasks directly via the control tower prompt
 - Experts write reports upon task completion
@@ -68,7 +68,7 @@ File-based report exchange:
 ### tmux Session Manager
 Manages the underlying terminal sessions:
 - Session naming: `macot-{hash}` where hash is first 8 chars of SHA256(absolute_project_path)
-- One pane per expert agent
+- One window per expert agent
 - Color-coded prompts for visual distinction
 
 **Session Environment Variables:**
@@ -166,15 +166,15 @@ Initialize the expert session with Claude agents for a specific project.
 1. Resolve `project_path` to absolute path
 2. Generate session name: `{prefix}-{SHA256(absolute_path)[:8]}`
 3. Check if session already exists (error if running)
-4. Create tmux session with N panes
+4. Create tmux session with N windows
 5. Store metadata in tmux environment:
    ```bash
    tmux setenv -t {session} MACOT_PROJECT_PATH {absolute_path}
    tmux setenv -t {session} MACOT_NUM_EXPERTS {num_experts}
    tmux setenv -t {session} MACOT_CREATED_AT {timestamp}
    ```
-6. Set unique prompt colors per pane
-7. Launch Claude CLI in each pane with `--dangerously-skip-permissions`
+6. Set unique prompt colors per window
+7. Launch Claude CLI in each window with `--dangerously-skip-permissions`
 8. Wait for all agents to be ready
 9. Send instruction prompts to each expert
 

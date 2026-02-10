@@ -322,24 +322,24 @@ impl<T: TmuxSender> MessageRouter<T> {
             .get_expert(expert_id)
             .ok_or_else(|| RouterError::ExpertNotFound(expert_id.to_string()))?;
 
-        // Parse pane ID from tmux_pane string
-        let pane_id: u32 = expert_info
-            .tmux_pane
+        // Parse window ID from tmux_window string
+        let window_id: u32 = expert_info
+            .tmux_window
             .parse()
-            .map_err(|e| RouterError::Tmux(format!("Invalid pane ID '{}': {}", expert_info.tmux_pane, e)))?;
+            .map_err(|e| RouterError::Tmux(format!("Invalid window ID '{}': {}", expert_info.tmux_window, e)))?;
 
         // Format message for delivery
         let formatted_message = self.format_message_for_delivery(message, expert_info.name.as_str());
 
         // Send message via tmux
         self.tmux_sender
-            .send_keys_with_enter(pane_id, &formatted_message)
+            .send_keys_with_enter(window_id, &formatted_message)
             .await
-            .map_err(|e| RouterError::Tmux(format!("Failed to send message to pane {}: {}", pane_id, e)))?;
+            .map_err(|e| RouterError::Tmux(format!("Failed to send message to window {}: {}", window_id, e)))?;
 
         debug!(
-            "Delivered message {} to expert {} (pane {})",
-            message.message_id, expert_id, pane_id
+            "Delivered message {} to expert {} (window {})",
+            message.message_id, expert_id, window_id
         );
 
         Ok(())

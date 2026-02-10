@@ -53,7 +53,7 @@ macot start . --config ./custom-config.yaml
 2. Loads configuration (from custom path or default)
 3. Creates a tmux session named `macot-<hash>`
 4. Initializes queue and context storage
-5. Launches Claude CLI in each pane
+5. Launches Claude CLI in each window
 6. Waits for agents to become ready
 7. Sends initial instructions from `instructions/core.md` and `instructions/<expert-name>.md`
 

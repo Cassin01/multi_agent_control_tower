@@ -107,7 +107,7 @@ async fn capture_pane_with_escapes(&self, pane_id: u32) -> Result<String> {
 }
 ```
 
-Concrete `TmuxManager` impl uses `tmux capture-pane -e -p -t {session}:0.{pane_id}` (the `-e` flag preserves ANSI escape sequences).
+Concrete `TmuxManager` impl uses `tmux capture-pane -e -p -t {session}:{window_id}` (the `-e` flag preserves ANSI escape sequences).
 
 ### 3.3 Key Conversion Utility
 
