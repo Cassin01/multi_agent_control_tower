@@ -246,7 +246,7 @@ impl ReportDetailModal {
             Span::raw(": Scroll down  "),
             Span::styled("k/↑", Style::default().fg(Color::Yellow)),
             Span::raw(": Scroll up  "),
-            Span::styled("Esc/Enter/Tab/q", Style::default().fg(Color::Yellow)),
+            Span::styled("Enter/q/Ctrl+X", Style::default().fg(Color::Yellow)),
             Span::raw(": Close"),
         ]));
 

@@ -83,6 +83,7 @@ impl HelpModal {
                 "Ctrl+W",
                 "Launch expert in worktree (uses task input as branch name)",
             ),
+            Self::key_line("Ctrl+X", "View report for selected expert"),
             Self::nested_subsection_title("Cursor Movement"),
             Self::key_line("Ctrl+B / Ctrl+F", "Move cursor left / right"),
             Self::key_line("Ctrl+A / Ctrl+E", "Move to line start / end"),
@@ -111,7 +112,7 @@ impl HelpModal {
             Self::subsection_title("Report Detail"),
             Self::key_line("j / \u{2193}", "Scroll down"),
             Self::key_line("k / \u{2191}", "Scroll up"),
-            Self::key_line("Enter / q", "Close detail"),
+            Self::key_line("Enter / q / Ctrl+X", "Close detail"),
             Line::from(""),
             Line::from(Span::styled(
                 "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",

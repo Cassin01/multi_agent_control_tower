@@ -649,6 +649,11 @@ impl TowerApp {
                             KeyCode::Enter | KeyCode::Char('q') => {
                                 self.report_display.close_detail();
                             }
+                            KeyCode::Char('x')
+                                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            {
+                                self.report_display.close_detail();
+                            }
                             KeyCode::Up | KeyCode::Char('k') => self.report_display.scroll_up(),
                             KeyCode::Down | KeyCode::Char('j') => self.report_display.scroll_down(),
                             _ => {}
@@ -729,6 +734,13 @@ impl TowerApp {
                         && self.focus == FocusArea::TaskInput
                     {
                         self.launch_expert_in_worktree().await?;
+                    }
+
+                    if key.code == KeyCode::Char('x')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                        && self.focus == FocusArea::TaskInput
+                    {
+                        self.open_expert_report();
                     }
                 }
                 _ => {}
@@ -1012,6 +1024,14 @@ impl TowerApp {
                 .to_string();
             let roles = self.available_roles.roles.clone();
             self.role_selector.show(expert_id, &current_role, roles);
+        }
+    }
+
+    fn open_expert_report(&mut self) {
+        if let Some(expert_id) = self.status_display.selected_expert_id() {
+            if !self.report_display.open_detail_for_expert(expert_id) {
+                self.set_message(format!("No report found for expert {}", expert_id));
+            }
         }
     }
 
