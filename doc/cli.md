@@ -192,7 +192,6 @@ macot tower --config ./custom-config.yaml
 The TUI displays:
 - Expert status panel (list of experts with current state)
 - Task input panel (compose and assign tasks)
-- Effort level selector
 
 ---
 

@@ -100,14 +100,14 @@ The design document defines requirements implicitly through its correctness prop
   - _Requirements: P1, P5_
 
 - [x] 10. Update focus cycling to conditionally include `ExpertPanel`
-  - Update `next_focus()`: when panel is visible, cycle `TaskInput → ExpertPanel → EffortSelector → ReportList → TaskInput`; when hidden, skip `ExpertPanel`
+  - Update `next_focus()`: when panel is visible, cycle `TaskInput → ExpertPanel → TaskInput`; when hidden, stay on `TaskInput`
   - Update `prev_focus()`: reverse cycle with same conditional logic
   - Update `update_focus()`: add `self.expert_panel_display.set_focused(self.focus == FocusArea::ExpertPanel)`
   - _Requirements: P2, P3_
 
   - [x] 10.1 Write focus cycling tests
     - `focus_cycle_without_panel_skips_expert_panel` — when panel hidden, N `next_focus()` calls return to start without visiting `ExpertPanel`
-    - `focus_cycle_with_panel_includes_expert_panel` — when panel visible, cycle includes `ExpertPanel` between `TaskInput` and `EffortSelector`
+    - `focus_cycle_with_panel_includes_expert_panel` — when panel visible, cycle includes `ExpertPanel` between `TaskInput` cycles
     - `hiding_panel_while_focused_moves_to_task_input` — hiding while `focus == ExpertPanel` sets focus to `TaskInput`
     - Property test: focus cycle roundtrip for arbitrary panel visibility
     - **Property P3: Focus Cycle Completeness**

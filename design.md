@@ -300,8 +300,7 @@ multi_agent_control_tower/
 │   │   ├── expert.rs
 │   │   ├── message.rs
 │   │   ├── queued_message.rs
-│   │   ├── report.rs
-│   │   └── effort.rs
+│   │   └── report.rs
 │   ├── experts/
 │   │   └── registry.rs
 │   ├── instructions/
