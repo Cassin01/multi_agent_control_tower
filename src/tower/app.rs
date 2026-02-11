@@ -571,22 +571,6 @@ impl TowerApp {
         self.update_focus();
     }
 
-    pub fn prev_focus(&mut self) {
-        let panel_visible = self.expert_panel_display.is_visible();
-        self.focus = match self.focus {
-            FocusArea::ExpertList => FocusArea::TaskInput,
-            FocusArea::TaskInput => {
-                if panel_visible {
-                    FocusArea::ExpertPanel
-                } else {
-                    FocusArea::TaskInput
-                }
-            }
-            FocusArea::ExpertPanel => FocusArea::TaskInput,
-        };
-        self.update_focus();
-    }
-
     pub async fn handle_events(&mut self) -> Result<()> {
         if event::poll(Duration::from_millis(1))? {
             match event::read()? {
@@ -697,11 +681,7 @@ impl TowerApp {
                     if key.code == KeyCode::Char('t')
                         && key.modifiers.contains(KeyModifiers::CONTROL)
                     {
-                        if key.modifiers.contains(KeyModifiers::SHIFT) {
-                            self.prev_focus();
-                        } else {
-                            self.next_focus();
-                        }
+                        self.next_focus();
                     }
 
                     if key.code == KeyCode::Char('s')
@@ -1462,7 +1442,7 @@ mod tests {
         app.next_focus();
         assert_eq!(app.focus(), FocusArea::TaskInput);
 
-        app.prev_focus();
+        app.next_focus();
         assert_eq!(app.focus(), FocusArea::TaskInput);
     }
 
@@ -1562,40 +1542,6 @@ mod tests {
             app.focus(),
             FocusArea::TaskInput,
             "full cycle should return to start"
-        );
-    }
-
-    #[test]
-    fn focus_cycle_backwards_with_panel() {
-        let mut app = create_test_app();
-        app.expert_panel_display.show();
-        assert_eq!(app.focus(), FocusArea::TaskInput);
-
-        app.prev_focus();
-        assert_eq!(
-            app.focus(),
-            FocusArea::ExpertPanel,
-            "should visit ExpertPanel in reverse"
-        );
-        app.prev_focus();
-        assert_eq!(
-            app.focus(),
-            FocusArea::TaskInput,
-            "full reverse cycle should return to start"
-        );
-    }
-
-    #[test]
-    fn focus_cycle_backwards_without_panel_stays_on_task_input() {
-        let mut app = create_test_app();
-        assert!(!app.expert_panel_display.is_visible());
-        assert_eq!(app.focus(), FocusArea::TaskInput);
-
-        app.prev_focus();
-        assert_eq!(
-            app.focus(),
-            FocusArea::TaskInput,
-            "should stay on TaskInput when panel hidden"
         );
     }
 
