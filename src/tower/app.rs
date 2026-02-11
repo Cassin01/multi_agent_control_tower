@@ -865,9 +865,8 @@ impl TowerApp {
             });
         self.context_store.save_expert_context(&expert_ctx).await?;
 
-        let task_prompt = format!("New task assigned:\n{}", description);
         self.claude
-            .send_keys_with_enter(expert_id, &task_prompt)
+            .send_keys_with_enter(expert_id, &description)
             .await?;
 
         self.task_input.clear();
