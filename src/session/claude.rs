@@ -53,6 +53,10 @@ impl<T: TmuxSender> ClaudeManager<T> {
         self.tmux.capture_pane_with_escapes(expert_id).await
     }
 
+    pub async fn capture_full_history(&self, expert_id: u32) -> Result<String> {
+        self.tmux.capture_full_history(expert_id).await
+    }
+
     pub async fn send_keys_with_enter(&self, expert_id: u32, keys: &str) -> Result<()> {
         self.tmux.send_keys_with_enter(expert_id, keys).await
     }
@@ -290,6 +294,18 @@ mod tests {
         assert!(
             !ready,
             "wait_for_ready: should return false when window never shows ready prompt"
+        );
+    }
+
+    #[tokio::test]
+    async fn capture_full_history_delegates_to_sender() {
+        let mock = MockTmuxSender::new().with_capture_response("full history content");
+        let manager = create_mock_manager(mock);
+
+        let result = manager.capture_full_history(0).await.unwrap();
+        assert_eq!(
+            result, "full history content",
+            "capture_full_history: should delegate to tmux sender"
         );
     }
 

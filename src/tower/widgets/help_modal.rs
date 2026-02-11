@@ -100,6 +100,12 @@ impl HelpModal {
             Self::key_line("Ctrl+S", "Assign task to selected expert"),
             Self::key_line("Enter", "Insert newline"),
             Line::from(""),
+            Self::subsection_title("Expert Panel"),
+            Self::key_line("PageUp", "Enter scroll mode / Scroll up"),
+            Self::key_line("PageDown", "Scroll down"),
+            Self::key_line("Home / End", "Scroll to top / bottom"),
+            Self::key_line("Esc", "Exit scroll mode"),
+            Line::from(""),
             Self::subsection_title("Report Detail"),
             Self::key_line("j / \u{2193}", "Scroll down"),
             Self::key_line("k / \u{2191}", "Scroll up"),
@@ -255,6 +261,28 @@ mod tests {
         assert!(
             text.contains("expert panel"),
             "build_help_lines: should describe expert panel functionality"
+        );
+    }
+
+    #[test]
+    fn help_text_shows_expert_panel_keybindings() {
+        let modal = HelpModal::new();
+        let lines = modal.build_help_lines();
+        let text: String = lines
+            .iter()
+            .flat_map(|line| line.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(
+            text.contains("Expert Panel"),
+            "build_help_lines: should have Expert Panel subsection"
+        );
+        assert!(
+            text.contains("PageUp") && text.contains("scroll mode"),
+            "build_help_lines: should show PageUp for scroll mode"
+        );
+        assert!(
+            text.contains("Esc") && text.contains("Exit scroll mode"),
+            "build_help_lines: should show Esc for exiting scroll mode"
         );
     }
 

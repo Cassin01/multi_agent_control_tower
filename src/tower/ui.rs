@@ -212,7 +212,7 @@ impl UI {
         let selected_expert = app
             .status_display()
             .selected()
-            .map(|c| format!("Task for {} (Expert {})", c.expert_name, c.expert_id))
+            .map(|c| format!("Task for {} (Expert{})", c.expert_name, c.expert_id))
             .unwrap_or_else(|| "Task Description (select an expert first)".to_string());
 
         app.task_input().render(frame, area, &selected_expert);
