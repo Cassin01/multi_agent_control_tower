@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
 use ratatui::{
     layout::Rect,
@@ -9,6 +10,7 @@ use ratatui::{
 };
 
 use crate::models::ExpertState;
+use crate::utils::truncate_str_head;
 
 #[derive(Debug, Clone)]
 pub struct ExpertEntry {
@@ -17,12 +19,16 @@ pub struct ExpertEntry {
     pub state: ExpertState,
 }
 
+const WORKING_DIR_MAX_CHARS: usize = 25;
+
 pub struct StatusDisplay {
     experts: Vec<ExpertEntry>,
     state: ListState,
     focused: bool,
     expert_roles: HashMap<u32, String>,
     expert_reports: HashSet<u32>,
+    expert_working_dirs: HashMap<u32, String>,
+    project_path: String,
 }
 
 impl StatusDisplay {
@@ -33,6 +39,8 @@ impl StatusDisplay {
             focused: false,
             expert_roles: HashMap::new(),
             expert_reports: HashSet::new(),
+            expert_working_dirs: HashMap::new(),
+            project_path: String::new(),
         }
     }
 
@@ -51,6 +59,34 @@ impl StatusDisplay {
 
     pub fn set_expert_reports(&mut self, ids: HashSet<u32>) {
         self.expert_reports = ids;
+    }
+
+    pub fn set_expert_working_dirs(&mut self, dirs: HashMap<u32, String>) {
+        self.expert_working_dirs = dirs;
+    }
+
+    pub fn set_project_path(&mut self, path: String) {
+        self.project_path = path;
+    }
+
+    fn format_relative_path(pane_path: &str, project_path: &str) -> String {
+        if project_path.is_empty() || pane_path.is_empty() {
+            return String::new();
+        }
+        let pane = Path::new(pane_path);
+        let project = Path::new(project_path);
+        match pane.strip_prefix(project) {
+            Ok(rel) => {
+                let rel_str = rel.to_string_lossy();
+                let display = if rel_str.is_empty() {
+                    "./".to_string()
+                } else {
+                    format!("./{}", rel_str)
+                };
+                truncate_str_head(&display, WORKING_DIR_MAX_CHARS)
+            }
+            Err(_) => truncate_str_head(pane_path, WORKING_DIR_MAX_CHARS),
+        }
     }
 
     #[allow(dead_code)]
@@ -137,6 +173,12 @@ impl StatusDisplay {
                 let (report_sym, report_color) =
                     Self::report_symbol(self.expert_reports.contains(&entry.expert_id));
 
+                let working_dir_display =
+                    match self.expert_working_dirs.get(&entry.expert_id) {
+                        Some(dir) => Self::format_relative_path(dir, &self.project_path),
+                        None => String::new(),
+                    };
+
                 let spans = vec![
                     Span::styled(
                         format!("[{}] ", entry.expert_id),
@@ -151,6 +193,8 @@ impl StatusDisplay {
                     Span::styled(role_display, Style::default().fg(Color::Cyan)),
                     Span::raw(" "),
                     Span::styled(report_sym, Style::default().fg(report_color)),
+                    Span::raw(" "),
+                    Span::styled(working_dir_display, Style::default().fg(Color::DarkGray)),
                 ];
 
                 ListItem::new(Line::from(spans))
@@ -361,6 +405,68 @@ mod tests {
         assert!(
             !display.has_report(99),
             "has_report: should return false for id not in the set"
+        );
+    }
+
+    #[test]
+    fn format_relative_path_same_dir() {
+        let result = StatusDisplay::format_relative_path("/home/user/project", "/home/user/project");
+        assert_eq!(
+            result, "./",
+            "format_relative_path: same directory should return ./"
+        );
+    }
+
+    #[test]
+    fn format_relative_path_subdirectory() {
+        let result = StatusDisplay::format_relative_path(
+            "/home/user/project/src/main",
+            "/home/user/project",
+        );
+        assert_eq!(
+            result, "./src/main",
+            "format_relative_path: subdirectory should return relative path"
+        );
+    }
+
+    #[test]
+    fn format_relative_path_unrelated() {
+        let result = StatusDisplay::format_relative_path("/other/path", "/home/user/project");
+        assert_eq!(
+            result, "/other/path",
+            "format_relative_path: unrelated path should return absolute path"
+        );
+    }
+
+    #[test]
+    fn format_relative_path_truncates_long_path() {
+        let result = StatusDisplay::format_relative_path(
+            "/home/user/project/.macot/worktrees/very-long-branch-name",
+            "/home/user/project",
+        );
+        assert!(
+            result.chars().count() <= WORKING_DIR_MAX_CHARS,
+            "format_relative_path: should truncate to max {} chars, got {}",
+            WORKING_DIR_MAX_CHARS,
+            result.chars().count()
+        );
+        assert!(
+            result.starts_with("..."),
+            "format_relative_path: truncated path should start with ..."
+        );
+    }
+
+    #[test]
+    fn format_relative_path_empty_inputs() {
+        assert_eq!(
+            StatusDisplay::format_relative_path("", "/home/user/project"),
+            "",
+            "format_relative_path: empty pane path should return empty string"
+        );
+        assert_eq!(
+            StatusDisplay::format_relative_path("/home/user/project", ""),
+            "",
+            "format_relative_path: empty project path should return empty string"
         );
     }
 }

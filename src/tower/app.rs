@@ -24,8 +24,8 @@ const MESSAGE_POLL_INTERVAL: Duration = Duration::from_millis(3000);
 
 use super::ui::UI;
 use super::widgets::{
-    EffortSelector, ExpertPanelDisplay, HelpModal, MessagingDisplay, ReportDisplay, RoleSelector,
-    StatusDisplay, TaskInput, ViewMode,
+    ExpertPanelDisplay, HelpModal, MessagingDisplay, ReportDisplay, RoleSelector, StatusDisplay,
+    TaskInput, ViewMode,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,7 +33,6 @@ pub enum FocusArea {
     ExpertList,
     TaskInput,
     ExpertPanel,
-    EffortSelector,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -42,7 +41,6 @@ pub struct LayoutAreas {
     pub expert_list: Rect,
     pub task_input: Rect,
     pub expert_panel: Rect,
-    pub effort_selector: Rect,
 }
 
 fn keycode_to_tmux_key(code: KeyCode, modifiers: KeyModifiers) -> Option<String> {
@@ -87,7 +85,6 @@ pub struct TowerApp {
 
     status_display: StatusDisplay,
     task_input: TaskInput,
-    effort_selector: EffortSelector,
     report_display: ReportDisplay,
     help_modal: HelpModal,
     role_selector: RoleSelector,
@@ -178,7 +175,6 @@ impl TowerApp {
 
             status_display: StatusDisplay::new(),
             task_input: TaskInput::new(),
-            effort_selector: EffortSelector::new(),
             report_display: ReportDisplay::new(),
             help_modal: HelpModal::new(),
             role_selector: RoleSelector::new(),
@@ -241,10 +237,6 @@ impl TowerApp {
         &self.task_input
     }
 
-    pub fn effort_selector(&self) -> &EffortSelector {
-        &self.effort_selector
-    }
-
     pub fn config(&self) -> &Config {
         &self.config
     }
@@ -294,8 +286,6 @@ impl TowerApp {
             && Self::point_in_rect(pos, self.layout_areas.expert_panel)
         {
             self.set_focus(FocusArea::ExpertPanel);
-        } else if Self::point_in_rect(pos, self.layout_areas.effort_selector) {
-            self.set_focus(FocusArea::EffortSelector);
         }
     }
 
@@ -338,6 +328,16 @@ impl TowerApp {
             .map(|a| (a.expert_id, a.role.clone()))
             .collect();
         self.status_display.set_expert_roles(roles);
+
+        let mut working_dirs = std::collections::HashMap::new();
+        for id in &expert_ids {
+            if let Ok(Some(path)) = self.tmux.get_pane_current_path(*id).await {
+                working_dirs.insert(*id, path);
+            }
+        }
+        self.status_display.set_expert_working_dirs(working_dirs);
+        self.status_display
+            .set_project_path(self.config.project_path.display().to_string());
 
         Ok(())
     }
@@ -553,8 +553,6 @@ impl TowerApp {
             .set_focused(self.focus == FocusArea::TaskInput);
         self.expert_panel_display
             .set_focused(self.focus == FocusArea::ExpertPanel);
-        self.effort_selector
-            .set_focused(self.focus == FocusArea::EffortSelector);
     }
 
     pub fn next_focus(&mut self) {
@@ -565,11 +563,10 @@ impl TowerApp {
                 if panel_visible {
                     FocusArea::ExpertPanel
                 } else {
-                    FocusArea::EffortSelector
+                    FocusArea::TaskInput
                 }
             }
-            FocusArea::ExpertPanel => FocusArea::EffortSelector,
-            FocusArea::EffortSelector => FocusArea::TaskInput,
+            FocusArea::ExpertPanel => FocusArea::TaskInput,
         };
         self.update_focus();
     }
@@ -578,15 +575,14 @@ impl TowerApp {
         let panel_visible = self.expert_panel_display.is_visible();
         self.focus = match self.focus {
             FocusArea::ExpertList => FocusArea::TaskInput,
-            FocusArea::TaskInput => FocusArea::EffortSelector,
-            FocusArea::ExpertPanel => FocusArea::TaskInput,
-            FocusArea::EffortSelector => {
+            FocusArea::TaskInput => {
                 if panel_visible {
                     FocusArea::ExpertPanel
                 } else {
                     FocusArea::TaskInput
                 }
             }
+            FocusArea::ExpertPanel => FocusArea::TaskInput,
         };
         self.update_focus();
     }
@@ -696,7 +692,6 @@ impl TowerApp {
                                 .await?;
                             return Ok(());
                         }
-                        FocusArea::EffortSelector => self.handle_effort_selector_keys(key.code),
                     }
 
                     if key.code == KeyCode::Char('t')
@@ -808,14 +803,6 @@ impl TowerApp {
         }
     }
 
-    fn handle_effort_selector_keys(&mut self, code: KeyCode) {
-        match code {
-            KeyCode::Left | KeyCode::Char('h') => self.effort_selector.prev(),
-            KeyCode::Right | KeyCode::Char('l') => self.effort_selector.next(),
-            _ => {}
-        }
-    }
-
     async fn handle_expert_panel_keys(
         &mut self,
         code: KeyCode,
@@ -874,7 +861,6 @@ impl TowerApp {
             .unwrap_or_else(|| format!("expert{}", expert_id));
 
         let description = self.task_input.content().to_string();
-        let effort_level = self.effort_selector.selected();
 
         let decision = Decision::new(
             expert_id,
@@ -883,7 +869,7 @@ impl TowerApp {
                 "Assigned: {}",
                 description.chars().take(100).collect::<String>()
             ),
-            format!("Effort: {:?}", effort_level),
+            String::new(),
         );
         self.context_store
             .add_decision(&self.config.session_hash(), decision)
@@ -899,10 +885,7 @@ impl TowerApp {
             });
         self.context_store.save_expert_context(&expert_ctx).await?;
 
-        let task_prompt = format!(
-            "New task assigned:\n{}\n\nEffort level: {:?}",
-            description, effort_level,
-        );
+        let task_prompt = format!("New task assigned:\n{}", description);
         self.claude
             .send_keys_with_enter(expert_id, &task_prompt)
             .await?;
@@ -1469,28 +1452,15 @@ mod tests {
     }
 
     #[test]
-    fn tower_app_focus_cycles() {
+    fn tower_app_focus_stays_on_task_input_without_panel() {
         let mut app = create_test_app();
 
         // ExpertList is display-only, initial focus is TaskInput
         assert_eq!(app.focus(), FocusArea::TaskInput);
 
-        app.next_focus();
-        assert_eq!(app.focus(), FocusArea::EffortSelector);
-
+        // Without panel visible, focus stays on TaskInput
         app.next_focus();
         assert_eq!(app.focus(), FocusArea::TaskInput);
-    }
-
-    #[test]
-    fn tower_app_focus_cycles_backwards() {
-        let mut app = create_test_app();
-
-        // ExpertList is display-only, initial focus is TaskInput
-        assert_eq!(app.focus(), FocusArea::TaskInput);
-
-        app.prev_focus();
-        assert_eq!(app.focus(), FocusArea::EffortSelector);
 
         app.prev_focus();
         assert_eq!(app.focus(), FocusArea::TaskInput);
@@ -1516,8 +1486,9 @@ mod tests {
         // ExpertList is display-only, initial focus is TaskInput
         assert_eq!(app.focus(), FocusArea::TaskInput);
 
-        app.set_focus(FocusArea::EffortSelector);
-        assert_eq!(app.focus(), FocusArea::EffortSelector);
+        app.expert_panel_display.show();
+        app.set_focus(FocusArea::ExpertPanel);
+        assert_eq!(app.focus(), FocusArea::ExpertPanel);
     }
 
     #[test]
@@ -1547,7 +1518,6 @@ mod tests {
             expert_list: Rect::new(0, 0, 100, 10),
             task_input: Rect::new(0, 10, 100, 10),
             expert_panel: Rect::default(),
-            effort_selector: Rect::new(0, 20, 100, 5),
         });
 
         // ExpertList is display-only, clicking it doesn't change focus
@@ -1556,15 +1526,12 @@ mod tests {
 
         app.handle_mouse_click(50, 15);
         assert_eq!(app.focus(), FocusArea::TaskInput);
-
-        app.handle_mouse_click(50, 22);
-        assert_eq!(app.focus(), FocusArea::EffortSelector);
     }
 
     // Task 10.1: Focus cycling tests (P2, P3)
 
     #[test]
-    fn focus_cycle_without_panel_skips_expert_panel() {
+    fn focus_cycle_without_panel_stays_on_task_input() {
         let mut app = create_test_app();
         // Panel is hidden by default
         assert!(!app.expert_panel_display.is_visible());
@@ -1573,14 +1540,8 @@ mod tests {
         app.next_focus();
         assert_eq!(
             app.focus(),
-            FocusArea::EffortSelector,
-            "should skip ExpertPanel when hidden"
-        );
-        app.next_focus();
-        assert_eq!(
-            app.focus(),
             FocusArea::TaskInput,
-            "full cycle should return to start"
+            "should stay on TaskInput when panel hidden"
         );
     }
 
@@ -1597,8 +1558,6 @@ mod tests {
             "should visit ExpertPanel when visible"
         );
         app.next_focus();
-        assert_eq!(app.focus(), FocusArea::EffortSelector);
-        app.next_focus();
         assert_eq!(
             app.focus(),
             FocusArea::TaskInput,
@@ -1612,8 +1571,6 @@ mod tests {
         app.expert_panel_display.show();
         assert_eq!(app.focus(), FocusArea::TaskInput);
 
-        app.prev_focus();
-        assert_eq!(app.focus(), FocusArea::EffortSelector);
         app.prev_focus();
         assert_eq!(
             app.focus(),
@@ -1629,18 +1586,16 @@ mod tests {
     }
 
     #[test]
-    fn focus_cycle_backwards_without_panel_skips_expert_panel() {
+    fn focus_cycle_backwards_without_panel_stays_on_task_input() {
         let mut app = create_test_app();
         assert!(!app.expert_panel_display.is_visible());
         assert_eq!(app.focus(), FocusArea::TaskInput);
 
         app.prev_focus();
-        assert_eq!(app.focus(), FocusArea::EffortSelector);
-        app.prev_focus();
         assert_eq!(
             app.focus(),
             FocusArea::TaskInput,
-            "should skip ExpertPanel when hidden"
+            "should stay on TaskInput when panel hidden"
         );
     }
 
@@ -1671,7 +1626,6 @@ mod tests {
             expert_list: Rect::new(0, 0, 100, 10),
             task_input: Rect::new(0, 10, 100, 10),
             expert_panel: Rect::default(),
-            effort_selector: Rect::new(0, 20, 100, 5),
         });
 
         // Click at (0,0) — inside expert_list (display-only) and expert_panel zero rect
@@ -1691,7 +1645,6 @@ mod tests {
             expert_list: Rect::new(0, 0, 100, 10),
             task_input: Rect::new(0, 10, 100, 10),
             expert_panel: Rect::new(0, 20, 100, 15),
-            effort_selector: Rect::new(0, 35, 100, 5),
         });
 
         app.handle_mouse_click(50, 25);
@@ -1712,7 +1665,7 @@ mod tests {
         app.expert_panel_display.toggle();
         assert!(app.expert_panel_display.is_visible());
 
-        // When visible, focus cycle should have 3 stops (TaskInput, ExpertPanel, EffortSelector)
+        // When visible, focus cycle should have 2 stops (TaskInput, ExpertPanel)
         let mut visited = Vec::new();
         let start = app.focus();
         loop {
@@ -1729,32 +1682,20 @@ mod tests {
         );
         assert_eq!(
             visited.len(),
-            3,
-            "visible panel: focus cycle should have 3 stops"
+            2,
+            "visible panel: focus cycle should have 2 stops"
         );
 
         // Toggle off — panel becomes hidden
         app.expert_panel_display.toggle();
         assert!(!app.expert_panel_display.is_visible());
 
-        // When hidden, focus cycle should have 2 stops (TaskInput, EffortSelector)
-        let mut visited = Vec::new();
-        let start = app.focus();
-        loop {
-            app.next_focus();
-            visited.push(app.focus());
-            if app.focus() == start {
-                break;
-            }
-        }
-        assert!(
-            !visited.contains(&FocusArea::ExpertPanel),
-            "hidden panel: focus cycle should NOT include ExpertPanel"
-        );
+        // When hidden, focus stays on TaskInput (only 1 focusable area)
+        app.next_focus();
         assert_eq!(
-            visited.len(),
-            2,
-            "hidden panel: focus cycle should have 2 stops"
+            app.focus(),
+            FocusArea::TaskInput,
+            "hidden panel: focus should stay on TaskInput"
         );
     }
 

@@ -106,16 +106,6 @@ findings:
     severity: "high"
 ```
 
-## Effort Levels
-
-Tasks may specify an effort level that indicates expected scope:
-- **Simple**: Quick fixes, simple queries (max 10 tool calls, 3 files)
-- **Medium**: Feature implementation (max 25 tool calls, 7 files)
-- **Complex**: Major refactoring (max 50 tool calls, 15 files)
-- **Critical**: Architecture changes (max 100 tool calls, unlimited files)
-
-Respect these boundaries unless absolutely necessary to exceed them.
-
 ## Inter-Expert Messaging
 
 You can send messages to other experts through the messaging system. Messages are delivered asynchronously when the recipient becomes idle.

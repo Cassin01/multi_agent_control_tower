@@ -234,6 +234,34 @@ impl TmuxManager {
         Ok(())
     }
 
+    pub async fn get_pane_current_path(&self, window_id: u32) -> Result<Option<String>> {
+        let output = Command::new("tmux")
+            .args([
+                "display-message",
+                "-t",
+                &format!("{}:{}", self.session_name, window_id),
+                "-p",
+                "#{pane_current_path}",
+            ])
+            .output()
+            .await
+            .context(format!(
+                "Failed to get pane_current_path for window {}",
+                window_id
+            ))?;
+
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if path.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(path))
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
     pub async fn list_all_macot_sessions() -> Result<Vec<SessionInfo>> {
         let output = Command::new("tmux")
             .args(["list-sessions", "-F", "#{session_name}"])

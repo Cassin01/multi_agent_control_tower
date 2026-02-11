@@ -50,7 +50,7 @@ impl UI {
                 Constraint::Percentage(40)
             };
 
-            // 6 layout constraints when panel is visible
+            // 5 layout constraints when panel is visible
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .margin(1)
@@ -59,34 +59,6 @@ impl UI {
                     Constraint::Length(expert_height), // [1] Expert List
                     Constraint::Min(5),                // [2] Task Input (shrunk)
                     panel_constraint,                  // [3] Expert Panel
-                    Constraint::Length(3),             // [4] Effort Selector
-                    Constraint::Length(3),             // [5] Footer
-                ])
-                .split(frame.area());
-
-            app.set_layout_areas(LayoutAreas {
-                expert_list: chunks[1],
-                task_input: chunks[2],
-                expert_panel: chunks[3],
-                effort_selector: chunks[4],
-            });
-
-            Self::render_header(frame, chunks[0], app);
-            app.status_display().render(frame, chunks[1]);
-            Self::render_task_input(frame, chunks[2], app);
-            app.expert_panel_display().render(frame, chunks[3]);
-            app.effort_selector().render(frame, chunks[4]);
-            Self::render_footer(frame, chunks[5], app);
-        } else {
-            // 5 layout constraints when panel is hidden (default)
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .margin(1)
-                .constraints([
-                    Constraint::Length(3),             // [0] Header
-                    Constraint::Length(expert_height), // [1] Expert List
-                    Constraint::Min(8),                // [2] Task Input
-                    Constraint::Length(3),             // [3] Effort Selector
                     Constraint::Length(3),             // [4] Footer
                 ])
                 .split(frame.area());
@@ -94,15 +66,37 @@ impl UI {
             app.set_layout_areas(LayoutAreas {
                 expert_list: chunks[1],
                 task_input: chunks[2],
-                expert_panel: Rect::default(),
-                effort_selector: chunks[3],
+                expert_panel: chunks[3],
             });
 
             Self::render_header(frame, chunks[0], app);
             app.status_display().render(frame, chunks[1]);
             Self::render_task_input(frame, chunks[2], app);
-            app.effort_selector().render(frame, chunks[3]);
+            app.expert_panel_display().render(frame, chunks[3]);
             Self::render_footer(frame, chunks[4], app);
+        } else {
+            // 4 layout constraints when panel is hidden (default)
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .margin(1)
+                .constraints([
+                    Constraint::Length(3),             // [0] Header
+                    Constraint::Length(expert_height), // [1] Expert List
+                    Constraint::Min(8),                // [2] Task Input
+                    Constraint::Length(3),             // [3] Footer
+                ])
+                .split(frame.area());
+
+            app.set_layout_areas(LayoutAreas {
+                expert_list: chunks[1],
+                task_input: chunks[2],
+                expert_panel: Rect::default(),
+            });
+
+            Self::render_header(frame, chunks[0], app);
+            app.status_display().render(frame, chunks[1]);
+            Self::render_task_input(frame, chunks[2], app);
+            Self::render_footer(frame, chunks[3], app);
         }
 
         if app.report_display().view_mode() == ViewMode::Detail {

@@ -20,9 +20,7 @@ Add an `ExpertPanelDisplay` widget that:
 [0] Header           (Length 3)
 [1] Expert List      (Length dynamic)
 [2] Task Input       (Min 8)
-[3] Effort Selector  (Length 3)
-[4] Report Display   (Length 6)
-[5] Footer           (Length 3)
+[3] Footer           (Length 3)
 ```
 
 ### Layout (Panel Visible — after Ctrl+J toggle)
@@ -31,9 +29,7 @@ Add an `ExpertPanelDisplay` widget that:
 [1] Expert List      (Length dynamic)
 [2] Task Input       (Min 5)          ← shrunk
 [3] Expert Panel     (Percentage 40)  ← NEW
-[4] Effort Selector  (Length 3)
-[5] Report Display   (Length 4)       ← shrunk
-[6] Footer           (Length 3)
+[4] Footer           (Length 3)
 ```
 
 ### Data Flow
@@ -48,7 +44,7 @@ User keystroke (ExpertPanel focused) → handle_expert_panel_keys
 
 ### Focus Cycle (panel visible)
 ```
-TaskInput → ExpertPanel → EffortSelector → ReportList → TaskInput
+TaskInput → ExpertPanel → TaskInput
 (ExpertList is always skipped — display only)
 ```
 
@@ -179,8 +175,6 @@ if key.modifiers.contains(KeyModifiers::CONTROL) {
 match self.focus {
     ExpertList => {}
     TaskInput => self.handle_task_input_keys(code, modifiers),  // sync
-    EffortSelector => self.handle_effort_selector_keys(code),   // sync
-    ReportList => self.handle_report_list_keys(code, modifiers), // sync
 }
 // 4. Tab/BackTab focus cycling
 if key.code == KeyCode::Tab { ... }
@@ -216,8 +210,6 @@ match self.focus {
         return Ok(());  // ← early return: skip Tab cycling and
                         //   other TaskInput-specific handlers below
     }
-    EffortSelector => self.handle_effort_selector_keys(code),
-    ReportList => self.handle_report_list_keys(code, modifiers),
 }
 // 4. Tab/BackTab focus cycling (unchanged — only reached when NOT ExpertPanel)
 // 5. Other context-specific handlers (unchanged)
