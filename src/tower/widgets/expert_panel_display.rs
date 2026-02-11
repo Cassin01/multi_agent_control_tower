@@ -43,7 +43,7 @@ impl ExpertPanelDisplay {
             content: Text::default(),
             raw_line_count: 0,
             scroll_offset: 0,
-            visible: false,
+            visible: true,
             focused: false,
             auto_scroll: true,
             is_scrolling: false,
@@ -261,24 +261,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn panel_starts_hidden() {
+    fn panel_starts_visible() {
         let panel = ExpertPanelDisplay::new();
-        assert!(!panel.is_visible(), "panel should start hidden");
+        assert!(panel.is_visible(), "panel should start visible");
     }
 
     #[test]
-    fn toggle_makes_visible() {
+    fn toggle_hides_visible_panel() {
         let mut panel = ExpertPanelDisplay::new();
         panel.toggle();
-        assert!(panel.is_visible(), "toggle should make panel visible");
+        assert!(!panel.is_visible(), "toggle should hide visible panel");
     }
 
     #[test]
-    fn toggle_twice_returns_to_hidden() {
+    fn toggle_twice_returns_to_visible() {
         let mut panel = ExpertPanelDisplay::new();
         panel.toggle();
         panel.toggle();
-        assert!(!panel.is_visible(), "toggle twice should return to hidden");
+        assert!(panel.is_visible(), "toggle twice should return to visible");
     }
 
     #[test]

@@ -1461,6 +1461,9 @@ mod tests {
     fn tower_app_focus_stays_on_task_input_without_panel() {
         let mut app = create_test_app();
 
+        // Panel starts visible; hide it for this test
+        app.expert_panel_display.hide();
+
         // ExpertList is display-only, initial focus is TaskInput
         assert_eq!(app.focus(), FocusArea::TaskInput);
 
@@ -1539,7 +1542,8 @@ mod tests {
     #[test]
     fn focus_cycle_without_panel_stays_on_task_input() {
         let mut app = create_test_app();
-        // Panel is hidden by default
+        // Panel starts visible; hide it for this test
+        app.expert_panel_display.hide();
         assert!(!app.expert_panel_display.is_visible());
         assert_eq!(app.focus(), FocusArea::TaskInput);
 
@@ -1630,11 +1634,7 @@ mod tests {
     #[test]
     fn toggle_panel_visibility() {
         let mut app = create_test_app();
-        // Panel starts hidden
-        assert!(!app.expert_panel_display.is_visible());
-
-        // Toggle on — panel becomes visible
-        app.expert_panel_display.toggle();
+        // Panel starts visible
         assert!(app.expert_panel_display.is_visible());
 
         // When visible, focus cycle should have 2 stops (TaskInput, ExpertPanel)
@@ -1669,6 +1669,10 @@ mod tests {
             FocusArea::TaskInput,
             "hidden panel: focus should stay on TaskInput"
         );
+
+        // Toggle on — panel becomes visible again
+        app.expert_panel_display.toggle();
+        assert!(app.expert_panel_display.is_visible());
     }
 
     #[test]
