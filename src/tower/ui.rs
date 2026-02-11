@@ -16,6 +16,7 @@ use ratatui::{
 
 use super::app::{FocusArea, LayoutAreas, TowerApp};
 use super::widgets::ViewMode;
+use crate::utils::truncate_str_head;
 
 pub struct UI;
 
@@ -167,30 +168,42 @@ impl UI {
         )];
 
         // Show subtitle only when width is sufficient
-        if area.width >= 100 {
+        let is_wide = area.width >= 100;
+        if is_wide {
             title.push(Span::raw(" - Multi Agent Control Tower "));
         }
         title.push(Span::raw("| "));
 
+        let trancate_len = if is_wide { 40 } else { 20 };
+        let session_prefix = if is_wide { "Session: " } else { "" };
         title.extend([
             Span::styled(
-                format!("Session: {} ", app.config().session_name()),
+                format!("{}{} ", session_prefix, app.config().session_name()),
                 Style::default().fg(Color::Yellow),
             ),
             Span::raw("| "),
             Span::styled(
-                format!("○ {} ", summary.idle),
-                Style::default().fg(Color::Gray),
-            ),
-            Span::styled(
-                format!("● {} ", summary.busy),
-                Style::default().fg(Color::Green),
-            ),
-            Span::styled(
-                format!("✗ {}", summary.offline),
-                Style::default().fg(Color::Red),
+                format!(
+                    "{} ",
+                    truncate_str_head(&app.config().project_path.display().to_string(), trancate_len)
+                ),
+                Style::default().fg(Color::DarkGray),
             ),
         ]);
+
+        let right_spans = vec![
+            Span::styled(format!("○ {} ", summary.idle), Style::default().fg(Color::Gray)),
+            Span::styled(format!("● {} ", summary.busy), Style::default().fg(Color::Green)),
+            Span::styled(format!("✗ {} ", summary.offline), Style::default().fg(Color::Red)),
+        ];
+
+        let left_width: usize = title.iter().map(|s| s.width()).sum();
+        let right_width: usize = right_spans.iter().map(|s| s.width()).sum();
+        let available = (area.width as usize).saturating_sub(2);
+        let padding = available.saturating_sub(left_width + right_width);
+
+        title.push(Span::raw(" ".repeat(padding)));
+        title.extend(right_spans);
 
         let header = Paragraph::new(Line::from(title)).block(
             Block::default()

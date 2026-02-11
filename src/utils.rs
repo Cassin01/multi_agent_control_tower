@@ -53,6 +53,22 @@ pub fn truncate_str(s: &str, max_chars: usize) -> String {
     }
 }
 
+/// Truncates a string to max_chars characters by removing the beginning, prepending "...".
+/// Safe for UTF-8 multi-byte characters.
+pub fn truncate_str_head(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        s.to_string()
+    } else {
+        let skip = s.chars().count() - (max_chars.saturating_sub(3));
+        let byte_index = s
+            .char_indices()
+            .nth(skip)
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        format!("...{}", &s[byte_index..])
+    }
+}
+
 /// Compute a deterministic 8-char hex hash from an absolute path.
 /// This is the canonical hash used to derive session names from project paths.
 pub fn compute_path_hash(path: &Path) -> String {
@@ -206,6 +222,71 @@ mod tests {
             sanitize_branch_name("fix v1.2"),
             "fix-v1.2",
             "sanitize_branch_name: dots should be preserved for version numbers"
+        );
+    }
+
+    #[test]
+    fn truncate_str_head_short_string() {
+        assert_eq!(
+            truncate_str_head("short", 20),
+            "short",
+            "truncate_str_head: short string should remain unchanged"
+        );
+    }
+
+    #[test]
+    fn truncate_str_head_exact_length() {
+        assert_eq!(
+            truncate_str_head("hello", 5),
+            "hello",
+            "truncate_str_head: exact-length string should remain unchanged"
+        );
+    }
+
+    #[test]
+    fn truncate_str_head_long_string() {
+        let result = truncate_str_head("/Users/koyo/ghq/github.com/Cassin01/project", 25);
+        assert!(
+            result.chars().count() <= 25,
+            "truncate_str_head: result should be at most 25 chars, got {}",
+            result.chars().count()
+        );
+        assert!(
+            result.starts_with("..."),
+            "truncate_str_head: truncated result should start with '...'"
+        );
+    }
+
+    #[test]
+    fn truncate_str_head_preserves_end() {
+        assert_eq!(
+            truncate_str_head("hello world", 8),
+            "...world",
+            "truncate_str_head: should preserve the end of the string"
+        );
+    }
+
+    #[test]
+    fn truncate_str_head_utf8_safe() {
+        let japanese = "日本語のテストテキストです。これは非常に長いテキストで切り詰められます。";
+        let result = truncate_str_head(japanese, 20);
+        assert!(
+            result.chars().count() <= 20,
+            "truncate_str_head: UTF-8 result should be at most 20 chars"
+        );
+        assert!(
+            result.starts_with("..."),
+            "truncate_str_head: UTF-8 truncated result should start with '...'"
+        );
+    }
+
+    #[test]
+    fn truncate_str_head_japanese_short() {
+        let japanese = "こんにちは世界";
+        assert_eq!(
+            truncate_str_head(japanese, 10),
+            japanese,
+            "truncate_str_head: short Japanese string should remain unchanged"
         );
     }
 
