@@ -1,3 +1,6 @@
+use sha2::{Digest, Sha256};
+use std::path::Path;
+
 const BRANCH_NAME_MAX_LEN: usize = 50;
 
 pub fn sanitize_branch_name(input: &str) -> String {
@@ -48,6 +51,19 @@ pub fn truncate_str(s: &str, max_chars: usize) -> String {
             .unwrap_or(s.len());
         format!("{}...", &s[..byte_index])
     }
+}
+
+/// Compute a deterministic 8-char hex hash from an absolute path.
+/// This is the canonical hash used to derive session names from project paths.
+pub fn compute_path_hash(path: &Path) -> String {
+    let abs_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let path_str = abs_path.to_string_lossy();
+
+    let mut hasher = Sha256::new();
+    hasher.update(path_str.as_bytes());
+    let result = hasher.finalize();
+
+    hex::encode(&result[..4])
 }
 
 #[cfg(test)]
@@ -190,6 +206,36 @@ mod tests {
             sanitize_branch_name("fix v1.2"),
             "fix-v1.2",
             "sanitize_branch_name: dots should be preserved for version numbers"
+        );
+    }
+
+    #[test]
+    fn compute_path_hash_is_deterministic() {
+        let hash1 = compute_path_hash(std::path::Path::new("/tmp/test"));
+        let hash2 = compute_path_hash(std::path::Path::new("/tmp/test"));
+        assert_eq!(
+            hash1, hash2,
+            "compute_path_hash: same path should produce same hash"
+        );
+    }
+
+    #[test]
+    fn compute_path_hash_differs_for_different_paths() {
+        let hash1 = compute_path_hash(std::path::Path::new("/tmp/project1"));
+        let hash2 = compute_path_hash(std::path::Path::new("/tmp/project2"));
+        assert_ne!(
+            hash1, hash2,
+            "compute_path_hash: different paths should produce different hashes"
+        );
+    }
+
+    #[test]
+    fn compute_path_hash_is_8_chars() {
+        let hash = compute_path_hash(std::path::Path::new("/tmp/test"));
+        assert_eq!(
+            hash.len(),
+            8,
+            "compute_path_hash: hash should be 8 hex characters"
         );
     }
 }

@@ -160,19 +160,7 @@ impl Config {
     }
 
     pub fn session_hash(&self) -> String {
-        use sha2::{Digest, Sha256};
-
-        let abs_path = self
-            .project_path
-            .canonicalize()
-            .unwrap_or_else(|_| self.project_path.clone());
-        let path_str = abs_path.to_string_lossy();
-
-        let mut hasher = Sha256::new();
-        hasher.update(path_str.as_bytes());
-        let result = hasher.finalize();
-
-        hex::encode(&result[..4])
+        crate::utils::compute_path_hash(&self.project_path)
     }
 
     pub fn session_name(&self) -> String {
