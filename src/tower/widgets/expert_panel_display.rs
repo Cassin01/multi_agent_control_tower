@@ -24,6 +24,7 @@ pub struct ExpertPanelDisplay {
     visible: bool,
     focused: bool,
     auto_scroll: bool,
+    is_scrolling: bool,
     last_render_size: (u16, u16),
     content_hash: [u8; 32],
 }
@@ -45,6 +46,7 @@ impl ExpertPanelDisplay {
             visible: false,
             focused: false,
             auto_scroll: true,
+            is_scrolling: false,
             last_render_size: (0, 0),
             content_hash: [0u8; 32],
         }
@@ -106,8 +108,36 @@ impl ExpertPanelDisplay {
         )
     }
 
+    pub fn is_scrolling(&self) -> bool {
+        self.is_scrolling
+    }
+
+    pub fn enter_scroll_mode(&mut self, raw: &str) {
+        self.is_scrolling = true;
+        self.auto_scroll = false;
+        self.content_hash = [0u8; 32];
+        let line_count = raw.lines().count();
+        let text = Self::parse_ansi(raw);
+        self.content = text;
+        self.raw_line_count = line_count;
+        if line_count > 0 {
+            self.scroll_offset = line_count.saturating_sub(1) as u16;
+        }
+    }
+
+    pub fn exit_scroll_mode(&mut self) {
+        self.is_scrolling = false;
+        self.content = Text::default();
+        self.raw_line_count = 0;
+        self.content_hash = [0u8; 32];
+        self.auto_scroll = true;
+    }
+
     pub fn set_expert(&mut self, id: u32, name: String) {
         if self.expert_id != Some(id) {
+            if self.is_scrolling {
+                self.exit_scroll_mode();
+            }
             self.scroll_offset = 0;
             self.content = Text::default();
             self.raw_line_count = 0;
@@ -129,6 +159,9 @@ impl ExpertPanelDisplay {
     /// Update content only if the raw pane capture has changed (SHA-256 hash comparison).
     /// Returns `true` if content was updated, `false` if skipped (unchanged).
     pub fn try_set_content(&mut self, raw: &str) -> bool {
+        if self.is_scrolling {
+            return false;
+        }
         let hash: [u8; 32] = Sha256::digest(raw.as_bytes()).into();
         if hash == self.content_hash {
             return false;
@@ -163,7 +196,7 @@ impl ExpertPanelDisplay {
 
     pub fn render(&mut self, frame: &mut Frame, area: Rect) {
         let title = match (&self.expert_name, self.expert_id) {
-            (Some(name), Some(id)) => format!(" Expert Panel: {} (ID: {}) ", name, id),
+            (Some(name), Some(id)) => format!("{} (Expert{}) ", name, id),
             _ => " Expert Panel (no expert selected) ".to_string(),
         };
 
@@ -173,10 +206,11 @@ impl ExpertPanelDisplay {
             Color::DarkGray
         };
 
-        let focus_indicator = if self.focused { " [FOCUSED]" } else { "" };
+        // let focus_indicator = if self.focused { " [FOCUSED]" } else { "" };
+        let history_indicator = if self.is_scrolling { " [SCROLL MODE]" } else { "" };
         let scroll_indicator = if !self.auto_scroll {
             format!(
-                " [SCROLL {}/{}]",
+                " [{}/{}]",
                 self.scroll_offset + 1,
                 self.raw_line_count
             )
@@ -186,7 +220,7 @@ impl ExpertPanelDisplay {
 
         let block = Block::default()
             .title(Span::styled(
-                format!("{}{}{} ", title, focus_indicator, scroll_indicator),
+                format!("{}{}{} ", title, history_indicator, scroll_indicator),
                 Style::default()
                     .fg(border_color)
                     .add_modifier(Modifier::BOLD),
@@ -615,8 +649,8 @@ mod tests {
 
         let rendered = render_to_string(&mut panel, 60, 10);
         assert!(
-            rendered.contains("SCROLL"),
-            "render: should show scroll indicator when auto_scroll is disabled, got title: {}",
+            rendered.contains("/"),
+            "render: should show scroll position indicator when auto_scroll is disabled, got title: {}",
             rendered.lines().next().unwrap_or("")
         );
     }
@@ -630,8 +664,8 @@ mod tests {
 
         let rendered = render_to_string(&mut panel, 60, 10);
         assert!(
-            !rendered.contains("SCROLL"),
-            "render: should NOT show scroll indicator when auto_scroll is enabled"
+            !rendered.contains("/"),
+            "render: should NOT show scroll position indicator when auto_scroll is enabled"
         );
     }
 
@@ -693,6 +727,149 @@ mod tests {
             panel.preview_size(),
             (0, 3),
             "preview_size: narrow terminal should saturate width to 0"
+        );
+    }
+
+    // Scroll mode tests (full history scrollback)
+
+    #[test]
+    fn panel_starts_not_scrolling() {
+        let panel = ExpertPanelDisplay::new();
+        assert!(
+            !panel.is_scrolling(),
+            "panel should start not in scroll mode"
+        );
+    }
+
+    #[test]
+    fn enter_scroll_mode_sets_flag() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.enter_scroll_mode("line1\nline2");
+        assert!(
+            panel.is_scrolling(),
+            "enter_scroll_mode: should set is_scrolling to true"
+        );
+    }
+
+    #[test]
+    fn enter_scroll_mode_loads_content() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.enter_scroll_mode("line1\nline2\nline3");
+        assert_eq!(
+            panel.raw_line_count, 3,
+            "enter_scroll_mode: should load content with correct line count"
+        );
+    }
+
+    #[test]
+    fn enter_scroll_mode_positions_at_bottom() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.enter_scroll_mode("a\nb\nc\nd\ne");
+        assert_eq!(
+            panel.scroll_offset, 4,
+            "enter_scroll_mode: should position scroll at bottom (last line)"
+        );
+    }
+
+    #[test]
+    fn enter_scroll_mode_disables_auto_scroll() {
+        let mut panel = ExpertPanelDisplay::new();
+        assert!(panel.auto_scroll, "auto_scroll should start enabled");
+        panel.enter_scroll_mode("a\nb");
+        assert!(
+            !panel.auto_scroll,
+            "enter_scroll_mode: should disable auto_scroll"
+        );
+    }
+
+    #[test]
+    fn exit_scroll_mode_clears_flag() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.enter_scroll_mode("a\nb");
+        panel.exit_scroll_mode();
+        assert!(
+            !panel.is_scrolling(),
+            "exit_scroll_mode: should clear is_scrolling flag"
+        );
+    }
+
+    #[test]
+    fn exit_scroll_mode_resets_hash() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.enter_scroll_mode("a\nb");
+        panel.exit_scroll_mode();
+        assert_eq!(
+            panel.content_hash,
+            [0u8; 32],
+            "exit_scroll_mode: should reset content hash so next poll refreshes"
+        );
+    }
+
+    #[test]
+    fn exit_scroll_mode_enables_auto_scroll() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.enter_scroll_mode("a\nb");
+        assert!(!panel.auto_scroll, "should be disabled after enter");
+        panel.exit_scroll_mode();
+        assert!(
+            panel.auto_scroll,
+            "exit_scroll_mode: should re-enable auto_scroll"
+        );
+    }
+
+    #[test]
+    fn try_set_content_noop_when_scrolling() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.enter_scroll_mode("history content");
+        let result = panel.try_set_content("new live content");
+        assert!(
+            !result,
+            "try_set_content: should return false when in scroll mode"
+        );
+        assert!(
+            panel.is_scrolling(),
+            "try_set_content: should not exit scroll mode"
+        );
+    }
+
+    #[test]
+    fn set_expert_exits_scroll_mode() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.set_expert(1, "Alice".to_string());
+        panel.enter_scroll_mode("history");
+        assert!(panel.is_scrolling(), "should be scrolling");
+
+        panel.set_expert(2, "Bob".to_string());
+        assert!(
+            !panel.is_scrolling(),
+            "set_expert: changing expert should exit scroll mode"
+        );
+    }
+
+    #[test]
+    fn set_expert_same_id_preserves_scroll_mode() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.set_expert(1, "Alice".to_string());
+        panel.enter_scroll_mode("history");
+
+        panel.set_expert(1, "Alice".to_string());
+        assert!(
+            panel.is_scrolling(),
+            "set_expert: same expert should preserve scroll mode"
+        );
+    }
+
+    #[test]
+    fn render_shows_history_indicator_when_scrolling() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.set_expert(1, "Alice".to_string());
+        panel.enter_scroll_mode("line1\nline2");
+
+        let rendered = render_to_string(&mut panel, 80, 10);
+        assert!(
+            rendered.contains("SCROLL MODE"),
+            "render: should show [SCROLL MODE] indicator when in scroll mode, got title: {}",
+            rendered.lines().next().unwrap_or("")
         );
     }
 

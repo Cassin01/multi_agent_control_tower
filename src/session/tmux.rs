@@ -49,6 +49,10 @@ pub trait TmuxSender: Send + Sync {
         self.capture_pane(window_id).await
     }
 
+    async fn capture_full_history(&self, window_id: u32) -> Result<String> {
+        self.capture_pane_with_escapes(window_id).await
+    }
+
     async fn resize_pane(&self, _window_id: u32, _width: u16, _height: u16) -> Result<()> {
         Ok(())
     }
@@ -101,6 +105,29 @@ impl TmuxSender for TmuxManager {
                 window_id
             ))?;
         check_tmux_output(output, &format!("capture-pane-with-escapes {}", window_id))
+    }
+
+    async fn capture_full_history(&self, window_id: u32) -> Result<String> {
+        let output = Command::new("tmux")
+            .args([
+                "capture-pane",
+                "-e",
+                "-J",
+                "-p",
+                "-S",
+                "-",
+                "-E",
+                "-",
+                "-t",
+                &format!("{}:{}", self.session_name, window_id),
+            ])
+            .output()
+            .await
+            .context(format!(
+                "Failed to capture full history of window {}",
+                window_id
+            ))?;
+        check_tmux_output(output, &format!("capture-full-history {}", window_id))
     }
 
     async fn resize_pane(&self, window_id: u32, width: u16, height: u16) -> Result<()> {
@@ -172,6 +199,19 @@ impl TmuxManager {
             .output()
             .await
             .context("Failed to create tmux session")?;
+
+        let output = Command::new("tmux")
+            .args([
+                "set-option",
+                "-t",
+                &self.session_name,
+                "history-limit",
+                "10000",
+            ])
+            .output()
+            .await
+            .context("Failed to set history-limit")?;
+        check_tmux_status(output, "set history-limit")?;
 
         for i in 1..num_windows {
             Command::new("tmux")
@@ -433,6 +473,19 @@ mod tests {
         async fn capture_pane(&self, _window_id: u32) -> Result<String> {
             Ok(self.capture_output.clone())
         }
+    }
+
+    #[tokio::test]
+    async fn capture_full_history_default_falls_back_to_capture_pane_with_escapes() {
+        let mock = MockTmuxSender {
+            capture_output: "mock full history".to_string(),
+        };
+
+        let result = mock.capture_full_history(0).await.unwrap();
+        assert_eq!(
+            result, "mock full history",
+            "capture_full_history: default impl should fall back to capture_pane_with_escapes → capture_pane"
+        );
     }
 
     #[tokio::test]

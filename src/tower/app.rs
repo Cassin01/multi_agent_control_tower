@@ -476,6 +476,10 @@ impl TowerApp {
             return Ok(());
         }
 
+        if self.expert_panel_display.is_scrolling() {
+            return Ok(());
+        }
+
         const INPUT_PAUSE_DURATION: Duration = Duration::from_millis(500);
         if self.last_input_time.elapsed() < INPUT_PAUSE_DURATION {
             return Ok(());
@@ -788,9 +792,32 @@ impl TowerApp {
         code: KeyCode,
         modifiers: KeyModifiers,
     ) -> Result<()> {
+        // ESC exits scroll mode without forwarding to tmux
+        if code == KeyCode::Esc && self.expert_panel_display.is_scrolling() {
+            self.expert_panel_display.exit_scroll_mode();
+            return Ok(());
+        }
+
         match code {
             KeyCode::PageUp => {
-                self.expert_panel_display.scroll_up();
+                if !self.expert_panel_display.is_scrolling() {
+                    if let Some(expert_id) = self.expert_panel_display.expert_id() {
+                        match self.claude.capture_full_history(expert_id).await {
+                            Ok(raw) => {
+                                self.expert_panel_display.enter_scroll_mode(&raw);
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "Failed to capture full history for expert {}: {}",
+                                    expert_id,
+                                    e
+                                );
+                            }
+                        }
+                    }
+                } else {
+                    self.expert_panel_display.scroll_up();
+                }
                 return Ok(());
             }
             KeyCode::PageDown => {
