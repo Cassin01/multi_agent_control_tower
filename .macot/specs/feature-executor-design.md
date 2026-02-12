@@ -475,10 +475,10 @@ User          TowerApp         FeatureExecutor     TaskParser      Claude(tmux) 
  |               |                   |<--ok------------|                |                |
  |               |                   |                 |                |                |
  |               |  [Session Reset #1]                 |                |                |
- |               |--send_exit(id)------------------------------------------->|           |
- |               |               ... exit_wait (3s) ...                |                |
+ |               |--send_exit(id)-------------------------------------->|                |
+ |               |                ... exit_wait (3s) ...                |                |
  |               |--launch_claude(id, dir, instr)---------------------->|                |
- |               |               ... poll pane for ready ...           |                |
+ |               |               ... poll pane for ready ...            |                |
  |               |<--"bypass permissions"-------------------------------|                |
  |               |                   |                 |                |                |
  |               |                   |--parse_tasks()->|                |                |
@@ -486,7 +486,7 @@ User          TowerApp         FeatureExecutor     TaskParser      Claude(tmux) 
  |               |                   |--next_batch()-->|                |                |
  |               |                   |<--[15,16,17,18]-|                |                |
  |               |<--prompt----------|                 |                |                |
- |               |--send_keys--------------------------------------------------->|      |
+ |               |--send_keys------------------------------------------>|                |
  |               |                   |                 |                |                |
  |               |     ... N seconds pass (WaitingPollDelay) ...       |                |
  |               |                   |                 |                |                |

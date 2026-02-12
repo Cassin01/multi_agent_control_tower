@@ -83,6 +83,7 @@ impl HelpModal {
                 "Ctrl+W",
                 "Launch expert in worktree (uses task input as branch name)",
             ),
+            Self::key_line("Ctrl+G", "Execute feature / Cancel execution"),
             Self::key_line("Ctrl+X", "View report for selected expert"),
             Self::nested_subsection_title("Cursor Movement"),
             Self::key_line("Ctrl+B / Ctrl+F", "Move cursor left / right"),
@@ -283,6 +284,24 @@ mod tests {
         assert!(
             text.contains("Esc") && text.contains("Exit scroll mode"),
             "build_help_lines: should show Esc for exiting scroll mode"
+        );
+    }
+
+    #[test]
+    fn help_text_shows_ctrl_g_for_feature_execution() {
+        let modal = HelpModal::new();
+        let lines = modal.build_help_lines();
+        let text: String = lines
+            .iter()
+            .flat_map(|line| line.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(
+            text.contains("Ctrl+G"),
+            "build_help_lines: should show Ctrl+G for feature execution"
+        );
+        assert!(
+            text.contains("Execute feature"),
+            "build_help_lines: should describe feature execution functionality"
         );
     }
 

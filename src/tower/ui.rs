@@ -36,6 +36,9 @@ impl UI {
     }
 
     pub fn render(frame: &mut Frame, app: &mut TowerApp) {
+        let badge = app.feature_executor().and_then(|e| e.execution_badge());
+        app.status_display().set_execution_badge(badge);
+
         // Dynamic height: expert_count + 2 (borders), minimum 3
         let expert_height = (app.status_display().expert_count() + 2).max(3) as u16;
         let panel_visible = app.expert_panel_display().is_visible();

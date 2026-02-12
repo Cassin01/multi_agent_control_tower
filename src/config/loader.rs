@@ -27,6 +27,36 @@ pub struct TimeoutConfig {
     pub graceful_shutdown: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FeatureExecutionConfig {
+    #[serde(default = "FeatureExecutionConfig::default_batch_size")]
+    pub batch_size: usize,
+    #[serde(default = "FeatureExecutionConfig::default_poll_delay_secs")]
+    pub poll_delay_secs: u64,
+    #[serde(default = "FeatureExecutionConfig::default_exit_wait_secs")]
+    pub exit_wait_secs: u64,
+    #[serde(default = "FeatureExecutionConfig::default_ready_timeout_secs")]
+    pub ready_timeout_secs: u64,
+}
+
+impl Default for FeatureExecutionConfig {
+    fn default() -> Self {
+        Self {
+            batch_size: 4,
+            poll_delay_secs: 30,
+            exit_wait_secs: 3,
+            ready_timeout_secs: 60,
+        }
+    }
+}
+
+impl FeatureExecutionConfig {
+    fn default_batch_size() -> usize { 4 }
+    fn default_poll_delay_secs() -> u64 { 30 }
+    fn default_exit_wait_secs() -> u64 { 3 }
+    fn default_ready_timeout_secs() -> u64 { 60 }
+}
+
 impl Default for TimeoutConfig {
     fn default() -> Self {
         Self {
@@ -43,6 +73,8 @@ pub struct Config {
     pub experts: Vec<ExpertConfig>,
     #[serde(default)]
     pub timeouts: TimeoutConfig,
+    #[serde(default)]
+    pub feature_execution: FeatureExecutionConfig,
     #[serde(default = "Config::default_role_instructions_path")]
     pub role_instructions_path: PathBuf,
     #[serde(skip)]
@@ -80,6 +112,7 @@ impl Default for Config {
                 },
             ],
             timeouts: TimeoutConfig::default(),
+            feature_execution: FeatureExecutionConfig::default(),
             role_instructions_path: Self::default_role_instructions_path(),
             project_path: PathBuf::new(),
             queue_path: PathBuf::new(),
@@ -459,6 +492,45 @@ experts:
             config.status_file_path(3),
             "/tmp/project/.macot/status/expert3"
         );
+    }
+
+    #[test]
+    fn feature_execution_config_defaults() {
+        let config = FeatureExecutionConfig::default();
+        assert_eq!(config.batch_size, 4, "feature_execution_config: default batch_size should be 4");
+        assert_eq!(config.poll_delay_secs, 30, "feature_execution_config: default poll_delay_secs should be 30");
+        assert_eq!(config.exit_wait_secs, 3, "feature_execution_config: default exit_wait_secs should be 3");
+        assert_eq!(config.ready_timeout_secs, 60, "feature_execution_config: default ready_timeout_secs should be 60");
+    }
+
+    #[test]
+    fn feature_execution_config_in_default_config() {
+        let config = Config::default();
+        assert_eq!(config.feature_execution.batch_size, 4);
+        assert_eq!(config.feature_execution.poll_delay_secs, 30);
+    }
+
+    #[test]
+    fn feature_execution_config_partial_yaml_override() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.yaml");
+
+        let yaml = r#"
+session_prefix: "test"
+experts:
+  - name: "dev"
+    color: "cyan"
+feature_execution:
+  batch_size: 8
+  poll_delay_secs: 60
+"#;
+        std::fs::write(&config_path, yaml).unwrap();
+
+        let config = Config::load(Some(config_path)).unwrap();
+        assert_eq!(config.feature_execution.batch_size, 8, "feature_execution_config: overridden batch_size");
+        assert_eq!(config.feature_execution.poll_delay_secs, 60, "feature_execution_config: overridden poll_delay_secs");
+        assert_eq!(config.feature_execution.exit_wait_secs, 3, "feature_execution_config: non-overridden exit_wait_secs keeps default");
+        assert_eq!(config.feature_execution.ready_timeout_secs, 60, "feature_execution_config: non-overridden ready_timeout_secs keeps default");
     }
 
     #[test]
