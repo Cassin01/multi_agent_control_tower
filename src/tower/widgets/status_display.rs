@@ -29,6 +29,7 @@ pub struct StatusDisplay {
     expert_reports: HashSet<u32>,
     expert_working_dirs: HashMap<u32, String>,
     project_path: String,
+    execution_badge: Option<String>,
 }
 
 impl StatusDisplay {
@@ -41,6 +42,7 @@ impl StatusDisplay {
             expert_reports: HashSet::new(),
             expert_working_dirs: HashMap::new(),
             project_path: String::new(),
+            execution_badge: None,
         }
     }
 
@@ -67,6 +69,15 @@ impl StatusDisplay {
 
     pub fn set_project_path(&mut self, path: String) {
         self.project_path = path;
+    }
+
+    pub fn set_execution_badge(&mut self, badge: Option<String>) {
+        self.execution_badge = badge;
+    }
+
+    #[allow(dead_code)]
+    pub fn execution_badge(&self) -> Option<&str> {
+        self.execution_badge.as_deref()
     }
 
     fn format_relative_path(pane_path: &str, project_path: &str) -> String {
@@ -203,12 +214,17 @@ impl StatusDisplay {
 
         let border_style = Style::default().fg(ratatui::style::Color::DarkGray);
 
+        let title = match &self.execution_badge {
+            Some(badge) => format!("Experts [{}]", badge),
+            None => "Experts".to_string(),
+        };
+
         let list = List::new(items)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
                     .border_style(border_style)
-                    .title("Experts"),
+                    .title(title),
             )
             .highlight_style(
                 Style::default()
@@ -467,6 +483,52 @@ mod tests {
             StatusDisplay::format_relative_path("/home/user/project", ""),
             "",
             "format_relative_path: empty project path should return empty string"
+        );
+    }
+
+    // --- Task 11.1: Execution badge rendering tests ---
+
+    #[test]
+    fn execution_badge_shows_feature_name_when_set() {
+        let mut display = StatusDisplay::new();
+        display.set_execution_badge(Some("> my-feature".to_string()));
+        assert_eq!(
+            display.execution_badge(),
+            Some("> my-feature"),
+            "execution_badge: should return set badge value"
+        );
+    }
+
+    #[test]
+    fn execution_badge_shows_resetting_when_set() {
+        let mut display = StatusDisplay::new();
+        display.set_execution_badge(Some("~ resetting...".to_string()));
+        assert_eq!(
+            display.execution_badge(),
+            Some("~ resetting..."),
+            "execution_badge: should return resetting badge"
+        );
+    }
+
+    #[test]
+    fn execution_badge_absent_when_none() {
+        let display = StatusDisplay::new();
+        assert_eq!(
+            display.execution_badge(),
+            None,
+            "execution_badge: should be None by default"
+        );
+    }
+
+    #[test]
+    fn execution_badge_cleared_when_set_to_none() {
+        let mut display = StatusDisplay::new();
+        display.set_execution_badge(Some("> feature".to_string()));
+        display.set_execution_badge(None);
+        assert_eq!(
+            display.execution_badge(),
+            None,
+            "execution_badge: should be None after clearing"
         );
     }
 }

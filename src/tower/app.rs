@@ -8,13 +8,14 @@ use std::time::{Duration, Instant};
 use crate::config::Config;
 use crate::context::{AvailableRoles, ContextStore, Decision, ExpertContext, SessionExpertRoles};
 use crate::experts::ExpertRegistry;
+use crate::feature::executor::{ExecutionPhase, FeatureExecutor};
 use crate::instructions::{load_instruction_with_template, write_instruction_file};
 use crate::models::ExpertState;
 use crate::models::{ExpertInfo, Role};
 use crate::queue::{MessageRouter, QueueManager};
 use crate::session::{
-    ClaudeManager, ExpertStateDetector, TmuxManager, WorktreeLaunchResult, WorktreeLaunchState,
-    WorktreeManager,
+    ClaudeManager, ExpertStateDetector, TmuxManager, TmuxSender, WorktreeLaunchResult,
+    WorktreeLaunchState, WorktreeManager,
 };
 use crate::tower::widgets::ExpertEntry;
 use crate::utils::sanitize_branch_name;
@@ -109,6 +110,8 @@ pub struct TowerApp {
 
     worktree_manager: WorktreeManager,
     worktree_launch_state: WorktreeLaunchState,
+
+    feature_executor: Option<FeatureExecutor>,
 }
 
 impl TowerApp {
@@ -199,6 +202,8 @@ impl TowerApp {
 
             worktree_manager,
             worktree_launch_state: WorktreeLaunchState::default(),
+
+            feature_executor: None,
 
             config,
         }
@@ -722,6 +727,13 @@ impl TowerApp {
                         self.launch_expert_in_worktree().await?;
                     }
 
+                    if key.code == KeyCode::Char('g')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                        && self.focus == FocusArea::TaskInput
+                    {
+                        self.handle_feature_execution().await?;
+                    }
+
                     if key.code == KeyCode::Char('x')
                         && key.modifiers.contains(KeyModifiers::CONTROL)
                         && self.focus == FocusArea::TaskInput
@@ -1208,6 +1220,284 @@ impl TowerApp {
         Ok(())
     }
 
+    async fn handle_feature_execution(&mut self) -> Result<()> {
+        if let Some(ref mut executor) = self.feature_executor {
+            executor.cancel();
+            self.feature_executor = None;
+            self.set_message("Feature execution cancelled".to_string());
+            return Ok(());
+        }
+
+        self.start_feature_execution().await
+    }
+
+    async fn start_feature_execution(&mut self) -> Result<()> {
+        let expert_id = match self.status_display.selected_expert_id() {
+            Some(id) => id,
+            None => {
+                self.set_message("No expert selected".to_string());
+                return Ok(());
+            }
+        };
+
+        let feature_name = self.task_input.content().trim().to_string();
+        if feature_name.is_empty() {
+            self.set_message("Enter a feature name in the task input".to_string());
+            return Ok(());
+        }
+
+        let expert_state = self.detector.detect_state(expert_id);
+        if expert_state != ExpertState::Idle {
+            self.set_message(format!(
+                "Expert must be idle to start feature execution (current: {})",
+                expert_state.description()
+            ));
+            return Ok(());
+        }
+
+        let expert_name = self.config.get_expert_name(expert_id);
+        let instruction_role = self
+            .session_roles
+            .get_role(expert_id)
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| self.config.get_expert_role(expert_id));
+
+        let instruction_result = load_instruction_with_template(
+            &self.config.core_instructions_path,
+            &self.config.role_instructions_path,
+            &instruction_role,
+            expert_id,
+            &expert_name,
+            &self.config.status_file_path(expert_id),
+        )?;
+        let instruction_file = if !instruction_result.content.is_empty() {
+            Some(write_instruction_file(
+                &self.config.queue_path,
+                expert_id,
+                &instruction_result.content,
+            )?)
+        } else {
+            None
+        };
+
+        let working_dir = self.config.project_path.to_str().unwrap_or(".").to_string();
+
+        let mut executor = FeatureExecutor::new(
+            feature_name.clone(),
+            expert_id,
+            &self.config.feature_execution,
+            &self.config.project_path,
+            instruction_file,
+            working_dir,
+        );
+
+        match executor.validate() {
+            Ok(()) => {
+                self.claude.send_exit(expert_id).await?;
+                executor.set_phase(ExecutionPhase::ExitingExpert {
+                    started_at: Instant::now(),
+                });
+                self.feature_executor = Some(executor);
+                self.task_input.clear();
+                self.set_message(format!("Feature execution started: {}", feature_name));
+            }
+            Err(e) => {
+                self.set_message(format!("Feature execution error: {}", e));
+            }
+        }
+
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub fn feature_executor(&self) -> Option<&FeatureExecutor> {
+        self.feature_executor.as_ref()
+    }
+
+    pub async fn poll_feature_executor(&mut self) -> Result<()> {
+        let mut executor = match self.feature_executor.take() {
+            Some(e) => e,
+            None => return Ok(()),
+        };
+
+        match executor.phase() {
+            ExecutionPhase::Idle => {}
+
+            ExecutionPhase::ExitingExpert { started_at } => {
+                let started_at = *started_at;
+                if started_at.elapsed() >= executor.exit_wait() {
+                    let expert_id = executor.expert_id();
+                    if let Err(e) = self.detector.set_marker(expert_id, "pending") {
+                        tracing::warn!("Failed to reset status marker for expert {}: {}", expert_id, e);
+                    }
+                    self.claude
+                        .launch_claude(
+                            expert_id,
+                            executor.working_dir(),
+                            executor.instruction_file().map(|p| p.as_path()),
+                        )
+                        .await?;
+                    executor.set_phase(ExecutionPhase::RelaunchingExpert {
+                        started_at: Instant::now(),
+                    });
+                    self.set_message(format!(
+                        "~ {}: resetting expert... | {}/{} tasks",
+                        executor.feature_name(),
+                        executor.completed_tasks(),
+                        executor.total_tasks()
+                    ));
+                }
+            }
+
+            ExecutionPhase::RelaunchingExpert { started_at } => {
+                let started_at = *started_at;
+                let expert_id = executor.expert_id();
+                let timeout = executor.ready_timeout();
+                match self.tmux.capture_pane(expert_id).await {
+                    Ok(content) => {
+                        if content.contains("bypass permissions") {
+                            executor.set_phase(ExecutionPhase::SendingBatch);
+                        } else if started_at.elapsed() >= timeout {
+                            executor.set_phase(ExecutionPhase::Failed(
+                                "Timed out waiting for Claude to restart".into(),
+                            ));
+                        }
+                    }
+                    Err(e) => {
+                        if started_at.elapsed() >= timeout {
+                            executor.set_phase(ExecutionPhase::Failed(format!(
+                                "Failed to detect Claude ready: {}",
+                                e
+                            )));
+                        }
+                    }
+                }
+            }
+
+            ExecutionPhase::SendingBatch => {
+                match executor.parse_tasks() {
+                    Ok(tasks) => {
+                        let batch = executor.next_batch(&tasks);
+                        if batch.is_empty() {
+                            executor.set_phase(ExecutionPhase::Completed);
+                        } else {
+                            let prompt = executor.build_prompt(&batch);
+                            let expert_id = executor.expert_id();
+                            executor.record_batch_sent(&batch);
+                            self.claude.send_keys_with_enter(expert_id, &prompt).await?;
+                            // NOTE: Because the next task may be polled,
+                            // set the marker manually.
+                            if let Err(e) = self.detector.set_marker(expert_id, "processing") {
+                                tracing::warn!(
+                                    "Failed to set processing marker for expert {}: {}",
+                                    expert_id,
+                                    e
+                                );
+                            }
+                            let batch_numbers = executor.current_batch().join(", ");
+                            self.set_message(format!(
+                                "> {}: {}/{} tasks | Batch: {}",
+                                executor.feature_name(),
+                                executor.completed_tasks(),
+                                executor.total_tasks(),
+                                batch_numbers
+                            ));
+                            executor.set_phase(ExecutionPhase::WaitingPollDelay {
+                                started_at: Instant::now(),
+                            });
+                        }
+                    }
+                    Err(e) => {
+                        executor.set_phase(ExecutionPhase::Failed(format!(
+                            "Failed to parse task file: {}",
+                            e
+                        )));
+                    }
+                }
+            }
+
+            ExecutionPhase::WaitingPollDelay { started_at } => {
+                let started_at = *started_at;
+                if started_at.elapsed() >= executor.poll_delay() {
+                    executor.set_phase(ExecutionPhase::PollingStatus);
+                }
+            }
+
+            ExecutionPhase::PollingStatus => {
+                let expert_id = executor.expert_id();
+                let state = self.detector.detect_state(expert_id);
+                if state == ExpertState::Idle {
+                    match executor.parse_tasks() {
+                        Ok(tasks) => {
+                            let remaining = tasks.iter().filter(|t| !t.completed).count();
+                            if remaining == 0 {
+                                executor.clear_batch_completion_wait();
+                                executor.set_phase(ExecutionPhase::Completed);
+                            } else if !executor.is_previous_batch_completed(&tasks) {
+                                executor.start_batch_completion_wait();
+                                let elapsed = executor.batch_completion_wait_elapsed().unwrap();
+                                if elapsed >= executor.poll_delay() * 3 {
+                                    tracing::warn!(
+                                        "Previous batch tasks not all completed after {:.1}s, proceeding anyway",
+                                        elapsed.as_secs_f64()
+                                    );
+                                    executor.clear_batch_completion_wait();
+                                    self.claude.send_exit(expert_id).await?;
+                                    executor.set_phase(ExecutionPhase::ExitingExpert {
+                                        started_at: Instant::now(),
+                                    });
+                                } else {
+                                    tracing::debug!(
+                                        "Previous batch not fully completed, waiting ({:.1}s)",
+                                        elapsed.as_secs_f64()
+                                    );
+                                }
+                            } else {
+                                executor.clear_batch_completion_wait();
+                                self.claude.send_exit(expert_id).await?;
+                                executor.set_phase(ExecutionPhase::ExitingExpert {
+                                    started_at: Instant::now(),
+                                });
+                            }
+                        }
+                        Err(e) => {
+                            executor.set_phase(ExecutionPhase::Failed(format!(
+                                "Failed to re-read task file: {}",
+                                e
+                            )));
+                        }
+                    }
+                }
+            }
+
+            ExecutionPhase::Completed => {}
+            ExecutionPhase::Failed(_) => {}
+        }
+
+        // Handle terminal states: report and discard executor
+        match executor.phase() {
+            ExecutionPhase::Completed => {
+                self.set_message(format!(
+                    "Feature '{}' execution completed ({}/{} tasks)",
+                    executor.feature_name(),
+                    executor.completed_tasks(),
+                    executor.total_tasks()
+                ));
+                // Don't put executor back — execution is done
+            }
+            ExecutionPhase::Failed(msg) => {
+                self.set_message(format!("Feature execution failed: {}", msg));
+                // Don't put executor back — execution failed
+            }
+            _ => {
+                // Put executor back for next poll cycle
+                self.feature_executor = Some(executor);
+            }
+        }
+
+        Ok(())
+    }
+
     pub async fn poll_worktree_launch(&mut self) -> Result<()> {
         let state = std::mem::take(&mut self.worktree_launch_state);
         match state {
@@ -1288,6 +1578,7 @@ impl TowerApp {
 
             self.poll_expert_panel().await?;
             self.poll_worktree_launch().await?;
+            self.poll_feature_executor().await?;
 
             let loop_elapsed = loop_start.elapsed();
             if loop_elapsed.as_millis() > 20 {
@@ -2111,6 +2402,108 @@ mod tests {
                 WorktreeLaunchState::InProgress { .. }
             ),
             "poll_worktree_launch: should stay InProgress while task is running"
+        );
+    }
+
+    // --- Task 8.1: Feature execution tests (P7: Cancellation Safety) ---
+
+    #[test]
+    fn feature_executor_starts_none() {
+        let app = create_test_app();
+        assert!(
+            app.feature_executor.is_none(),
+            "feature_executor: should start as None"
+        );
+    }
+
+    #[tokio::test]
+    async fn start_feature_execution_rejects_empty_input() {
+        let mut app = create_test_app();
+
+        app.start_feature_execution().await.unwrap();
+
+        assert!(
+            app.message()
+                .unwrap()
+                .contains("No expert selected")
+                || app
+                    .message()
+                    .unwrap()
+                    .contains("Enter a feature name"),
+            "start_feature_execution: should reject when no expert selected or empty input, got: {:?}",
+            app.message()
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_feature_execution_cancels_when_running() {
+        let mut app = create_test_app();
+
+        // Set up a dummy executor in SendingBatch phase
+        let config = crate::config::FeatureExecutionConfig::default();
+        let temp = tempfile::TempDir::new().unwrap();
+        let specs = temp.path().join(".macot").join("specs");
+        std::fs::create_dir_all(&specs).unwrap();
+        std::fs::write(specs.join("test-tasks.md"), "- [ ] 1. Task\n").unwrap();
+
+        let mut executor = FeatureExecutor::new(
+            "test".to_string(),
+            0,
+            &config,
+            &temp.path().to_path_buf(),
+            None,
+            "/tmp".to_string(),
+        );
+        executor.set_phase(ExecutionPhase::SendingBatch);
+        app.feature_executor = Some(executor);
+
+        // Ctrl+G while running should cancel
+        app.handle_feature_execution().await.unwrap();
+
+        assert!(
+            app.feature_executor.is_none(),
+            "handle_feature_execution: should clear executor on cancel"
+        );
+        assert_eq!(
+            app.message(),
+            Some("Feature execution cancelled"),
+            "handle_feature_execution: should show cancellation message"
+        );
+    }
+
+    #[tokio::test]
+    async fn start_feature_execution_rejects_missing_task_file() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let status_dir = temp.path().join(".macot").join("status");
+        std::fs::create_dir_all(&status_dir).unwrap();
+        std::fs::write(status_dir.join("expert0"), "pending").unwrap();
+
+        let config = Config::default().with_project_path(temp.path().to_path_buf());
+        let wm = WorktreeManager::new(config.project_path.clone());
+        let mut app = TowerApp::new(config, wm);
+
+        // Set experts and select first one
+        app.status_display.set_experts(vec![ExpertEntry {
+            expert_id: 0,
+            expert_name: "Alyosha".to_string(),
+            state: ExpertState::Idle,
+        }]);
+        app.status_display.next(); // Select first expert
+
+        app.task_input.set_content("nonexistent-feature".to_string());
+
+        app.start_feature_execution().await.unwrap();
+
+        assert!(
+            app.feature_executor.is_none(),
+            "start_feature_execution: should not create executor when task file missing"
+        );
+        assert!(
+            app.message().unwrap().contains("error")
+                || app.message().unwrap().contains("not found")
+                || app.message().unwrap().contains("Error"),
+            "start_feature_execution: should show error about missing task file, got: {:?}",
+            app.message()
         );
     }
 }

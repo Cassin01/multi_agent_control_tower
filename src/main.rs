@@ -7,6 +7,7 @@ mod commands;
 mod config;
 mod context;
 mod experts;
+mod feature;
 mod instructions;
 mod models;
 mod queue;
