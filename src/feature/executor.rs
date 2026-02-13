@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Result};
@@ -50,7 +50,7 @@ impl FeatureExecutor {
         feature_name: String,
         expert_id: u32,
         config: &FeatureExecutionConfig,
-        project_path: &PathBuf,
+        project_path: &Path,
         instruction_file: Option<PathBuf>,
         working_dir: String,
     ) -> Self {
@@ -203,6 +203,7 @@ impl FeatureExecutor {
         &self.current_batch
     }
 
+    #[cfg(test)]
     pub fn design_file(&self) -> Option<&PathBuf> {
         self.design_file.as_ref()
     }
