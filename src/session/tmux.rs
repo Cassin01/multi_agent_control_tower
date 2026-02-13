@@ -74,6 +74,14 @@ impl TmuxSender for TmuxManager {
         check_tmux_status(output, &format!("send-keys to window {}", window_id))
     }
 
+    async fn send_keys_with_enter(&self, window_id: u32, keys: &str) -> Result<()> {
+        self.send_keys(window_id, "C-u").await?;
+        self.send_keys(window_id, keys).await?;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        self.send_keys(window_id, "Enter").await?;
+        Ok(())
+    }
+
     async fn capture_pane(&self, window_id: u32) -> Result<String> {
         let output = Command::new("tmux")
             .args([
