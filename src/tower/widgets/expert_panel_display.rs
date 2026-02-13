@@ -206,7 +206,6 @@ impl ExpertPanelDisplay {
             Color::DarkGray
         };
 
-        // let focus_indicator = if self.focused { " [FOCUSED]" } else { "" };
         let history_indicator = if self.is_scrolling { " [SCROLL MODE]" } else { "" };
         let scroll_indicator = if !self.auto_scroll {
             format!(

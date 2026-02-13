@@ -1236,10 +1236,9 @@ mod property_tests {
 
                 // Verify priority grouping
                 if high_priority_count > 0 {
-                    // All high priority messages should be at the beginning
-                    for i in 0..high_priority_count {
+                    for msg in pending_messages.iter().take(high_priority_count) {
                         assert_eq!(
-                            pending_messages[i].message.priority,
+                            msg.message.priority,
                             MessagePriority::High,
                             "High priority messages should come first"
                         );
@@ -1247,10 +1246,9 @@ mod property_tests {
                 }
 
                 if normal_priority_count > 0 {
-                    // All normal priority messages should come after high priority
-                    for i in high_priority_count..(high_priority_count + normal_priority_count) {
+                    for msg in pending_messages.iter().skip(high_priority_count).take(normal_priority_count) {
                         assert_eq!(
-                            pending_messages[i].message.priority,
+                            msg.message.priority,
                             MessagePriority::Normal,
                             "Normal priority messages should come after high priority"
                         );
@@ -1258,10 +1256,9 @@ mod property_tests {
                 }
 
                 if low_priority_count > 0 {
-                    // All low priority messages should come last
-                    for i in (high_priority_count + normal_priority_count)..pending_messages.len() {
+                    for msg in pending_messages.iter().skip(high_priority_count + normal_priority_count) {
                         assert_eq!(
-                            pending_messages[i].message.priority,
+                            msg.message.priority,
                             MessagePriority::Low,
                             "Low priority messages should come last"
                         );

@@ -3,8 +3,10 @@ use regex::Regex;
 #[derive(Debug, Clone)]
 pub struct TaskEntry {
     pub number: String,
+    #[allow(dead_code)]
     pub title: String,
     pub completed: bool,
+    #[allow(dead_code)]
     pub indent_level: usize,
 }
 

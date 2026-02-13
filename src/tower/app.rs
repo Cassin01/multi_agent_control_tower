@@ -2034,7 +2034,7 @@ mod tests {
 
         // Verify messaging system components are initialized
         assert!(app.message_router.is_some());
-        assert!(app.expert_registry.len() > 0 || app.config.experts.is_empty());
+        assert!(!app.expert_registry.is_empty() || app.config.experts.is_empty());
     }
 
     #[test]
