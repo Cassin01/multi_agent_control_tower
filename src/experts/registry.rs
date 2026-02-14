@@ -267,6 +267,43 @@ impl ExpertRegistry {
         self.experts.is_empty()
     }
 
+    /// Update the role of an expert, maintaining lookup table consistency
+    pub fn update_expert_role(
+        &mut self,
+        expert_id: ExpertId,
+        new_role: Role,
+    ) -> Result<(), RegistryError> {
+        let old_role = self
+            .experts
+            .get(&expert_id)
+            .ok_or(RegistryError::ExpertNotFound(expert_id))?
+            .role
+            .clone();
+
+        // Remove from old role lookup
+        if let Some(role_experts) = self.role_to_ids.get_mut(&old_role) {
+            role_experts.retain(|&id| id != expert_id);
+            if role_experts.is_empty() {
+                self.role_to_ids.remove(&old_role);
+            }
+        }
+
+        // Update expert's role
+        let expert = self
+            .experts
+            .get_mut(&expert_id)
+            .ok_or(RegistryError::ExpertNotFound(expert_id))?;
+        expert.role = new_role.clone();
+
+        // Add to new role lookup
+        self.role_to_ids
+            .entry(new_role)
+            .or_default()
+            .push(expert_id);
+
+        Ok(())
+    }
+
     /// Validate if a state transition is allowed
     ///
     /// Currently allows all transitions, but can be extended with business logic
@@ -602,6 +639,72 @@ mod tests {
         let registry = ExpertRegistry::default();
         assert!(registry.is_empty());
         assert_eq!(registry.len(), 0);
+    }
+
+    #[test]
+    fn update_expert_role_updates_expert_and_lookups() {
+        let mut registry = ExpertRegistry::new();
+        let expert = create_test_expert("backend-dev", Role::specialist("backend"));
+        let expert_id = registry.register_expert(expert).unwrap();
+
+        // Verify initial role
+        assert_eq!(registry.find_by_role_str("backend"), vec![expert_id]);
+        assert!(registry.find_by_role_str("general").is_empty());
+
+        // Update role
+        registry
+            .update_expert_role(expert_id, Role::specialist("general"))
+            .unwrap();
+
+        // Verify expert's role is updated
+        let expert = registry.get_expert(expert_id).unwrap();
+        assert_eq!(expert.role, Role::specialist("general"));
+
+        // Verify old role lookup no longer contains the expert
+        assert!(registry.find_by_role_str("backend").is_empty());
+
+        // Verify new role lookup contains the expert
+        assert_eq!(registry.find_by_role_str("general"), vec![expert_id]);
+    }
+
+    #[test]
+    fn update_expert_role_nonexistent_expert_fails() {
+        let mut registry = ExpertRegistry::new();
+        let result = registry.update_expert_role(999, Role::Developer);
+        assert!(matches!(result, Err(RegistryError::ExpertNotFound(999))));
+    }
+
+    #[test]
+    fn update_expert_role_cleans_up_empty_old_role_entry() {
+        let mut registry = ExpertRegistry::new();
+        let expert = create_test_expert("solo", Role::specialist("backend"));
+        let expert_id = registry.register_expert(expert).unwrap();
+
+        registry
+            .update_expert_role(expert_id, Role::specialist("general"))
+            .unwrap();
+
+        // Old role key should be removed entirely
+        assert!(registry.find_by_role(&Role::specialist("backend")).is_empty());
+    }
+
+    #[test]
+    fn update_expert_role_preserves_other_experts_in_same_role() {
+        let mut registry = ExpertRegistry::new();
+        let expert1 = create_test_expert("dev1", Role::specialist("backend"));
+        let expert2 = create_test_expert("dev2", Role::specialist("backend"));
+        let id1 = registry.register_expert(expert1).unwrap();
+        let id2 = registry.register_expert(expert2).unwrap();
+
+        // Move only expert1 to a new role
+        registry
+            .update_expert_role(id1, Role::specialist("general"))
+            .unwrap();
+
+        // expert2 should still be in backend
+        assert_eq!(registry.find_by_role_str("backend"), vec![id2]);
+        // expert1 should be in general
+        assert_eq!(registry.find_by_role_str("general"), vec![id1]);
     }
 }
 

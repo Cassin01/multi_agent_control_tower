@@ -937,6 +937,22 @@ impl TowerApp {
         }
 
         self.context_store.save_session_roles(&roles).await?;
+
+        // Sync session roles to expert registry for message routing
+        for i in 0..self.config.num_experts() {
+            if let Some(role_str) = roles.get_role(i) {
+                let new_role = Role::specialist(role_str.to_string());
+                if let Err(e) = self.expert_registry.update_expert_role(i, new_role.clone()) {
+                    tracing::warn!("Failed to update expert {} role in registry: {}", i, e);
+                }
+                if let Some(ref mut router) = self.message_router {
+                    if let Err(e) = router.expert_registry_mut().update_expert_role(i, new_role) {
+                        tracing::warn!("Failed to update expert {} role in router: {}", i, e);
+                    }
+                }
+            }
+        }
+
         self.session_roles = roles;
 
         Ok(())
@@ -956,6 +972,17 @@ impl TowerApp {
         self.context_store
             .save_session_roles(&self.session_roles)
             .await?;
+
+        // Sync role change to expert registry for message routing
+        let role = Role::specialist(new_role.to_string());
+        if let Err(e) = self.expert_registry.update_expert_role(expert_id, role.clone()) {
+            tracing::warn!("Failed to update expert {} role in registry: {}", expert_id, e);
+        }
+        if let Some(ref mut router) = self.message_router {
+            if let Err(e) = router.expert_registry_mut().update_expert_role(expert_id, role) {
+                tracing::warn!("Failed to update expert {} role in router: {}", expert_id, e);
+            }
+        }
 
         self.claude.send_exit(expert_id).await?;
         tokio::time::sleep(Duration::from_secs(3)).await;
