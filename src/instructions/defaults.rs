@@ -2,6 +2,7 @@
 /// These are used as fallback when user hasn't customized instructions.
 pub const DEFAULT_ARCHITECT: &str = include_str!("../../instructions/architect.md");
 pub const DEFAULT_BACKEND: &str = include_str!("../../instructions/backend.md");
+pub const DEFAULT_DEBUGGER: &str = include_str!("../../instructions/debugger.md");
 pub const DEFAULT_FRONTEND: &str = include_str!("../../instructions/frontend.md");
 pub const DEFAULT_PLANNER: &str = include_str!("../../instructions/planner.md");
 pub const DEFAULT_TESTER: &str = include_str!("../../instructions/tester.md");
@@ -13,6 +14,7 @@ pub fn get_default(role: &str) -> Option<&'static str> {
     match role {
         "architect" => Some(DEFAULT_ARCHITECT),
         "backend" => Some(DEFAULT_BACKEND),
+        "debugger" => Some(DEFAULT_DEBUGGER),
         "frontend" => Some(DEFAULT_FRONTEND),
         "planner" => Some(DEFAULT_PLANNER),
         "tester" => Some(DEFAULT_TESTER),
@@ -26,6 +28,7 @@ pub fn default_role_names() -> &'static [&'static str] {
     &[
         "architect",
         "backend",
+        "debugger",
         "frontend",
         "general",
         "planner",
@@ -41,6 +44,7 @@ mod tests {
     fn get_default_returns_content_for_known_roles() {
         assert!(get_default("architect").is_some());
         assert!(get_default("backend").is_some());
+        assert!(get_default("debugger").is_some());
         assert!(get_default("frontend").is_some());
         assert!(get_default("planner").is_some());
         assert!(get_default("tester").is_some());
@@ -58,6 +62,7 @@ mod tests {
         let names = default_role_names();
         assert!(names.contains(&"architect"));
         assert!(names.contains(&"backend"));
+        assert!(names.contains(&"debugger"));
         assert!(names.contains(&"frontend"));
         assert!(names.contains(&"planner"));
         assert!(names.contains(&"tester"));
@@ -68,6 +73,7 @@ mod tests {
     fn embedded_instructions_are_not_empty() {
         assert!(!DEFAULT_ARCHITECT.is_empty());
         assert!(!DEFAULT_BACKEND.is_empty());
+        assert!(!DEFAULT_DEBUGGER.is_empty());
         assert!(!DEFAULT_FRONTEND.is_empty());
         assert!(!DEFAULT_PLANNER.is_empty());
         assert!(!DEFAULT_TESTER.is_empty());
