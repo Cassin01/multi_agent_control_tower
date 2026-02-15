@@ -1,64 +1,28 @@
-.PHONY: build test clean fmt lint check install run
-
-# Build the project
-build:
+.PHONY: build test check clean install fmt fmt-check lint ci
+build: ## Build the project in release mode
 	cargo build --release
 
-# Run tests
-test:
+test: ## Run the test suite
 	cargo test
 
-# Clean build artifacts
-clean:
+check: ## Check compilation without building artifacts
+	cargo check
+
+clean: ## Clean build artifacts and report files
 	cargo clean
 	rm -rf .macot/reports/*.yaml
 
-# Format code
-fmt:
-	cargo fmt
-
-# Run clippy lints
-lint:
-	cargo clippy -- -D warnings
-
-# Check compilation without building
-check:
-	cargo check
-
-# Install the binary
-install: build
+install: build ## Install the binary from the local source
 	cargo install --path .
 
-# Run the application (for development)
-run:
-	cargo run -- $(ARGS)
+fmt: ## Format Rust source code
+	cargo fmt
 
-# Run with specific command
-start:
-	cargo run -- start $(ARGS)
+fmt-check: ## Verify Rust formatting without writing files
+	cargo fmt --check
 
-tower:
-	cargo run -- tower $(ARGS)
+lint: ## Run clippy lints and fail on warnings
+	cargo clippy -- -D warnings
 
-status:
-	cargo run -- status $(ARGS)
+ci: build lint fmt-check test ## Run local CI checks (build, lint, format, test)
 
-sessions:
-	cargo run -- sessions
-
-down:
-	cargo run -- down $(ARGS)
-
-# Create queue directories
-init-dirs:
-	mkdir -p .macot/reports .macot/sessions
-	mkdir -p instructions
-
-# Development helpers
-dev-setup: init-dirs
-	cp -n instructions/core.md.example instructions/core.md 2>/dev/null || true
-	cp -n instructions/architect.md.example instructions/architect.md 2>/dev/null || true
-
-# Watch for changes and rebuild
-watch:
-	cargo watch -x check -x test

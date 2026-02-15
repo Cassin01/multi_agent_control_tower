@@ -685,7 +685,9 @@ mod tests {
             .unwrap();
 
         // Old role key should be removed entirely
-        assert!(registry.find_by_role(&Role::specialist("backend")).is_empty());
+        assert!(registry
+            .find_by_role(&Role::specialist("backend"))
+            .is_empty());
     }
 
     #[test]

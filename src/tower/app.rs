@@ -9,7 +9,9 @@ use crate::config::Config;
 use crate::context::{AvailableRoles, ContextStore, Decision, ExpertContext, SessionExpertRoles};
 use crate::experts::ExpertRegistry;
 use crate::feature::executor::{ExecutionPhase, FeatureExecutor};
-use crate::instructions::{load_instruction_with_template, write_agents_file, write_instruction_file};
+use crate::instructions::{
+    load_instruction_with_template, write_agents_file, write_instruction_file,
+};
 use crate::models::ExpertState;
 use crate::models::{ExpertInfo, Role};
 use crate::queue::{MessageRouter, QueueManager};
@@ -389,10 +391,14 @@ impl TowerApp {
             .collect();
         self.status_display.set_expert_roles(roles);
 
-        let working_dirs = self.tmux.get_all_pane_current_paths().await.unwrap_or_else(|e| {
-            tracing::warn!("Failed to list pane current paths: {}", e);
-            std::collections::HashMap::new()
-        });
+        let working_dirs = self
+            .tmux
+            .get_all_pane_current_paths()
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!("Failed to list pane current paths: {}", e);
+                std::collections::HashMap::new()
+            });
         self.status_display.set_expert_working_dirs(working_dirs);
         self.status_display
             .set_project_path(self.config.project_path.display().to_string());
@@ -577,7 +583,8 @@ impl TowerApp {
             let preview_size = self.expert_panel_display.preview_size();
             let size_changed = preview_size != self.last_preview_size;
             let expert_changed = self.last_resized_expert_id != Some(expert_id);
-            let needs_resize = (size_changed || expert_changed) && preview_size.0 > 0 && preview_size.1 > 0;
+            let needs_resize =
+                (size_changed || expert_changed) && preview_size.0 > 0 && preview_size.1 > 0;
             let resize_all = needs_resize && size_changed;
             let resize_single = needs_resize && !size_changed;
             let num_experts = self.config.num_experts();
@@ -589,15 +596,24 @@ impl TowerApp {
                         .map(|id| {
                             let claude = &claude;
                             async move {
-                                if let Err(e) = claude.resize_pane(id, preview_size.0, preview_size.1).await {
-                                    tracing::warn!("Failed to resize pane for expert {}: {}", id, e);
+                                if let Err(e) =
+                                    claude.resize_pane(id, preview_size.0, preview_size.1).await
+                                {
+                                    tracing::warn!(
+                                        "Failed to resize pane for expert {}: {}",
+                                        id,
+                                        e
+                                    );
                                 }
                             }
                         })
                         .collect();
                     futures::future::join_all(resize_futures).await;
                 } else if resize_single {
-                    if let Err(e) = claude.resize_pane(expert_id, preview_size.0, preview_size.1).await {
+                    if let Err(e) = claude
+                        .resize_pane(expert_id, preview_size.0, preview_size.1)
+                        .await
+                    {
                         tracing::warn!("Failed to resize pane for expert {}: {}", expert_id, e);
                     }
                 }
@@ -767,9 +783,7 @@ impl TowerApp {
                             KeyCode::Enter | KeyCode::Char('q') => {
                                 self.report_display.close_detail();
                             }
-                            KeyCode::Char('x')
-                                if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                            {
+                            KeyCode::Char('x') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 self.report_display.close_detail();
                             }
                             KeyCode::Up | KeyCode::Char('k') => self.report_display.scroll_up(),
@@ -1109,12 +1123,26 @@ impl TowerApp {
 
         // Sync role change to expert registry for message routing
         let role = Role::specialist(new_role.to_string());
-        if let Err(e) = self.expert_registry.update_expert_role(expert_id, role.clone()) {
-            tracing::warn!("Failed to update expert {} role in registry: {}", expert_id, e);
+        if let Err(e) = self
+            .expert_registry
+            .update_expert_role(expert_id, role.clone())
+        {
+            tracing::warn!(
+                "Failed to update expert {} role in registry: {}",
+                expert_id,
+                e
+            );
         }
         if let Some(ref mut router) = self.message_router {
-            if let Err(e) = router.expert_registry_mut().update_expert_role(expert_id, role) {
-                tracing::warn!("Failed to update expert {} role in router: {}", expert_id, e);
+            if let Err(e) = router
+                .expert_registry_mut()
+                .update_expert_role(expert_id, role)
+            {
+                tracing::warn!(
+                    "Failed to update expert {} role in router: {}",
+                    expert_id,
+                    e
+                );
             }
         }
 
@@ -1146,7 +1174,12 @@ impl TowerApp {
 
         let working_dir = self.resolve_expert_working_dir(expert_id).await;
         self.claude
-            .launch_claude(expert_id, &working_dir, instruction_file.as_deref(), agents_file.as_deref())
+            .launch_claude(
+                expert_id,
+                &working_dir,
+                instruction_file.as_deref(),
+                agents_file.as_deref(),
+            )
             .await?;
 
         if instruction_result.used_general_fallback {
@@ -1263,7 +1296,12 @@ impl TowerApp {
         };
 
         self.claude
-            .launch_claude(expert_id, &working_dir, instruction_file.as_deref(), agents_file.as_deref())
+            .launch_claude(
+                expert_id,
+                &working_dir,
+                instruction_file.as_deref(),
+                agents_file.as_deref(),
+            )
             .await?;
 
         if instruction_result.used_general_fallback {
@@ -1383,7 +1421,12 @@ impl TowerApp {
             };
 
             claude
-                .launch_claude(expert_id, &wt_path_str, instruction_file.as_deref(), agents_file.as_deref())
+                .launch_claude(
+                    expert_id,
+                    &wt_path_str,
+                    instruction_file.as_deref(),
+                    agents_file.as_deref(),
+                )
                 .await?;
 
             let ready = claude.wait_for_ready(expert_id, ready_timeout).await?;
@@ -1412,7 +1455,11 @@ impl TowerApp {
             executor.cancel();
             self.feature_executor = None;
             if let Err(e) = self.detector.set_marker(expert_id, "pending") {
-                tracing::warn!("Failed to reset status marker for expert {} on cancel: {}", expert_id, e);
+                tracing::warn!(
+                    "Failed to reset status marker for expert {} on cancel: {}",
+                    expert_id,
+                    e
+                );
             }
             self.set_message("Feature execution cancelled".to_string());
             return Ok(());
@@ -1523,7 +1570,11 @@ impl TowerApp {
                 if started_at.elapsed() >= executor.exit_wait() {
                     let expert_id = executor.expert_id();
                     if let Err(e) = self.detector.set_marker(expert_id, "pending") {
-                        tracing::warn!("Failed to reset status marker for expert {}: {}", expert_id, e);
+                        tracing::warn!(
+                            "Failed to reset status marker for expert {}: {}",
+                            expert_id,
+                            e
+                        );
                     }
                     self.claude
                         .launch_claude(
@@ -1546,7 +1597,10 @@ impl TowerApp {
                 }
             }
 
-            ExecutionPhase::RelaunchingExpert { started_at, ready_detected_at } => {
+            ExecutionPhase::RelaunchingExpert {
+                started_at,
+                ready_detected_at,
+            } => {
                 let started_at = *started_at;
                 let ready_detected_at = *ready_detected_at;
                 let expert_id = executor.expert_id();
@@ -2743,7 +2797,8 @@ mod tests {
         }]);
         app.status_display.next(); // Select first expert
 
-        app.task_input.set_content("nonexistent-feature".to_string());
+        app.task_input
+            .set_content("nonexistent-feature".to_string());
 
         app.start_feature_execution().await.unwrap();
 

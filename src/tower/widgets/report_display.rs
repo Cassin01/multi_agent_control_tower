@@ -57,7 +57,12 @@ impl ReportDisplay {
     }
 
     pub fn open_detail_for_expert(&mut self, expert_id: u32) -> bool {
-        if let Some(report) = self.reports.iter().find(|r| r.expert_id == expert_id).cloned() {
+        if let Some(report) = self
+            .reports
+            .iter()
+            .find(|r| r.expert_id == expert_id)
+            .cloned()
+        {
             self.detail_modal.show(report);
             self.view_mode = ViewMode::Detail;
             true

@@ -256,13 +256,13 @@ impl ExpertPanelDisplay {
             self.auto_scroll = true;
         }
 
-        let history_indicator = if self.is_scrolling { " [SCROLL MODE]" } else { "" };
+        let history_indicator = if self.is_scrolling {
+            " [SCROLL MODE]"
+        } else {
+            ""
+        };
         let scroll_indicator = if !self.auto_scroll {
-            format!(
-                " [{}/{}]",
-                self.scroll_offset + 1,
-                visual_line_count
-            )
+            format!(" [{}/{}]", self.scroll_offset + 1, visual_line_count)
         } else {
             String::new()
         };
@@ -718,7 +718,7 @@ mod tests {
         let mut panel = ExpertPanelDisplay::new();
         panel.set_content(Text::raw("hello"), 1);
 
-        use ratatui::{Terminal, backend::TestBackend};
+        use ratatui::{backend::TestBackend, Terminal};
         let backend = TestBackend::new(40, 10);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
@@ -755,7 +755,7 @@ mod tests {
         let mut panel = ExpertPanelDisplay::new();
         panel.set_content(Text::raw("x"), 1);
 
-        use ratatui::{Terminal, backend::TestBackend};
+        use ratatui::{backend::TestBackend, Terminal};
         // Minimum viable: 3 wide (border + 1 content col + border)
         let backend = TestBackend::new(3, 5);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -841,8 +841,7 @@ mod tests {
         panel.enter_scroll_mode("a\nb");
         panel.exit_scroll_mode();
         assert_eq!(
-            panel.content_hash,
-            0,
+            panel.content_hash, 0,
             "exit_scroll_mode: should reset content hash so next poll refreshes"
         );
     }

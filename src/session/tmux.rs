@@ -1,8 +1,8 @@
 use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::process::{Output, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::process::Command;
 
 use crate::config::Config;
@@ -116,7 +116,15 @@ impl TmuxSender for TmuxManager {
         check_tmux_status(output, "set-buffer")?;
 
         let output = Command::new("tmux")
-            .args(["paste-buffer", "-d", "-p", "-b", &buffer_name, "-t", &target])
+            .args([
+                "paste-buffer",
+                "-d",
+                "-p",
+                "-b",
+                &buffer_name,
+                "-t",
+                &target,
+            ])
             .output()
             .await
             .context(format!("Failed to paste buffer to window {}", window_id))?;
@@ -648,12 +656,24 @@ mod tests {
         let keys = Arc::new(Mutex::new(Vec::new()));
         let tracker = TextTracker { keys: keys.clone() };
 
-        tracker.send_keys_with_enter(0, "hello\nworld").await.unwrap();
+        tracker
+            .send_keys_with_enter(0, "hello\nworld")
+            .await
+            .unwrap();
 
         let recorded = keys.lock().unwrap();
-        assert_eq!(recorded[0], "keys:C-u", "send_keys_with_enter: should send C-u via send_keys");
-        assert_eq!(recorded[1], "text:hello\nworld", "send_keys_with_enter: should route text through send_text");
-        assert_eq!(recorded[2], "keys:Enter", "send_keys_with_enter: should send Enter via send_keys");
+        assert_eq!(
+            recorded[0], "keys:C-u",
+            "send_keys_with_enter: should send C-u via send_keys"
+        );
+        assert_eq!(
+            recorded[1], "text:hello\nworld",
+            "send_keys_with_enter: should route text through send_text"
+        );
+        assert_eq!(
+            recorded[2], "keys:Enter",
+            "send_keys_with_enter: should send Enter via send_keys"
+        );
     }
 
     #[test]

@@ -51,13 +51,23 @@ mod tests {
   - Another description
 ";
         let tasks = parse_tasks(content);
-        assert_eq!(tasks.len(), 2, "parse_tasks: should find 2 incomplete tasks");
+        assert_eq!(
+            tasks.len(),
+            2,
+            "parse_tasks: should find 2 incomplete tasks"
+        );
         assert_eq!(tasks[0].number, "1");
         assert_eq!(tasks[0].title, "Create module structure");
-        assert!(!tasks[0].completed, "parse_tasks: task 1 should be incomplete");
+        assert!(
+            !tasks[0].completed,
+            "parse_tasks: task 1 should be incomplete"
+        );
         assert_eq!(tasks[1].number, "2");
         assert_eq!(tasks[1].title, "Implement parser");
-        assert!(!tasks[1].completed, "parse_tasks: task 2 should be incomplete");
+        assert!(
+            !tasks[1].completed,
+            "parse_tasks: task 2 should be incomplete"
+        );
     }
 
     #[test]
@@ -70,8 +80,14 @@ mod tests {
 ";
         let tasks = parse_tasks(content);
         assert_eq!(tasks.len(), 2, "parse_tasks: should find 2 completed tasks");
-        assert!(tasks[0].completed, "parse_tasks: task 1 should be completed");
-        assert!(tasks[1].completed, "parse_tasks: task 2 should be completed");
+        assert!(
+            tasks[0].completed,
+            "parse_tasks: task 1 should be completed"
+        );
+        assert!(
+            tasks[1].completed,
+            "parse_tasks: task 2 should be completed"
+        );
     }
 
     #[test]
@@ -86,14 +102,27 @@ mod tests {
     - Sub description
 ";
         let tasks = parse_tasks(content);
-        assert_eq!(tasks.len(), 3, "parse_tasks: should find main task and 2 sub-tasks");
+        assert_eq!(
+            tasks.len(),
+            3,
+            "parse_tasks: should find main task and 2 sub-tasks"
+        );
         assert_eq!(tasks[0].number, "1");
-        assert_eq!(tasks[0].indent_level, 0, "parse_tasks: main task indent_level should be 0");
+        assert_eq!(
+            tasks[0].indent_level, 0,
+            "parse_tasks: main task indent_level should be 0"
+        );
         assert_eq!(tasks[1].number, "1.1");
         assert_eq!(tasks[1].title, "Sub-task one");
-        assert_eq!(tasks[1].indent_level, 1, "parse_tasks: sub-task indent_level should be 1");
+        assert_eq!(
+            tasks[1].indent_level, 1,
+            "parse_tasks: sub-task indent_level should be 1"
+        );
         assert_eq!(tasks[2].number, "1.2");
-        assert_eq!(tasks[2].indent_level, 1, "parse_tasks: sub-task indent_level should be 1");
+        assert_eq!(
+            tasks[2].indent_level, 1,
+            "parse_tasks: sub-task indent_level should be 1"
+        );
     }
 
     #[test]
@@ -112,7 +141,11 @@ Some description text.
 Random paragraph here.
 ";
         let tasks = parse_tasks(content);
-        assert_eq!(tasks.len(), 1, "parse_tasks: should only find the actual task line");
+        assert_eq!(
+            tasks.len(),
+            1,
+            "parse_tasks: should only find the actual task line"
+        );
         assert_eq!(tasks[0].number, "1");
         assert_eq!(tasks[0].title, "Actual task");
     }
@@ -131,16 +164,31 @@ Random paragraph here.
 ";
         let tasks = parse_tasks(content);
         assert_eq!(tasks.len(), 4, "parse_tasks: should find all 4 tasks");
-        assert!(tasks[0].completed, "parse_tasks: task 1 should be completed");
-        assert!(!tasks[1].completed, "parse_tasks: task 2 should be incomplete");
-        assert!(tasks[2].completed, "parse_tasks: task 3 should be completed");
-        assert!(!tasks[3].completed, "parse_tasks: task 4 should be incomplete");
+        assert!(
+            tasks[0].completed,
+            "parse_tasks: task 1 should be completed"
+        );
+        assert!(
+            !tasks[1].completed,
+            "parse_tasks: task 2 should be incomplete"
+        );
+        assert!(
+            tasks[2].completed,
+            "parse_tasks: task 3 should be completed"
+        );
+        assert!(
+            !tasks[3].completed,
+            "parse_tasks: task 4 should be incomplete"
+        );
     }
 
     #[test]
     fn parse_tasks_empty_content() {
         let tasks = parse_tasks("");
-        assert!(tasks.is_empty(), "parse_tasks: empty content should return empty vec");
+        assert!(
+            tasks.is_empty(),
+            "parse_tasks: empty content should return empty vec"
+        );
     }
 
     #[test]
@@ -153,7 +201,10 @@ Some text without any task lines.
 - Another list item
 ";
         let tasks = parse_tasks(content);
-        assert!(tasks.is_empty(), "parse_tasks: content without task lines should return empty vec");
+        assert!(
+            tasks.is_empty(),
+            "parse_tasks: content without task lines should return empty vec"
+        );
     }
 
     #[test]
@@ -181,9 +232,19 @@ Some text without any task lines.
   - Run `make test` to ensure all parser tests pass.
 ";
         let tasks = parse_tasks(content);
-        assert_eq!(tasks.len(), 4, "parse_tasks: should find 4 tasks in real-world format");
-        assert!(tasks[0].completed, "parse_tasks: task 1 should be completed");
-        assert!(!tasks[1].completed, "parse_tasks: task 2 should be incomplete");
+        assert_eq!(
+            tasks.len(),
+            4,
+            "parse_tasks: should find 4 tasks in real-world format"
+        );
+        assert!(
+            tasks[0].completed,
+            "parse_tasks: task 1 should be completed"
+        );
+        assert!(
+            !tasks[1].completed,
+            "parse_tasks: task 2 should be incomplete"
+        );
         assert_eq!(tasks[1].number, "2");
         assert_eq!(tasks[2].number, "2.1");
         assert_eq!(tasks[3].number, "3");

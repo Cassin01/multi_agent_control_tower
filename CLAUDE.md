@@ -2,9 +2,12 @@
 
 ## Build Commands
 
-* `make`        : Compile source files
-* `make test`   : Run test suite
-* `make clean`  : Remove generated files
+* `make build`      : Compile source files (release)
+* `make test`       : Run test suite
+* `make lint`       : Run clippy (`-D warnings`)
+* `make fmt-check`  : Verify formatting
+* `make ci`         : Run build/lint/format/test checks
+* `make clean`      : Remove generated files
 
 ## Project Structure & Rules
 

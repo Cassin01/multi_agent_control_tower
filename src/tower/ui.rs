@@ -173,16 +173,28 @@ impl UI {
             Span::styled(
                 format!(
                     "{} ",
-                    truncate_str_head(&app.config().project_path.display().to_string(), trancate_len)
+                    truncate_str_head(
+                        &app.config().project_path.display().to_string(),
+                        trancate_len
+                    )
                 ),
                 Style::default().fg(Color::DarkGray),
             ),
         ]);
 
         let right_spans = vec![
-            Span::styled(format!("○ {} ", summary.idle), Style::default().fg(Color::Gray)),
-            Span::styled(format!("● {} ", summary.busy), Style::default().fg(Color::Green)),
-            Span::styled(format!("✗ {} ", summary.offline), Style::default().fg(Color::Red)),
+            Span::styled(
+                format!("○ {} ", summary.idle),
+                Style::default().fg(Color::Gray),
+            ),
+            Span::styled(
+                format!("● {} ", summary.busy),
+                Style::default().fg(Color::Green),
+            ),
+            Span::styled(
+                format!("✗ {} ", summary.offline),
+                Style::default().fg(Color::Red),
+            ),
         ];
 
         let left_width: usize = title.iter().map(|s| s.width()).sum();

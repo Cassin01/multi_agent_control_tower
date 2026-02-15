@@ -60,11 +60,7 @@ pub fn truncate_str_head(s: &str, max_chars: usize) -> String {
         s.to_string()
     } else {
         let skip = s.chars().count() - (max_chars.saturating_sub(3));
-        let byte_index = s
-            .char_indices()
-            .nth(skip)
-            .map(|(i, _)| i)
-            .unwrap_or(0);
+        let byte_index = s.char_indices().nth(skip).map(|(i, _)| i).unwrap_or(0);
         format!("...{}", &s[byte_index..])
     }
 }

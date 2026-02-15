@@ -54,11 +54,21 @@ impl Default for FeatureExecutionConfig {
 }
 
 impl FeatureExecutionConfig {
-    fn default_batch_size() -> usize { 4 }
-    fn default_poll_delay_secs() -> u64 { 30 }
-    fn default_exit_wait_secs() -> u64 { 3 }
-    fn default_ready_timeout_secs() -> u64 { 60 }
-    fn default_ready_grace_secs() -> u64 { 5 }
+    fn default_batch_size() -> usize {
+        4
+    }
+    fn default_poll_delay_secs() -> u64 {
+        30
+    }
+    fn default_exit_wait_secs() -> u64 {
+        3
+    }
+    fn default_ready_timeout_secs() -> u64 {
+        60
+    }
+    fn default_ready_grace_secs() -> u64 {
+        5
+    }
 }
 
 impl Default for TimeoutConfig {
@@ -501,10 +511,22 @@ experts:
     #[test]
     fn feature_execution_config_defaults() {
         let config = FeatureExecutionConfig::default();
-        assert_eq!(config.batch_size, 4, "feature_execution_config: default batch_size should be 4");
-        assert_eq!(config.poll_delay_secs, 30, "feature_execution_config: default poll_delay_secs should be 30");
-        assert_eq!(config.exit_wait_secs, 3, "feature_execution_config: default exit_wait_secs should be 3");
-        assert_eq!(config.ready_timeout_secs, 60, "feature_execution_config: default ready_timeout_secs should be 60");
+        assert_eq!(
+            config.batch_size, 4,
+            "feature_execution_config: default batch_size should be 4"
+        );
+        assert_eq!(
+            config.poll_delay_secs, 30,
+            "feature_execution_config: default poll_delay_secs should be 30"
+        );
+        assert_eq!(
+            config.exit_wait_secs, 3,
+            "feature_execution_config: default exit_wait_secs should be 3"
+        );
+        assert_eq!(
+            config.ready_timeout_secs, 60,
+            "feature_execution_config: default ready_timeout_secs should be 60"
+        );
     }
 
     #[test]
@@ -531,10 +553,22 @@ feature_execution:
         std::fs::write(&config_path, yaml).unwrap();
 
         let config = Config::load(Some(config_path)).unwrap();
-        assert_eq!(config.feature_execution.batch_size, 8, "feature_execution_config: overridden batch_size");
-        assert_eq!(config.feature_execution.poll_delay_secs, 60, "feature_execution_config: overridden poll_delay_secs");
-        assert_eq!(config.feature_execution.exit_wait_secs, 3, "feature_execution_config: non-overridden exit_wait_secs keeps default");
-        assert_eq!(config.feature_execution.ready_timeout_secs, 60, "feature_execution_config: non-overridden ready_timeout_secs keeps default");
+        assert_eq!(
+            config.feature_execution.batch_size, 8,
+            "feature_execution_config: overridden batch_size"
+        );
+        assert_eq!(
+            config.feature_execution.poll_delay_secs, 60,
+            "feature_execution_config: overridden poll_delay_secs"
+        );
+        assert_eq!(
+            config.feature_execution.exit_wait_secs, 3,
+            "feature_execution_config: non-overridden exit_wait_secs keeps default"
+        );
+        assert_eq!(
+            config.feature_execution.ready_timeout_secs, 60,
+            "feature_execution_config: non-overridden ready_timeout_secs keeps default"
+        );
     }
 
     #[test]

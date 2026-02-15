@@ -184,11 +184,10 @@ impl StatusDisplay {
                 let (report_sym, report_color) =
                     Self::report_symbol(self.expert_reports.contains(&entry.expert_id));
 
-                let working_dir_display =
-                    match self.expert_working_dirs.get(&entry.expert_id) {
-                        Some(dir) => Self::format_relative_path(dir, &self.project_path),
-                        None => String::new(),
-                    };
+                let working_dir_display = match self.expert_working_dirs.get(&entry.expert_id) {
+                    Some(dir) => Self::format_relative_path(dir, &self.project_path),
+                    None => String::new(),
+                };
 
                 let spans = vec![
                     Span::styled(
@@ -426,7 +425,8 @@ mod tests {
 
     #[test]
     fn format_relative_path_same_dir() {
-        let result = StatusDisplay::format_relative_path("/home/user/project", "/home/user/project");
+        let result =
+            StatusDisplay::format_relative_path("/home/user/project", "/home/user/project");
         assert_eq!(
             result, "./",
             "format_relative_path: same directory should return ./"

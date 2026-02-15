@@ -20,8 +20,8 @@ pub fn render_agents_json(
         return Ok(None);
     }
 
-    let template_content =
-        std::fs::read_to_string(&template_path).context("Failed to read messaging agent template")?;
+    let template_content = std::fs::read_to_string(&template_path)
+        .context("Failed to read messaging agent template")?;
 
     let rendered = render_messaging_template(&template_content, expert_id, expert_name)?;
 
@@ -36,7 +36,9 @@ pub fn render_agents_json(
         }
     });
 
-    Ok(Some(serde_json::to_string(&json).context("Failed to serialize agents JSON")?))
+    Ok(Some(
+        serde_json::to_string(&json).context("Failed to serialize agents JSON")?,
+    ))
 }
 
 fn render_messaging_template(
@@ -120,7 +122,9 @@ mod tests {
         )
         .unwrap();
 
-        let result = render_agents_json(tmp.path(), 5, "TestExpert").unwrap().unwrap();
+        let result = render_agents_json(tmp.path(), 5, "TestExpert")
+            .unwrap()
+            .unwrap();
         let json: serde_json::Value = serde_json::from_str(&result).unwrap();
         let prompt = json["messaging"]["prompt"].as_str().unwrap();
 
