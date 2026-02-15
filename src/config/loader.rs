@@ -187,7 +187,7 @@ impl Config {
             self.experts.push(ExpertConfig {
                 name: format!("expert{}", idx),
                 color: "white".to_string(),
-                role: format!("expert{}", idx),
+                role: "general".to_string(),
             });
         }
         self.experts.truncate(num_experts as usize);
@@ -295,6 +295,8 @@ mod tests {
         assert_eq!(config.experts.len(), 6);
         assert_eq!(config.experts[4].name, "expert4");
         assert_eq!(config.experts[5].name, "expert5");
+        assert_eq!(config.experts[4].role, "general");
+        assert_eq!(config.experts[5].role, "general");
     }
 
     #[test]
