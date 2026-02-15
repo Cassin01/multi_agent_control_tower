@@ -365,19 +365,15 @@ mod property_tests {
     proptest! {
         #[test]
         fn worktree_path_uniqueness(
-            name1 in "[a-z]{1,20}",
-            ts1 in "[0-9]{8}-[0-9]{6}",
-            name2 in "[a-z]{1,20}",
-            ts2 in "[0-9]{8}-[0-9]{6}",
+            name1 in "[a-z][a-z0-9-]{0,30}",
+            name2 in "[a-z][a-z0-9-]{0,30}",
         ) {
             let mgr = WorktreeManager::new(PathBuf::from("/project"));
-            let branch1 = format!("{}-{}", name1, ts1);
-            let branch2 = format!("{}-{}", name2, ts2);
 
-            if branch1 != branch2 {
+            if name1 != name2 {
                 prop_assert_ne!(
-                    mgr.worktree_path(&branch1),
-                    mgr.worktree_path(&branch2),
+                    mgr.worktree_path(&name1),
+                    mgr.worktree_path(&name2),
                     "worktree_path: unique branch names must produce unique paths"
                 );
             }

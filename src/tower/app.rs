@@ -958,6 +958,21 @@ impl TowerApp {
         Ok(())
     }
 
+    async fn resolve_expert_working_dir(&self, expert_id: u32) -> String {
+        if let Ok(Some(ctx)) = self
+            .context_store
+            .load_expert_context(&self.config.session_hash(), expert_id)
+            .await
+        {
+            if let Some(ref wt_path) = ctx.worktree_path {
+                if std::path::Path::new(wt_path).exists() {
+                    return wt_path.clone();
+                }
+            }
+        }
+        self.config.project_path.to_str().unwrap_or(".").to_string()
+    }
+
     pub async fn change_expert_role(&mut self, expert_id: u32, new_role: &str) -> Result<()> {
         if let Some(entry) = self.status_display.selected() {
             if entry.state == ExpertState::Busy {
@@ -1006,7 +1021,7 @@ impl TowerApp {
             None
         };
 
-        let working_dir = self.config.project_path.to_str().unwrap_or(".").to_string();
+        let working_dir = self.resolve_expert_working_dir(expert_id).await;
         self.claude
             .launch_claude(expert_id, &working_dir, instruction_file.as_deref())
             .await?;
@@ -1081,12 +1096,26 @@ impl TowerApp {
             expert_name, instruction_role
         ));
 
+        let working_dir = self.resolve_expert_working_dir(expert_id).await;
+
         self.claude.send_exit(expert_id).await?;
         tokio::time::sleep(Duration::from_secs(3)).await;
 
-        self.context_store
-            .clear_expert_context(&self.config.session_hash(), expert_id)
-            .await?;
+        // Preserve worktree info while clearing session and knowledge
+        let session_hash = self.config.session_hash();
+        if let Ok(Some(mut ctx)) = self
+            .context_store
+            .load_expert_context(&session_hash, expert_id)
+            .await
+        {
+            ctx.clear_session();
+            ctx.clear_knowledge();
+            self.context_store.save_expert_context(&ctx).await?;
+        } else {
+            self.context_store
+                .clear_expert_context(&session_hash, expert_id)
+                .await?;
+        }
 
         let instruction_result = load_instruction_with_template(
             &self.config.core_instructions_path,
@@ -1106,7 +1135,6 @@ impl TowerApp {
             None
         };
 
-        let working_dir = self.config.project_path.to_str().unwrap_or(".").to_string();
         self.claude
             .launch_claude(expert_id, &working_dir, instruction_file.as_deref())
             .await?;
@@ -1145,19 +1173,15 @@ impl TowerApp {
         };
 
         let expert_name = self.config.get_expert_name(expert_id);
-        let sanitized = sanitize_branch_name(&feature_input);
-        let branch_name = format!(
-            "{}-{}",
-            sanitized,
-            chrono::Utc::now().format("%Y%m%d-%H%M%S")
-        );
+        let branch_name = sanitize_branch_name(&feature_input);
 
-        if self.worktree_manager.worktree_exists(&branch_name) {
-            self.set_message(format!("Worktree '{}' already exists", branch_name));
-            return Ok(());
+        let worktree_already_exists = self.worktree_manager.worktree_exists(&branch_name);
+
+        if worktree_already_exists {
+            self.set_message(format!("Reusing worktree '{}'...", branch_name));
+        } else {
+            self.set_message(format!("Creating worktree '{}'...", branch_name));
         }
-
-        self.set_message(format!("Creating worktree '{}'...", branch_name));
 
         let claude = self.claude.clone();
         let context_store = self.context_store.clone();
@@ -1181,9 +1205,13 @@ impl TowerApp {
             claude.send_exit(expert_id).await?;
             tokio::time::sleep(Duration::from_secs(3)).await;
 
-            let worktree_path = worktree_manager.create_worktree(&branch_clone).await?;
-
-            worktree_manager.setup_macot_symlink(&worktree_path).await?;
+            let worktree_path = if worktree_already_exists {
+                worktree_manager.worktree_path(&branch_clone)
+            } else {
+                let wt_path = worktree_manager.create_worktree(&branch_clone).await?;
+                worktree_manager.setup_macot_symlink(&wt_path).await?;
+                wt_path
+            };
 
             let wt_path_str = worktree_path
                 .to_str()
