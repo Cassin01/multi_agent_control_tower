@@ -452,10 +452,7 @@ mod tests {
 
         async fn resize_pane(&self, window_id: u32, _width: u16, _height: u16) -> Result<()> {
             if self.fail_ids.lock().unwrap().contains(&window_id) {
-                return Err(anyhow::anyhow!(
-                    "resize failed for window {}",
-                    window_id
-                ));
+                return Err(anyhow::anyhow!("resize failed for window {}", window_id));
             }
             self.resized_ids.lock().unwrap().push(window_id);
             Ok(())

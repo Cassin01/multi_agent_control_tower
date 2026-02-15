@@ -82,10 +82,7 @@ impl FeatureExecutor {
 
     pub fn validate(&mut self) -> Result<()> {
         if !self.tasks_file.exists() {
-            bail!(
-                "Task file not found: {}",
-                self.tasks_file.display()
-            );
+            bail!("Task file not found: {}", self.tasks_file.display());
         }
 
         let design_path = self
@@ -123,10 +120,7 @@ impl FeatureExecutor {
         let mut prompt = String::new();
 
         if self.design_file.is_some() {
-            let design_rel = format!(
-                ".macot/specs/{}-design.md",
-                self.feature_name
-            );
+            let design_rel = format!(".macot/specs/{}-design.md", self.feature_name);
             prompt.push_str(&format!(
                 "Below are the design specifications and task list for {}.\n\n",
                 self.feature_name
@@ -139,10 +133,7 @@ impl FeatureExecutor {
             ));
         }
 
-        let tasks_rel = format!(
-            ".macot/specs/{}-tasks.md",
-            self.feature_name
-        );
+        let tasks_rel = format!(".macot/specs/{}-tasks.md", self.feature_name);
         prompt.push_str(&format!("@{}\n\n", tasks_rel));
         prompt.push_str("Implement the tasks in order.\n");
         prompt.push_str(&format!(
@@ -252,9 +243,9 @@ impl FeatureExecutor {
         if self.current_batch.is_empty() {
             return true;
         }
-        self.current_batch.iter().all(|num| {
-            tasks.iter().any(|t| t.number == *num && t.completed)
-        })
+        self.current_batch
+            .iter()
+            .all(|num| tasks.iter().any(|t| t.number == *num && t.completed))
     }
 
     pub fn start_batch_completion_wait(&mut self) {
@@ -309,14 +300,20 @@ mod tests {
         let temp = TempDir::new().unwrap();
         write_tasks_file(&temp, "- [ ] 1. Task one\n");
         let mut executor = make_executor(&temp);
-        assert!(executor.validate().is_ok(), "validate: should succeed when tasks file exists");
+        assert!(
+            executor.validate().is_ok(),
+            "validate: should succeed when tasks file exists"
+        );
     }
 
     #[test]
     fn validate_fails_when_tasks_file_missing() {
         let temp = TempDir::new().unwrap();
         let mut executor = make_executor(&temp);
-        assert!(executor.validate().is_err(), "validate: should fail when tasks file is missing");
+        assert!(
+            executor.validate().is_err(),
+            "validate: should fail when tasks file is missing"
+        );
     }
 
     #[test]
@@ -326,7 +323,10 @@ mod tests {
         write_design_file(&temp, "# Design\n");
         let mut executor = make_executor(&temp);
         executor.validate().unwrap();
-        assert!(executor.design_file().is_some(), "validate: should set design_file when it exists");
+        assert!(
+            executor.design_file().is_some(),
+            "validate: should set design_file when it exists"
+        );
     }
 
     #[test]
@@ -335,7 +335,10 @@ mod tests {
         write_tasks_file(&temp, "- [ ] 1. Task one\n");
         let mut executor = make_executor(&temp);
         executor.validate().unwrap();
-        assert!(executor.design_file().is_none(), "validate: design_file should be None when absent");
+        assert!(
+            executor.design_file().is_none(),
+            "validate: design_file should be None when absent"
+        );
     }
 
     // --- Task 5.2: Batch calculation tests ---
@@ -358,7 +361,11 @@ mod tests {
         executor.validate().unwrap();
         let tasks = executor.parse_tasks().unwrap();
         let batch = executor.next_batch(&tasks);
-        assert_eq!(batch.len(), 4, "next_batch: should return batch_size (4) tasks");
+        assert_eq!(
+            batch.len(),
+            4,
+            "next_batch: should return batch_size (4) tasks"
+        );
         assert_eq!(batch[0].number, "1");
         assert_eq!(batch[3].number, "4");
     }
@@ -379,7 +386,11 @@ mod tests {
         executor.validate().unwrap();
         let tasks = executor.parse_tasks().unwrap();
         let batch = executor.next_batch(&tasks);
-        assert_eq!(batch.len(), 2, "next_batch: should return fewer than batch_size when fewer remain");
+        assert_eq!(
+            batch.len(),
+            2,
+            "next_batch: should return fewer than batch_size when fewer remain"
+        );
         assert_eq!(batch[0].number, "3");
         assert_eq!(batch[1].number, "4");
     }
@@ -398,7 +409,10 @@ mod tests {
         executor.validate().unwrap();
         let tasks = executor.parse_tasks().unwrap();
         let batch = executor.next_batch(&tasks);
-        assert!(batch.is_empty(), "next_batch: should return empty vec when all tasks completed");
+        assert!(
+            batch.is_empty(),
+            "next_batch: should return empty vec when all tasks completed"
+        );
     }
 
     #[test]
@@ -420,7 +434,11 @@ mod tests {
         executor.validate().unwrap();
         let tasks = executor.parse_tasks().unwrap();
         let batch = executor.next_batch(&tasks);
-        assert_eq!(batch.len(), 4, "next_batch: should return 4 uncompleted tasks");
+        assert_eq!(
+            batch.len(),
+            4,
+            "next_batch: should return 4 uncompleted tasks"
+        );
         assert_eq!(batch[0].number, "2");
         assert_eq!(batch[1].number, "4");
         assert_eq!(batch[2].number, "5");
@@ -539,8 +557,16 @@ mod tests {
         let mut executor = make_executor(&temp);
         executor.validate().unwrap();
         executor.parse_tasks().unwrap();
-        assert_eq!(executor.total_tasks(), 5, "parse_tasks: total_tasks should be 5");
-        assert_eq!(executor.completed_tasks(), 2, "parse_tasks: completed_tasks should be 2");
+        assert_eq!(
+            executor.total_tasks(),
+            5,
+            "parse_tasks: total_tasks should be 5"
+        );
+        assert_eq!(
+            executor.completed_tasks(),
+            2,
+            "parse_tasks: completed_tasks should be 2"
+        );
     }
 
     #[test]
@@ -561,8 +587,14 @@ mod tests {
         let mut executor = make_executor(&temp);
         executor.set_phase(ExecutionPhase::SendingBatch);
         executor.cancel();
-        assert!(matches!(executor.phase(), ExecutionPhase::Idle), "cancel: should reset to Idle");
-        assert!(executor.current_batch().is_empty(), "cancel: should clear current batch");
+        assert!(
+            matches!(executor.phase(), ExecutionPhase::Idle),
+            "cancel: should reset to Idle"
+        );
+        assert!(
+            executor.current_batch().is_empty(),
+            "cancel: should clear current batch"
+        );
     }
 
     // --- Task 11.1: Execution badge tests ---
@@ -777,7 +809,10 @@ mod tests {
         let mut executor = make_executor(&temp);
         executor.validate().unwrap();
         let tasks = executor.parse_tasks().unwrap();
-        let batch: Vec<&TaskEntry> = tasks.iter().filter(|t| t.number == "1" || t.number == "2").collect();
+        let batch: Vec<&TaskEntry> = tasks
+            .iter()
+            .filter(|t| t.number == "1" || t.number == "2")
+            .collect();
         executor.record_batch_sent(&batch);
         assert!(
             executor.is_previous_batch_completed(&tasks),
@@ -788,11 +823,17 @@ mod tests {
     #[test]
     fn is_previous_batch_completed_false_when_some_incomplete() {
         let temp = TempDir::new().unwrap();
-        write_tasks_file(&temp, "- [x] 1. Done\n- [ ] 2. Not done\n- [ ] 3. Not done\n");
+        write_tasks_file(
+            &temp,
+            "- [x] 1. Done\n- [ ] 2. Not done\n- [ ] 3. Not done\n",
+        );
         let mut executor = make_executor(&temp);
         executor.validate().unwrap();
         let tasks = executor.parse_tasks().unwrap();
-        let batch: Vec<&TaskEntry> = tasks.iter().filter(|t| t.number == "1" || t.number == "2").collect();
+        let batch: Vec<&TaskEntry> = tasks
+            .iter()
+            .filter(|t| t.number == "1" || t.number == "2")
+            .collect();
         executor.record_batch_sent(&batch);
         assert!(
             !executor.is_previous_batch_completed(&tasks),
