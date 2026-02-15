@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use crate::commands::common;
 use crate::config::Config;
 use crate::context::ContextStore;
-use crate::instructions::{load_instruction_with_template, write_instruction_file};
+use crate::instructions::{load_instruction_with_template, write_agents_file, write_instruction_file};
 use crate::session::{ClaudeManager, ExpertStateDetector, TmuxManager};
 
 #[derive(ClapArgs)]
@@ -148,6 +148,10 @@ async fn reset_expert(
     } else {
         None
     };
+    let agents_file = match &instruction_result.agents_json {
+        Some(json) => Some(write_agents_file(&config.queue_path, expert_id, json)?),
+        None => None,
+    };
     if instruction_result.used_general_fallback {
         println!(
             "  Warning: Role '{}' not found, using 'general' instructions",
@@ -157,7 +161,7 @@ async fn reset_expert(
 
     println!("  Restarting Claude...");
     claude
-        .launch_claude(expert_id, &project_path, instruction_file.as_deref())
+        .launch_claude(expert_id, &project_path, instruction_file.as_deref(), agents_file.as_deref())
         .await?;
 
     println!("Expert {} reset complete.", expert_id);

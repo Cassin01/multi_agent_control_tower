@@ -37,6 +37,8 @@ pub struct FeatureExecutionConfig {
     pub exit_wait_secs: u64,
     #[serde(default = "FeatureExecutionConfig::default_ready_timeout_secs")]
     pub ready_timeout_secs: u64,
+    #[serde(default = "FeatureExecutionConfig::default_ready_grace_secs")]
+    pub ready_grace_secs: u64,
 }
 
 impl Default for FeatureExecutionConfig {
@@ -46,6 +48,7 @@ impl Default for FeatureExecutionConfig {
             poll_delay_secs: 30,
             exit_wait_secs: 3,
             ready_timeout_secs: 60,
+            ready_grace_secs: 5,
         }
     }
 }
@@ -55,6 +58,7 @@ impl FeatureExecutionConfig {
     fn default_poll_delay_secs() -> u64 { 30 }
     fn default_exit_wait_secs() -> u64 { 3 }
     fn default_ready_timeout_secs() -> u64 { 60 }
+    fn default_ready_grace_secs() -> u64 { 5 }
 }
 
 impl Default for TimeoutConfig {

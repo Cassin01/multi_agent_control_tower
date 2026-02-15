@@ -13,6 +13,7 @@ pub enum ExecutionPhase {
     },
     RelaunchingExpert {
         started_at: Instant,
+        ready_detected_at: Option<Instant>,
     },
     SendingBatch,
     WaitingPollDelay {
@@ -30,6 +31,7 @@ pub struct FeatureExecutor {
     poll_delay: Duration,
     exit_wait: Duration,
     ready_timeout: Duration,
+    ready_grace_period: Duration,
 
     phase: ExecutionPhase,
     current_batch: Vec<String>,
@@ -42,6 +44,7 @@ pub struct FeatureExecutor {
     completed_tasks: usize,
 
     instruction_file: Option<PathBuf>,
+    agents_file: Option<PathBuf>,
     working_dir: String,
 }
 
@@ -52,6 +55,7 @@ impl FeatureExecutor {
         config: &FeatureExecutionConfig,
         project_path: &Path,
         instruction_file: Option<PathBuf>,
+        agents_file: Option<PathBuf>,
         working_dir: String,
     ) -> Self {
         let specs_dir = project_path.join(".macot").join("specs");
@@ -62,6 +66,7 @@ impl FeatureExecutor {
             poll_delay: Duration::from_secs(config.poll_delay_secs),
             exit_wait: Duration::from_secs(config.exit_wait_secs),
             ready_timeout: Duration::from_secs(config.ready_timeout_secs),
+            ready_grace_period: Duration::from_secs(config.ready_grace_secs),
             phase: ExecutionPhase::Idle,
             current_batch: Vec::new(),
             batch_completion_wait_start: None,
@@ -70,6 +75,7 @@ impl FeatureExecutor {
             total_tasks: 0,
             completed_tasks: 0,
             instruction_file,
+            agents_file,
             working_dir,
         }
     }
@@ -179,6 +185,10 @@ impl FeatureExecutor {
         self.ready_timeout
     }
 
+    pub fn ready_grace_period(&self) -> Duration {
+        self.ready_grace_period
+    }
+
     pub fn poll_delay(&self) -> Duration {
         self.poll_delay
     }
@@ -197,6 +207,10 @@ impl FeatureExecutor {
 
     pub fn instruction_file(&self) -> Option<&PathBuf> {
         self.instruction_file.as_ref()
+    }
+
+    pub fn agents_file(&self) -> Option<&PathBuf> {
+        self.agents_file.as_ref()
     }
 
     pub fn current_batch(&self) -> &[String] {
@@ -270,6 +284,7 @@ mod tests {
             0,
             &config,
             &temp.path().to_path_buf(),
+            None,
             None,
             "/tmp/project".to_string(),
         )
@@ -582,6 +597,7 @@ mod tests {
         let mut executor = make_executor(&temp);
         executor.set_phase(ExecutionPhase::RelaunchingExpert {
             started_at: Instant::now(),
+            ready_detected_at: None,
         });
         assert_eq!(
             executor.execution_badge().as_deref(),

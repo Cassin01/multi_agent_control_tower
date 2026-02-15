@@ -28,11 +28,17 @@ impl<T: TmuxSender> ClaudeManager<T> {
         expert_id: u32,
         working_dir: &str,
         instruction_file: Option<&Path>,
+        agents_file: Option<&Path>,
     ) -> Result<()> {
         let mut args = vec!["--dangerously-skip-permissions".to_string()];
 
         if let Some(file) = instruction_file {
             args.push("--append-system-prompt".to_string());
+            args.push(format!("\"$(cat '{}')\"", file.display()));
+        }
+
+        if let Some(file) = agents_file {
+            args.push("--agents".to_string());
             args.push(format!("\"$(cat '{}')\"", file.display()));
         }
 
@@ -164,7 +170,7 @@ mod tests {
 
         let instruction_file = std::path::PathBuf::from("/tmp/instructions.txt");
         manager
-            .launch_claude(0, "/tmp/workdir", Some(instruction_file.as_path()))
+            .launch_claude(0, "/tmp/workdir", Some(instruction_file.as_path()), None)
             .await
             .unwrap();
 
@@ -190,7 +196,7 @@ mod tests {
         let manager = create_mock_manager(mock.clone());
 
         manager
-            .launch_claude(0, "/tmp/workdir", None)
+            .launch_claude(0, "/tmp/workdir", None, None)
             .await
             .unwrap();
 
@@ -207,6 +213,66 @@ mod tests {
         assert!(
             cmd.contains("--dangerously-skip-permissions"),
             "launch_claude: should include --dangerously-skip-permissions flag"
+        );
+    }
+
+    #[tokio::test]
+    async fn launch_claude_with_agents_file() {
+        let mock = MockTmuxSender::new();
+        let manager = create_mock_manager(mock.clone());
+
+        let agents_file = std::path::PathBuf::from("/tmp/agents.json");
+        manager
+            .launch_claude(0, "/tmp/workdir", None, Some(agents_file.as_path()))
+            .await
+            .unwrap();
+
+        let keys = mock.sent_keys();
+        let cmd = keys
+            .iter()
+            .find(|(_, k)| k.contains("claude"))
+            .map(|(_, k)| k.as_str())
+            .expect("launch_claude: should send a claude command");
+        assert!(
+            cmd.contains("--agents"),
+            "launch_claude: should include --agents flag when agents_file is provided"
+        );
+        assert!(
+            cmd.contains("/tmp/agents.json"),
+            "launch_claude: should include agents file path"
+        );
+    }
+
+    #[tokio::test]
+    async fn launch_claude_with_both() {
+        let mock = MockTmuxSender::new();
+        let manager = create_mock_manager(mock.clone());
+
+        let instruction_file = std::path::PathBuf::from("/tmp/instructions.txt");
+        let agents_file = std::path::PathBuf::from("/tmp/agents.json");
+        manager
+            .launch_claude(
+                0,
+                "/tmp/workdir",
+                Some(instruction_file.as_path()),
+                Some(agents_file.as_path()),
+            )
+            .await
+            .unwrap();
+
+        let keys = mock.sent_keys();
+        let cmd = keys
+            .iter()
+            .find(|(_, k)| k.contains("claude"))
+            .map(|(_, k)| k.as_str())
+            .expect("launch_claude: should send a claude command");
+        assert!(
+            cmd.contains("--append-system-prompt"),
+            "launch_claude: should include --append-system-prompt flag"
+        );
+        assert!(
+            cmd.contains("--agents"),
+            "launch_claude: should include --agents flag"
         );
     }
 
@@ -347,6 +413,147 @@ mod tests {
         assert!(
             keys.iter().any(|(_, k)| k == "Enter"),
             "send_keys_with_enter: should send Enter"
+        );
+    }
+
+    // --- Task 12.1: Resize atomicity tests (P6: Resize Atomicity) ---
+
+    /// A mock that selectively fails `resize_pane` for specified window IDs.
+    #[derive(Clone)]
+    struct SelectiveFailSender {
+        fail_ids: Arc<Mutex<Vec<u32>>>,
+        resized_ids: Arc<Mutex<Vec<u32>>>,
+    }
+
+    impl SelectiveFailSender {
+        fn new(fail_ids: Vec<u32>) -> Self {
+            Self {
+                fail_ids: Arc::new(Mutex::new(fail_ids)),
+                resized_ids: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        fn resized_ids(&self) -> Vec<u32> {
+            let mut ids = self.resized_ids.lock().unwrap().clone();
+            ids.sort();
+            ids
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl TmuxSender for SelectiveFailSender {
+        async fn send_keys(&self, _window_id: u32, _keys: &str) -> Result<()> {
+            Ok(())
+        }
+
+        async fn capture_pane(&self, _window_id: u32) -> Result<String> {
+            Ok(String::new())
+        }
+
+        async fn resize_pane(&self, window_id: u32, _width: u16, _height: u16) -> Result<()> {
+            if self.fail_ids.lock().unwrap().contains(&window_id) {
+                return Err(anyhow::anyhow!(
+                    "resize failed for window {}",
+                    window_id
+                ));
+            }
+            self.resized_ids.lock().unwrap().push(window_id);
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn resize_all_panes_parallel_all_succeed() {
+        let sender = SelectiveFailSender::new(vec![]);
+        let manager = ClaudeManager::with_sender(sender.clone());
+
+        let resize_futures: Vec<_> = (0..4u32)
+            .map(|id| {
+                let m = &manager;
+                async move {
+                    if let Err(e) = m.resize_pane(id, 80, 24).await {
+                        tracing::warn!("resize failed for {}: {}", id, e);
+                    }
+                }
+            })
+            .collect();
+        futures::future::join_all(resize_futures).await;
+
+        assert_eq!(
+            sender.resized_ids(),
+            vec![0, 1, 2, 3],
+            "resize_all: all 4 panes should be resized"
+        );
+    }
+
+    #[tokio::test]
+    async fn resize_one_failure_does_not_block_others() {
+        let sender = SelectiveFailSender::new(vec![1]);
+        let manager = ClaudeManager::with_sender(sender.clone());
+
+        let resize_futures: Vec<_> = (0..4u32)
+            .map(|id| {
+                let m = &manager;
+                async move {
+                    if let Err(e) = m.resize_pane(id, 80, 24).await {
+                        tracing::warn!("resize failed for {}: {}", id, e);
+                    }
+                }
+            })
+            .collect();
+        futures::future::join_all(resize_futures).await;
+
+        assert_eq!(
+            sender.resized_ids(),
+            vec![0, 2, 3],
+            "resize_one_fail: experts 0, 2, 3 should succeed despite expert 1 failing"
+        );
+    }
+
+    #[tokio::test]
+    async fn resize_multiple_failures_do_not_block() {
+        let sender = SelectiveFailSender::new(vec![0, 2]);
+        let manager = ClaudeManager::with_sender(sender.clone());
+
+        let resize_futures: Vec<_> = (0..4u32)
+            .map(|id| {
+                let m = &manager;
+                async move {
+                    if let Err(e) = m.resize_pane(id, 80, 24).await {
+                        tracing::warn!("resize failed for {}: {}", id, e);
+                    }
+                }
+            })
+            .collect();
+        futures::future::join_all(resize_futures).await;
+
+        assert_eq!(
+            sender.resized_ids(),
+            vec![1, 3],
+            "resize_multi_fail: experts 1, 3 should succeed despite experts 0, 2 failing"
+        );
+    }
+
+    #[tokio::test]
+    async fn resize_all_fail_no_panic() {
+        let sender = SelectiveFailSender::new(vec![0, 1, 2, 3]);
+        let manager = ClaudeManager::with_sender(sender.clone());
+
+        let resize_futures: Vec<_> = (0..4u32)
+            .map(|id| {
+                let m = &manager;
+                async move {
+                    if let Err(e) = m.resize_pane(id, 80, 24).await {
+                        tracing::warn!("resize failed for {}: {}", id, e);
+                    }
+                }
+            })
+            .collect();
+        futures::future::join_all(resize_futures).await;
+
+        assert!(
+            sender.resized_ids().is_empty(),
+            "resize_all_fail: no panes should be resized when all fail"
         );
     }
 }
