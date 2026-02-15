@@ -1,196 +1,152 @@
 # macot
 
-**Multi Agent Control Tower** — Orchestrate multiple Claude CLI instances working on your codebase in parallel.
+[![Crates.io](https://img.shields.io/badge/crates.io-macot-blue)](https://crates.io/crates/macot)
+[![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
+[![CI](https://img.shields.io/badge/ci-passing-brightgreen)](./.github)
 
-macot spawns a team of specialized Claude agents inside tmux, then gives you a terminal UI to assign tasks, monitor progress, and collect results — all from a single command.
+**Multi Agent Control Tower for your terminal**: orchestrate parallel coding agents with one Rust-native command line and a focused TUI.
 
-## Features
+## Key Features
 
-- **Parallel AI agents** — Run multiple Claude CLI instances simultaneously, each in its own tmux window
-- **Role-based experts** — Assign specialized roles (architect, frontend, backend, tester) with dedicated instruction sets
-- **Terminal UI dashboard** — Monitor agent status, assign tasks, and review reports through a ratatui-powered TUI
-- **Hub-spoke coordination** — All communication flows through the control tower, preventing race conditions between agents
-- **Git worktree isolation** — Launch agents in separate worktrees so parallel changes never conflict
-- **File-based messaging** — Agents exchange reports and context via YAML files, no external services required
-- **YAML configuration** — Customize expert names, roles, colors, and timeouts to match your workflow
-
-## Prerequisites
-
-- [tmux](https://github.com/tmux/tmux) (session management)
-- [Claude CLI](https://docs.anthropic.com/en/docs/claude-code) (AI agent runtime)
+- `⚡ Parallel orchestration`: run multiple experts concurrently in isolated tmux panes.
+- `🧠 Role-based execution`: assign specialized roles (`architect`, `frontend`, `backend`, `tester`, and more).
+- `🖥️ Control Tower TUI`: dispatch tasks, monitor states, and inspect reports from one screen.
+- `🌲 Worktree-friendly workflows`: launch experts against isolated workspaces to reduce branch conflicts.
+- `🧩 Configurable by design`: tune experts, roles, timeouts, and paths via YAML.
+- `🔒 Local-first architecture`: file-based coordination and queue state, no external control service required.
+- `🦀 Rust fundamentals`: safety, performance, and maintainability built into the runtime.
 
 ## Installation
 
-### From source
+### Prerequisites
 
-```sh
-cargo install --path .
-```
+- Rust toolchain (`rustup`, `cargo`)
+- [tmux](https://github.com/tmux/tmux)
+- Current runtime integration: [Claude CLI](https://docs.anthropic.com/en/docs/claude-code)
 
-### With cargo
+### Install from crates.io
 
-```sh
+```bash
 cargo install macot
 ```
 
-<!--
+### Install from source
+
+```bash
+cargo install --path .
+```
+
 ### Homebrew (coming soon)
 
-```sh
+```bash
 brew install macot
 ```
--->
+
+### Prebuilt binaries (coming soon)
+
+Download from GitHub Releases (TBD).
 
 ## Quick Start
 
-```sh
-# 1. Start a session in your project directory
+Run this inside a project directory:
+
+```bash
+# 1) Start a session (defaults to current directory and 4 experts)
 macot start
 
-# 2. Launch the control tower UI
+# 2) Open the control tower UI
 macot tower
 
-# 3. Select an expert, type a task, and press Enter
+# 3) Pick an expert, enter a task, submit
 ```
 
-That's it. Four Claude agents are now working on your project. Use the TUI to assign tasks and watch results come in.
+Within ~30 seconds, you should see experts move from idle to active and reports start appearing in the TUI.
 
 ## Usage
 
-```
-macot <COMMAND>
+### Command Overview
 
-Commands:
-  start      Initialize expert session with Claude agents
-  tower      Launch the control tower UI
-  status     Display current session status
-  sessions   List all running macot sessions
-  down       Gracefully shut down expert session
-  reset      Reset expert context and instructions
-```
+| Command | Purpose |
+|---|---|
+| `macot start [project_path]` | Initialize a session and launch experts |
+| `macot tower [session_name]` | Open the control tower UI |
+| `macot status [session_name]` | Print live session/expert status |
+| `macot sessions` | List running `macot-*` sessions |
+| `macot down [session_name]` | Stop a session gracefully (or force) |
+| `macot reset expert <id\|name>` | Reset one expert context/runtime |
 
-### `macot start [project_path]`
+### Common Examples
 
-Spin up a tmux session with Claude agents.
-
-```sh
-# Current directory, default 4 experts
+```bash
+# Start in current directory
 macot start
 
-# Specific project with 6 experts
+# Start with explicit project path and 6 experts
 macot start /path/to/project -n 6
 
-# Custom config
-macot start -c ./my-config.yaml
+# Start with custom config
+macot start -c ./config/macot.yaml
+
+# Open UI (auto-resolves when exactly one session exists)
+macot tower
+
+# Open UI for a specific session
+macot tower macot-a1b2c3d4
+
+# Status for active/specific session
+macot status
+macot status macot-a1b2c3d4
+
+# List all sessions
+macot sessions
+
+# Graceful shutdown / force shutdown / cleanup
+macot down
+macot down macot-a1b2c3d4 --force
+macot down macot-a1b2c3d4 --cleanup
+
+# Reset one expert by id or name
+macot reset expert 1 --session macot-a1b2c3d4
+macot reset expert frontend --session macot-a1b2c3d4 --keep-history
+macot reset expert backend --session macot-a1b2c3d4 --full
 ```
 
-### `macot tower [session_name]`
+### Primary Options
 
-Open the TUI dashboard. Requires a running session.
-
-| Key | Action |
-|-----|--------|
-| `Tab` | Cycle focus between panels |
-| `Enter` | Send task to selected expert |
-| `?` | Toggle help |
-| `q` / `Ctrl+C` | Quit |
-
-### `macot status`
-
-Print expert states without entering the TUI.
-
-```
-Session: macot-a1b2c3d4 (running)
-Project: /Users/you/myproject
-Experts:
-  [0] Alyosha (architect)  - idle
-  [1] Ilyusha (frontend)   - in_progress
-  [2] Grigory (backend)    - done
-  [3] Katya   (tester)     - idle
-```
-
-### `macot down`
-
-Gracefully stop all agents and destroy the tmux session.
-
-## Configuration
-
-Default config location: `~/.config/macot/config.yaml`
-
-```yaml
-session_prefix: "macot"
-
-experts:
-  - name: "Alyosha"
-    color: "red"
-    role: "architect"
-  - name: "Ilyusha"
-    color: "blue"
-    role: "frontend"
-  - name: "Grigory"
-    color: "green"
-    role: "backend"
-  - name: "Katya"
-    color: "yellow"
-    role: "tester"
-
-timeouts:
-  agent_ready: 30
-  task_completion: 600
-```
-
-### Custom roles
-
-Place Markdown instruction files in the `instructions/` directory of your project. Each file defines a role's responsibilities and output format. macot ships with built-in roles: `architect`, `frontend`, `backend`, `tester`, `planner`, and `general`.
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────┐
-│              Control Tower (TUI)                │
-│                                                 │
-│  ┌────────────┐  ┌────────────┐  ┌───────────┐  │
-│  │ Task Queue │  │  Status    │  │  Report   │  │
-│  │ Management │  │  Monitor   │  │ Collector │  │
-│  └────────────┘  └────────────┘  └───────────┘  │
-└──────────┬──────────────┬──────────────▲────────┘
-           │ assign       │ monitor      │ report
-           ▼              ▼              │
-┌─────────────────────────────────────────────────┐
-│           tmux Session (macot-{hash})           │
-│  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌────────┐ │
-│  │Expert 0 │ │Expert 1 │ │Expert 2 │ │Expert N│ │
-│  │(Claude) │ │(Claude) │ │(Claude) │ │(Claude)│ │
-│  └─────────┘ └─────────┘ └─────────┘ └────────┘ │
-└──────────────────────┬──────────────────────────┘
-                       ▼
-              ┌────────────────┐
-              │   Codebase     │
-              └────────────────┘
-```
+- `start`
+- `-n, --num-experts <N>`: override expert count
+- `-c, --config <PATH>`: load custom config file
+- `down`
+- `-f, --force`: kill without graceful exit
+- `--cleanup`: remove session context data after shutdown
+- `reset expert`
+- `-s, --session <NAME>`: target session explicitly
+- `--keep-history`: clear working context while preserving history
+- `--full`: full reset and Claude session restart
 
 ## Contributing
 
-Contributions are welcome. This project follows standard Rust conventions.
+Contributions are welcome. `macot` follows standard Rust OSS practices: small focused PRs, clear rationale, and tests for behavior changes.
 
-```sh
+1. Open an issue for large changes to align on approach.
+2. Keep PRs scoped and reviewable.
+3. Update docs/tests with code changes when relevant.
+
+```bash
 # Build
 make build
 
-# Full local CI checks
-make ci
-
-# Run tests
+# Test
 make test
 
 # Lint
 make lint
 
-# Format check (CI-aligned)
-make fmt-check
+# Full local CI checks
+make ci
 ```
 
-Please open an issue before submitting large changes to discuss the approach.
+Rust values apply here: safety, correctness, and fearless concurrency in real workflows.
 
 ## License
 
