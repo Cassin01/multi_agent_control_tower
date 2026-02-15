@@ -1,5 +1,6 @@
 use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::process::{Output, Stdio};
 use tokio::process::Command;
 
@@ -29,6 +30,13 @@ fn check_tmux_status(output: Output, context: &str) -> Result<()> {
         );
     }
     Ok(())
+}
+
+static NEXT_BUFFER_ID: AtomicU64 = AtomicU64::new(1);
+
+fn next_tmux_buffer_name(window_id: u32) -> String {
+    let id = NEXT_BUFFER_ID.fetch_add(1, Ordering::Relaxed);
+    format!("macot-{}-{}-{}", std::process::id(), window_id, id)
 }
 
 /// Trait for sending keys to and capturing output from tmux windows.
@@ -98,15 +106,16 @@ impl TmuxSender for TmuxManager {
             return self.send_keys(window_id, text).await;
         }
         let target = format!("{}:{}", self.session_name, window_id);
+        let buffer_name = next_tmux_buffer_name(window_id);
         let output = Command::new("tmux")
-            .args(["set-buffer", "--", text])
+            .args(["set-buffer", "-b", &buffer_name, "--", text])
             .output()
             .await
             .context("Failed to set tmux buffer")?;
         check_tmux_status(output, "set-buffer")?;
 
         let output = Command::new("tmux")
-            .args(["paste-buffer", "-p", "-t", &target])
+            .args(["paste-buffer", "-d", "-p", "-b", &buffer_name, "-t", &target])
             .output()
             .await
             .context(format!("Failed to paste buffer to window {}", window_id))?;
@@ -603,5 +612,19 @@ mod tests {
         assert_eq!(recorded[0], "keys:C-u", "send_keys_with_enter: should send C-u via send_keys");
         assert_eq!(recorded[1], "text:hello\nworld", "send_keys_with_enter: should route text through send_text");
         assert_eq!(recorded[2], "keys:Enter", "send_keys_with_enter: should send Enter via send_keys");
+    }
+
+    #[test]
+    fn next_tmux_buffer_name_is_unique() {
+        let a = next_tmux_buffer_name(0);
+        let b = next_tmux_buffer_name(0);
+        assert_ne!(
+            a, b,
+            "next_tmux_buffer_name: successive calls should be unique"
+        );
+        assert!(
+            a.starts_with("macot-"),
+            "next_tmux_buffer_name: should use macot- prefix"
+        );
     }
 }
