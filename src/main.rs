@@ -19,13 +19,16 @@ use cli::{Cli, Commands};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Log to file for debugging TUI
-    let file_appender = tracing_appender::rolling::never("/tmp", "macot-debug.log");
-    tracing_subscriber::fmt()
-        .with_writer(file_appender)
-        .with_span_events(FmtSpan::CLOSE)
-        .with_max_level(tracing::Level::DEBUG)
-        .init();
+    #[cfg(debug_assertions)]
+    {
+        // Log to file only in debug builds.
+        let file_appender = tracing_appender::rolling::never("/tmp", "macot-debug.log");
+        tracing_subscriber::fmt()
+            .with_writer(file_appender)
+            .with_span_events(FmtSpan::CLOSE)
+            .with_max_level(tracing::Level::DEBUG)
+            .init();
+    }
 
     let cli = Cli::parse();
 
