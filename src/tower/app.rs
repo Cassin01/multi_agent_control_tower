@@ -26,8 +26,6 @@ const MESSAGE_POLL_INTERVAL: Duration = Duration::from_millis(3000);
 /// Event poll timeout — the maximum blocking duration for `event::poll()`.
 /// 16ms targets ~60 FPS while keeping CPU usage low.
 const EVENT_POLL_TIMEOUT: Duration = Duration::from_millis(16);
-const SLOW_OP_THRESHOLD: Duration = Duration::from_millis(40);
-const SLOW_LOOP_THRESHOLD: Duration = Duration::from_millis(20);
 
 use super::ui::UI;
 use super::widgets::{
@@ -74,17 +72,6 @@ fn keycode_to_tmux_key(code: KeyCode, modifiers: KeyModifiers) -> Option<String>
         KeyCode::PageDown => None,
         KeyCode::Delete => Some("DC".to_string()),
         _ => None,
-    }
-}
-
-fn log_if_slow(op: &str, elapsed: Duration) {
-    if elapsed >= SLOW_OP_THRESHOLD {
-        tracing::warn!(
-            "perf: {} took {}ms (threshold={}ms)",
-            op,
-            elapsed.as_millis(),
-            SLOW_OP_THRESHOLD.as_millis()
-        );
     }
 }
 
@@ -362,10 +349,8 @@ impl TowerApp {
     }
 
     pub async fn refresh_status(&mut self) -> Result<()> {
-        let detect_started = Instant::now();
         let expert_ids: Vec<u32> = (0..self.config.experts.len() as u32).collect();
         let states = self.detector.detect_all(&expert_ids);
-        log_if_slow("refresh_status.detect_all", detect_started.elapsed());
 
         let entries: Vec<ExpertEntry> = self
             .config
@@ -396,12 +381,10 @@ impl TowerApp {
             .collect();
         self.status_display.set_expert_roles(roles);
 
-        let pane_paths_started = Instant::now();
         let working_dirs = self.tmux.get_all_pane_current_paths().await.unwrap_or_else(|e| {
             tracing::warn!("Failed to list pane current paths: {}", e);
             std::collections::HashMap::new()
         });
-        log_if_slow("refresh_status.get_all_pane_current_paths", pane_paths_started.elapsed());
         self.status_display.set_expert_working_dirs(working_dirs);
         self.status_display
             .set_project_path(self.config.project_path.display().to_string());
@@ -434,10 +417,7 @@ impl TowerApp {
         tracing::debug!("poll_status: executing refresh_status");
         self.last_status_poll = Instant::now();
         self.needs_redraw = true;
-        let started = Instant::now();
-        let result = self.refresh_status().await;
-        log_if_slow("poll_status.refresh_status", started.elapsed());
-        result
+        self.refresh_status().await
     }
 
     async fn poll_reports(&mut self) -> Result<()> {
@@ -456,10 +436,7 @@ impl TowerApp {
         tracing::debug!("poll_reports: executing refresh_reports");
         self.last_report_poll = Instant::now();
         self.needs_redraw = true;
-        let started = Instant::now();
-        let result = self.refresh_reports().await;
-        log_if_slow("poll_reports.refresh_reports", started.elapsed());
-        result
+        self.refresh_reports().await
     }
 
     /// Poll and process the inter-expert message queue
@@ -499,14 +476,11 @@ impl TowerApp {
             }
 
             // Process outbox for new messages
-            let outbox_started = Instant::now();
             if let Err(e) = router.process_outbox().await {
                 tracing::warn!("Failed to process outbox: {}", e);
             }
-            log_if_slow("poll_messages.process_outbox", outbox_started.elapsed());
 
             // Process the queue
-            let queue_started = Instant::now();
             match router.process_queue().await {
                 Ok(stats) => {
                     if stats.messages_delivered > 0
@@ -535,10 +509,8 @@ impl TowerApp {
                     tracing::warn!("Failed to process message queue: {}", e);
                 }
             }
-            log_if_slow("poll_messages.process_queue", queue_started.elapsed());
 
             // Update messaging display with current queue state
-            let pending_started = Instant::now();
             match router.queue_manager().get_pending_messages().await {
                 Ok(messages) => {
                     self.messaging_display.set_messages(messages);
@@ -547,10 +519,6 @@ impl TowerApp {
                     tracing::warn!("Failed to get pending messages for display: {}", e);
                 }
             }
-            log_if_slow(
-                "poll_messages.get_pending_messages",
-                pending_started.elapsed(),
-            );
         }
 
         Ok(())
@@ -609,7 +577,6 @@ impl TowerApp {
 
             let handle = tokio::spawn(async move {
                 if resize_all {
-                    let resize_started = Instant::now();
                     let resize_futures: Vec<_> = (0..num_experts)
                         .map(|id| {
                             let claude = &claude;
@@ -621,21 +588,13 @@ impl TowerApp {
                         })
                         .collect();
                     futures::future::join_all(resize_futures).await;
-                    log_if_slow("poll_expert_panel.resize_all_panes", resize_started.elapsed());
                 } else if resize_single {
-                    let resize_started = Instant::now();
                     if let Err(e) = claude.resize_pane(expert_id, preview_size.0, preview_size.1).await {
                         tracing::warn!("Failed to resize pane for expert {}: {}", expert_id, e);
                     }
-                    log_if_slow("poll_expert_panel.resize_single_pane", resize_started.elapsed());
                 }
 
-                let capture_started = Instant::now();
                 let content = claude.capture_pane_with_escapes(expert_id).await?;
-                log_if_slow(
-                    "poll_expert_panel.capture_pane_with_escapes",
-                    capture_started.elapsed(),
-                );
 
                 Ok(ExpertPanelUpdateResult {
                     expert_id,
@@ -730,14 +689,10 @@ impl TowerApp {
     }
 
     pub async fn handle_events(&mut self) -> Result<()> {
-        let poll_started = Instant::now();
         let has_event = event::poll(EVENT_POLL_TIMEOUT)?;
-        log_if_slow("handle_events.poll", poll_started.elapsed());
         if has_event {
             self.needs_redraw = true;
-            let read_started = Instant::now();
             let event = event::read()?;
-            log_if_slow("handle_events.read", read_started.elapsed());
             match event {
                 Event::Mouse(mouse) => {
                     // Update input time for mouse events to pause polling during interaction
@@ -1826,31 +1781,20 @@ impl TowerApp {
             self.poll_messages().await?;
             let poll_messages_elapsed = poll_messages_start.elapsed();
 
-            let poll_panel_start = Instant::now();
             self.poll_expert_panel().await?;
-            let poll_panel_elapsed = poll_panel_start.elapsed();
-
-            let poll_worktree_start = Instant::now();
             self.poll_worktree_launch().await?;
-            let poll_worktree_elapsed = poll_worktree_start.elapsed();
-
-            let poll_feature_start = Instant::now();
             self.poll_feature_executor().await?;
-            let poll_feature_elapsed = poll_feature_start.elapsed();
 
             let loop_elapsed = loop_start.elapsed();
-            if loop_elapsed >= SLOW_LOOP_THRESHOLD {
+            if loop_elapsed.as_millis() > 20 {
                 tracing::debug!(
-                    "perf: loop={}ms (draw={}ms, events={}ms, poll_status={}ms, poll_reports={}ms, poll_messages={}ms, poll_panel={}ms, poll_worktree={}ms, poll_feature={}ms)",
+                    "Loop: {}ms (draw: {}ms, events: {}ms, poll_status: {}ms, poll_reports: {}ms, poll_messages: {}ms)",
                     loop_elapsed.as_millis(),
                     draw_elapsed.as_millis(),
                     events_elapsed.as_millis(),
                     poll_status_elapsed.as_millis(),
                     poll_reports_elapsed.as_millis(),
-                    poll_messages_elapsed.as_millis(),
-                    poll_panel_elapsed.as_millis(),
-                    poll_worktree_elapsed.as_millis(),
-                    poll_feature_elapsed.as_millis()
+                    poll_messages_elapsed.as_millis()
                 );
             }
         }
