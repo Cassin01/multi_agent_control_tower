@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 
 /// Safety margin subtracted from inner width when setting tmux PTY size.
 /// Prevents edge-case line wrapping at width boundaries.
-const PREVIEW_WIDTH_MARGIN: u16 = 1;
+const PREVIEW_WIDTH_MARGIN: u16 = 0;
 
 /// Safety margin subtracted from inner height when setting tmux PTY size.
 const PREVIEW_HEIGHT_MARGIN: u16 = 0;
@@ -206,12 +206,42 @@ impl ExpertPanelDisplay {
             Color::DarkGray
         };
 
+        let inner_width = area.width.saturating_sub(2);
+        let inner_height = area.height.saturating_sub(2);
+        self.last_render_size = (inner_width, inner_height);
+
+        let visible_height = inner_height as usize;
+        let display_width = inner_width as usize;
+        let visual_line_count: usize = if display_width > 0 {
+            self.content
+                .lines
+                .iter()
+                .map(|line| {
+                    let w = line.width();
+                    if w == 0 {
+                        1
+                    } else {
+                        w.div_ceil(display_width)
+                    }
+                })
+                .sum()
+        } else {
+            self.raw_line_count
+        };
+
+        let max_scroll = visual_line_count.saturating_sub(visible_height) as u16;
+        self.scroll_offset = self.scroll_offset.min(max_scroll);
+
+        if self.scroll_offset >= max_scroll {
+            self.auto_scroll = true;
+        }
+
         let history_indicator = if self.is_scrolling { " [SCROLL MODE]" } else { "" };
         let scroll_indicator = if !self.auto_scroll {
             format!(
                 " [{}/{}]",
                 self.scroll_offset + 1,
-                self.raw_line_count
+                visual_line_count
             )
         } else {
             String::new()
@@ -226,18 +256,6 @@ impl ExpertPanelDisplay {
             ))
             .borders(Borders::ALL)
             .border_style(Style::default().fg(border_color));
-
-        let inner_width = area.width.saturating_sub(2);
-        let inner_height = area.height.saturating_sub(2);
-        self.last_render_size = (inner_width, inner_height);
-
-        let visible_height = inner_height as usize;
-        let max_scroll = self.raw_line_count.saturating_sub(visible_height) as u16;
-        self.scroll_offset = self.scroll_offset.min(max_scroll);
-
-        if self.scroll_offset >= max_scroll {
-            self.auto_scroll = true;
-        }
 
         let paragraph = Paragraph::new(self.content.clone())
             .block(block)
@@ -643,7 +661,12 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         panel.set_content(Text::raw(content), 30);
-        panel.scroll_up();
+        // Scroll up enough to stay below max_scroll after render clamping.
+        // visible_height=8, visual_line_count=30, max_scroll=22.
+        // set_content auto-scrolls to offset 29; we need offset < 22.
+        for _ in 0..10 {
+            panel.scroll_up();
+        }
         assert!(!panel.auto_scroll, "scroll_up should disable auto_scroll");
 
         let rendered = render_to_string(&mut panel, 60, 10);
@@ -688,10 +711,10 @@ mod tests {
             (38, 8),
             "preview_size: last_render_size should be inner dimensions"
         );
-        // preview = (38-1, 8-0) = (37, 8)
+        // preview = (38-0, 8-0) = (38, 8)
         assert_eq!(
             panel.preview_size(),
-            (37, 8),
+            (38, 8),
             "preview_size: should subtract margins from dimensions"
         );
     }
@@ -721,11 +744,11 @@ mod tests {
             .unwrap();
 
         // inner = (3-2, 5-2) = (1, 3)
-        // preview = (1-1, 3-0) = (0, 3)
+        // preview = (1-0, 3-0) = (1, 3)
         assert_eq!(
             panel.preview_size(),
-            (0, 3),
-            "preview_size: narrow terminal should saturate width to 0"
+            (1, 3),
+            "preview_size: narrow terminal should match inner width with zero margin"
         );
     }
 
