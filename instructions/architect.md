@@ -26,6 +26,12 @@ When your task assignment specifies a feature name, save your design document to
 
 The feature name uses kebab-case (e.g., `user-authentication`, `api-rate-limiting`). Extract it from your task assignment.
 
+### Rules
+
+1. **Location**: Design documents MUST be saved to `.macot/specs/`. Never save to `doc/design/`, `doc/`, or any other directory.
+2. **Naming**: File names MUST use kebab-case with `-design.md` suffix (e.g., `expert-panel-performance-design.md`). Do not use underscores or omit the suffix.
+3. **Template**: The document MUST follow the template structure below (Sections 1-7: Overview, Architecture, Components and Interfaces, Data Models, Error Handling, Correctness Properties, Testing Strategy). Do not use ad-hoc section structures.
+
 ## Output
 Produce a design document following this structure:
 
