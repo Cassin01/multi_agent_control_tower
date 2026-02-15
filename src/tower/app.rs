@@ -240,7 +240,15 @@ impl TowerApp {
     }
 
     pub fn quit(&mut self) {
+        self.cancel_expert_panel_update();
         self.running = false;
+    }
+
+    fn cancel_expert_panel_update(&mut self) {
+        let state = std::mem::take(&mut self.expert_panel_update_state);
+        if let ExpertPanelUpdateState::InProgress { handle } = state {
+            handle.abort();
+        }
     }
 
     pub fn set_message(&mut self, msg: String) {
@@ -1951,6 +1959,34 @@ mod tests {
         let mut app = create_test_app();
         app.quit();
         assert!(!app.is_running());
+    }
+
+    #[tokio::test]
+    async fn tower_app_quit_aborts_in_progress_expert_panel_update() {
+        let mut app = create_test_app();
+        let handle = tokio::spawn(async {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            Ok::<ExpertPanelUpdateResult, anyhow::Error>(ExpertPanelUpdateResult {
+                expert_id: 0,
+                content: String::new(),
+                resized_preview_size: None,
+                resized_expert_id: None,
+            })
+        });
+        let abort_handle = handle.abort_handle();
+        app.expert_panel_update_state = ExpertPanelUpdateState::InProgress { handle };
+
+        app.quit();
+        tokio::task::yield_now().await;
+
+        assert!(matches!(
+            app.expert_panel_update_state,
+            ExpertPanelUpdateState::Idle
+        ));
+        assert!(
+            abort_handle.is_finished(),
+            "quit() should abort in-progress expert panel update task"
+        );
     }
 
     #[test]
