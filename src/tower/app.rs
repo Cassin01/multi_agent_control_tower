@@ -75,6 +75,22 @@ fn keycode_to_tmux_key(code: KeyCode, modifiers: KeyModifiers) -> Option<String>
     }
 }
 
+struct ExpertPanelUpdateResult {
+    expert_id: u32,
+    content: String,
+    resized_preview_size: Option<(u16, u16)>,
+    resized_expert_id: Option<u32>,
+}
+
+#[derive(Default)]
+enum ExpertPanelUpdateState {
+    #[default]
+    Idle,
+    InProgress {
+        handle: tokio::task::JoinHandle<Result<ExpertPanelUpdateResult>>,
+    },
+}
+
 pub struct TowerApp {
     config: Config,
     #[allow(dead_code)]
@@ -111,6 +127,7 @@ pub struct TowerApp {
 
     last_preview_size: (u16, u16),
     last_resized_expert_id: Option<u32>,
+    expert_panel_update_state: ExpertPanelUpdateState,
 
     worktree_manager: WorktreeManager,
     worktree_launch_state: WorktreeLaunchState,
@@ -205,6 +222,7 @@ impl TowerApp {
 
             last_preview_size: (0, 0),
             last_resized_expert_id: None,
+            expert_panel_update_state: ExpertPanelUpdateState::default(),
 
             worktree_manager,
             worktree_launch_state: WorktreeLaunchState::default(),
@@ -222,7 +240,15 @@ impl TowerApp {
     }
 
     pub fn quit(&mut self) {
+        self.cancel_expert_panel_update();
         self.running = false;
+    }
+
+    fn cancel_expert_panel_update(&mut self) {
+        let state = std::mem::take(&mut self.expert_panel_update_state);
+        if let ExpertPanelUpdateState::InProgress { handle } = state {
+            handle.abort();
+        }
     }
 
     pub fn set_message(&mut self, msg: String) {
@@ -363,12 +389,10 @@ impl TowerApp {
             .collect();
         self.status_display.set_expert_roles(roles);
 
-        let mut working_dirs = std::collections::HashMap::new();
-        for id in &expert_ids {
-            if let Ok(Some(path)) = self.tmux.get_pane_current_path(*id).await {
-                working_dirs.insert(*id, path);
-            }
-        }
+        let working_dirs = self.tmux.get_all_pane_current_paths().await.unwrap_or_else(|e| {
+            tracing::warn!("Failed to list pane current paths: {}", e);
+            std::collections::HashMap::new()
+        });
         self.status_display.set_expert_working_dirs(working_dirs);
         self.status_display
             .set_project_path(self.config.project_path.display().to_string());
@@ -509,7 +533,15 @@ impl TowerApp {
     }
 
     async fn poll_expert_panel(&mut self) -> Result<()> {
+        self.poll_expert_panel_update_result().await;
+
         if !self.expert_panel_display.is_visible() {
+            return Ok(());
+        }
+
+        // Poll when either the panel is focused or task input is focused
+        // (expert selection screen).
+        if self.focus != FocusArea::ExpertPanel && self.focus != FocusArea::TaskInput {
             return Ok(());
         }
 
@@ -535,17 +567,27 @@ impl TowerApp {
         }
 
         if let Some(expert_id) = self.expert_panel_display.expert_id() {
+            if matches!(
+                self.expert_panel_update_state,
+                ExpertPanelUpdateState::InProgress { .. }
+            ) {
+                return Ok(());
+            }
+
             let preview_size = self.expert_panel_display.preview_size();
             let size_changed = preview_size != self.last_preview_size;
             let expert_changed = self.last_resized_expert_id != Some(expert_id);
+            let needs_resize = (size_changed || expert_changed) && preview_size.0 > 0 && preview_size.1 > 0;
+            let resize_all = needs_resize && size_changed;
+            let resize_single = needs_resize && !size_changed;
+            let num_experts = self.config.num_experts();
+            let claude = self.claude.clone();
 
-            if (size_changed || expert_changed) && preview_size.0 > 0 && preview_size.1 > 0 {
-                if size_changed {
-                    // Panel size changed (terminal resize): resize ALL expert panes in parallel.
-                    // Mirrors claude-squad's SetSessionPreviewSize() (list.go:86-98).
-                    let resize_futures: Vec<_> = (0..self.config.num_experts())
+            let handle = tokio::spawn(async move {
+                if resize_all {
+                    let resize_futures: Vec<_> = (0..num_experts)
                         .map(|id| {
-                            let claude = &self.claude;
+                            let claude = &claude;
                             async move {
                                 if let Err(e) = claude.resize_pane(id, preview_size.0, preview_size.1).await {
                                     tracing::warn!("Failed to resize pane for expert {}: {}", id, e);
@@ -554,29 +596,63 @@ impl TowerApp {
                         })
                         .collect();
                     futures::future::join_all(resize_futures).await;
-                    self.last_preview_size = preview_size;
-                } else {
-                    // Expert switched: resize only the newly viewed expert's pane.
-                    if let Err(e) = self.claude.resize_pane(expert_id, preview_size.0, preview_size.1).await {
+                } else if resize_single {
+                    if let Err(e) = claude.resize_pane(expert_id, preview_size.0, preview_size.1).await {
                         tracing::warn!("Failed to resize pane for expert {}: {}", expert_id, e);
                     }
                 }
-                self.last_resized_expert_id = Some(expert_id);
-            }
 
-            match self.claude.capture_pane_with_escapes(expert_id).await {
-                Ok(raw) => {
-                    if self.expert_panel_display.try_set_content(&raw) {
-                        self.needs_redraw = true;
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to capture expert {} window: {}", expert_id, e);
-                }
-            }
+                let content = claude.capture_pane_with_escapes(expert_id).await?;
+
+                Ok(ExpertPanelUpdateResult {
+                    expert_id,
+                    content,
+                    resized_preview_size: if resize_all { Some(preview_size) } else { None },
+                    resized_expert_id: if needs_resize { Some(expert_id) } else { None },
+                })
+            });
+
+            self.expert_panel_update_state = ExpertPanelUpdateState::InProgress { handle };
         }
 
         Ok(())
+    }
+
+    async fn poll_expert_panel_update_result(&mut self) {
+        let state = std::mem::take(&mut self.expert_panel_update_state);
+        match state {
+            ExpertPanelUpdateState::InProgress { handle } => {
+                if handle.is_finished() {
+                    match handle.await {
+                        Ok(Ok(update)) => {
+                            if let Some(size) = update.resized_preview_size {
+                                self.last_preview_size = size;
+                            }
+                            if let Some(expert_id) = update.resized_expert_id {
+                                self.last_resized_expert_id = Some(expert_id);
+                            }
+                            if self.expert_panel_display.expert_id() == Some(update.expert_id)
+                                && self.expert_panel_display.try_set_content(&update.content)
+                            {
+                                self.needs_redraw = true;
+                            }
+                        }
+                        Ok(Err(e)) => {
+                            tracing::warn!("Expert panel update failed: {}", e);
+                        }
+                        Err(e) => {
+                            tracing::warn!("Expert panel update task panicked: {}", e);
+                        }
+                    }
+                    self.expert_panel_update_state = ExpertPanelUpdateState::Idle;
+                } else {
+                    self.expert_panel_update_state = ExpertPanelUpdateState::InProgress { handle };
+                }
+            }
+            ExpertPanelUpdateState::Idle => {
+                self.expert_panel_update_state = ExpertPanelUpdateState::Idle;
+            }
+        }
     }
 
     /// Get the messaging display widget
@@ -621,9 +697,11 @@ impl TowerApp {
     }
 
     pub async fn handle_events(&mut self) -> Result<()> {
-        if event::poll(EVENT_POLL_TIMEOUT)? {
+        let has_event = event::poll(EVENT_POLL_TIMEOUT)?;
+        if has_event {
             self.needs_redraw = true;
-            match event::read()? {
+            let event = event::read()?;
+            match event {
                 Event::Mouse(mouse) => {
                     // Update input time for mouse events to pause polling during interaction
                     self.last_input_time = Instant::now();
@@ -1881,6 +1959,34 @@ mod tests {
         let mut app = create_test_app();
         app.quit();
         assert!(!app.is_running());
+    }
+
+    #[tokio::test]
+    async fn tower_app_quit_aborts_in_progress_expert_panel_update() {
+        let mut app = create_test_app();
+        let handle = tokio::spawn(async {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            Ok::<ExpertPanelUpdateResult, anyhow::Error>(ExpertPanelUpdateResult {
+                expert_id: 0,
+                content: String::new(),
+                resized_preview_size: None,
+                resized_expert_id: None,
+            })
+        });
+        let abort_handle = handle.abort_handle();
+        app.expert_panel_update_state = ExpertPanelUpdateState::InProgress { handle };
+
+        app.quit();
+        tokio::task::yield_now().await;
+
+        assert!(matches!(
+            app.expert_panel_update_state,
+            ExpertPanelUpdateState::Idle
+        ));
+        assert!(
+            abort_handle.is_finished(),
+            "quit() should abort in-progress expert panel update task"
+        );
     }
 
     #[test]

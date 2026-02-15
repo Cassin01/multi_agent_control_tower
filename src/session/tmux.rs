@@ -1,5 +1,6 @@
 use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::process::{Output, Stdio};
 use tokio::process::Command;
@@ -321,6 +322,7 @@ impl TmuxManager {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub async fn get_pane_current_path(&self, window_id: u32) -> Result<Option<String>> {
         let output = Command::new("tmux")
             .args([
@@ -347,6 +349,46 @@ impl TmuxManager {
         } else {
             Ok(None)
         }
+    }
+
+    /// Get current working directories for all panes in this session.
+    /// Key is tmux window index.
+    pub async fn get_all_pane_current_paths(&self) -> Result<HashMap<u32, String>> {
+        let output = Command::new("tmux")
+            .args([
+                "list-panes",
+                "-t",
+                &self.session_name,
+                "-F",
+                "#{window_index}\t#{pane_current_path}",
+            ])
+            .output()
+            .await
+            .context("Failed to list pane_current_path for session")?;
+
+        if !output.status.success() {
+            return Ok(HashMap::new());
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut paths = HashMap::new();
+        for line in stdout.lines() {
+            let mut parts = line.splitn(2, '\t');
+            let Some(window_str) = parts.next() else {
+                continue;
+            };
+            let Some(path) = parts.next() else {
+                continue;
+            };
+            let Ok(window_id) = window_str.parse::<u32>() else {
+                continue;
+            };
+            let path = path.trim();
+            if !path.is_empty() {
+                paths.insert(window_id, path.to_string());
+            }
+        }
+        Ok(paths)
     }
 
     pub async fn list_all_macot_sessions() -> Result<Vec<SessionInfo>> {
