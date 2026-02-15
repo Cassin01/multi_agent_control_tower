@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 
 /// Safety margin subtracted from inner width when setting tmux PTY size.
 /// Prevents edge-case line wrapping at width boundaries.
-const PREVIEW_WIDTH_MARGIN: u16 = 0;
+const PREVIEW_WIDTH_MARGIN: u16 = 1;
 
 /// Safety margin subtracted from inner height when setting tmux PTY size.
 const PREVIEW_HEIGHT_MARGIN: u16 = 0;
@@ -211,23 +211,7 @@ impl ExpertPanelDisplay {
         self.last_render_size = (inner_width, inner_height);
 
         let visible_height = inner_height as usize;
-        let display_width = inner_width as usize;
-        let visual_line_count: usize = if display_width > 0 {
-            self.content
-                .lines
-                .iter()
-                .map(|line| {
-                    let w = line.width();
-                    if w == 0 {
-                        1
-                    } else {
-                        w.div_ceil(display_width)
-                    }
-                })
-                .sum()
-        } else {
-            self.raw_line_count
-        };
+        let visual_line_count = self.raw_line_count;
 
         let max_scroll = visual_line_count.saturating_sub(visible_height) as u16;
         self.scroll_offset = self.scroll_offset.min(max_scroll);
@@ -711,10 +695,10 @@ mod tests {
             (38, 8),
             "preview_size: last_render_size should be inner dimensions"
         );
-        // preview = (38-0, 8-0) = (38, 8)
+        // preview = (38-1, 8-0) = (37, 8)
         assert_eq!(
             panel.preview_size(),
-            (38, 8),
+            (37, 8),
             "preview_size: should subtract margins from dimensions"
         );
     }
@@ -744,11 +728,11 @@ mod tests {
             .unwrap();
 
         // inner = (3-2, 5-2) = (1, 3)
-        // preview = (1-0, 3-0) = (1, 3)
+        // preview = (1-1, 3-0) = (0, 3)
         assert_eq!(
             panel.preview_size(),
-            (1, 3),
-            "preview_size: narrow terminal should match inner width with zero margin"
+            (0, 3),
+            "preview_size: narrow terminal should saturate at zero with width margin"
         );
     }
 

@@ -101,7 +101,6 @@ impl TmuxSender for TmuxManager {
             .args([
                 "capture-pane",
                 "-e",
-                "-J",
                 "-p",
                 "-t",
                 &format!("{}:{}", self.session_name, window_id),
