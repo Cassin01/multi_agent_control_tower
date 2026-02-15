@@ -6,7 +6,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Wrap},
     Frame,
 };
-use sha2::{Digest, Sha256};
+use xxhash_rust::xxh3::xxh3_64;
 
 /// Safety margin subtracted from inner width when setting tmux PTY size.
 /// Prevents edge-case line wrapping at width boundaries.
@@ -26,7 +26,9 @@ pub struct ExpertPanelDisplay {
     auto_scroll: bool,
     is_scrolling: bool,
     last_render_size: (u16, u16),
-    content_hash: [u8; 32],
+    content_hash: u64,
+    cached_visual_line_count: usize,
+    cached_display_width: usize,
 }
 
 impl Default for ExpertPanelDisplay {
@@ -48,7 +50,9 @@ impl ExpertPanelDisplay {
             auto_scroll: true,
             is_scrolling: false,
             last_render_size: (0, 0),
-            content_hash: [0u8; 32],
+            content_hash: 0,
+            cached_visual_line_count: 0,
+            cached_display_width: 0,
         }
     }
 
@@ -115,7 +119,9 @@ impl ExpertPanelDisplay {
     pub fn enter_scroll_mode(&mut self, raw: &str) {
         self.is_scrolling = true;
         self.auto_scroll = false;
-        self.content_hash = [0u8; 32];
+        self.content_hash = 0;
+        self.cached_visual_line_count = 0;
+        self.cached_display_width = 0;
         let line_count = raw.lines().count();
         let text = Self::parse_ansi(raw);
         self.content = text;
@@ -129,7 +135,9 @@ impl ExpertPanelDisplay {
         self.is_scrolling = false;
         self.content = Text::default();
         self.raw_line_count = 0;
-        self.content_hash = [0u8; 32];
+        self.content_hash = 0;
+        self.cached_visual_line_count = 0;
+        self.cached_display_width = 0;
         self.auto_scroll = true;
     }
 
@@ -142,7 +150,9 @@ impl ExpertPanelDisplay {
             self.content = Text::default();
             self.raw_line_count = 0;
             self.auto_scroll = true;
-            self.content_hash = [0u8; 32];
+            self.content_hash = 0;
+            self.cached_visual_line_count = 0;
+            self.cached_display_width = 0;
         }
         self.expert_id = Some(id);
         self.expert_name = Some(name);
@@ -151,18 +161,20 @@ impl ExpertPanelDisplay {
     pub fn set_content(&mut self, text: Text<'static>, line_count: usize) {
         self.content = text;
         self.raw_line_count = line_count;
+        self.cached_visual_line_count = 0;
+        self.cached_display_width = 0;
         if self.auto_scroll && line_count > 0 {
             self.scroll_offset = line_count.saturating_sub(1) as u16;
         }
     }
 
-    /// Update content only if the raw pane capture has changed (SHA-256 hash comparison).
+    /// Update content only if the raw pane capture has changed (xxh3 hash comparison).
     /// Returns `true` if content was updated, `false` if skipped (unchanged).
     pub fn try_set_content(&mut self, raw: &str) -> bool {
         if self.is_scrolling {
             return false;
         }
-        let hash: [u8; 32] = Sha256::digest(raw.as_bytes()).into();
+        let hash = xxh3_64(raw.as_bytes());
         if hash == self.content_hash {
             return false;
         }
@@ -211,7 +223,31 @@ impl ExpertPanelDisplay {
         self.last_render_size = (inner_width, inner_height);
 
         let visible_height = inner_height as usize;
-        let visual_line_count = self.raw_line_count;
+        let display_width = inner_width as usize;
+        let visual_line_count =
+            if display_width != self.cached_display_width || self.cached_display_width == 0 {
+                let count = if display_width > 0 {
+                    self.content
+                        .lines
+                        .iter()
+                        .map(|line| {
+                            let w = line.width();
+                            if w == 0 {
+                                1
+                            } else {
+                                w.div_ceil(display_width)
+                            }
+                        })
+                        .sum()
+                } else {
+                    self.raw_line_count
+                };
+                self.cached_visual_line_count = count;
+                self.cached_display_width = display_width;
+                count
+            } else {
+                self.cached_visual_line_count
+            };
 
         let max_scroll = visual_line_count.saturating_sub(visible_height) as u16;
         self.scroll_offset = self.scroll_offset.min(max_scroll);
@@ -806,7 +842,7 @@ mod tests {
         panel.exit_scroll_mode();
         assert_eq!(
             panel.content_hash,
-            [0u8; 32],
+            0,
             "exit_scroll_mode: should reset content hash so next poll refreshes"
         );
     }
@@ -938,5 +974,290 @@ mod tests {
                 input
             );
         }
+    }
+
+    // Cache invalidation tests (Phase 1, Task 1.1)
+
+    #[test]
+    fn visual_line_count_cache_invalidated_on_content_change() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let mut panel = ExpertPanelDisplay::new();
+        panel.set_content(Text::raw("line1\nline2\nline3"), 3);
+
+        let backend = TestBackend::new(40, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| panel.render(frame, frame.area()))
+            .unwrap();
+
+        let first_count = panel.cached_visual_line_count;
+        assert!(first_count > 0, "cache should be populated after render");
+
+        // Change content — cache should invalidate
+        panel.set_content(Text::raw("a\nb\nc\nd\ne"), 5);
+        assert_eq!(
+            panel.cached_visual_line_count, 0,
+            "cache should be invalidated after content change"
+        );
+
+        // Re-render to repopulate cache
+        let backend = TestBackend::new(40, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| panel.render(frame, frame.area()))
+            .unwrap();
+
+        assert_eq!(
+            panel.cached_visual_line_count, 5,
+            "cache should reflect new content after re-render"
+        );
+    }
+
+    #[test]
+    fn visual_line_count_cache_invalidated_on_width_change() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let mut panel = ExpertPanelDisplay::new();
+        panel.set_content(Text::raw("line1\nline2\nline3"), 3);
+
+        // Render at width 40
+        let backend = TestBackend::new(40, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| panel.render(frame, frame.area()))
+            .unwrap();
+
+        let cached_width = panel.cached_display_width;
+        assert!(cached_width > 0, "cached width should be set after render");
+
+        // Render at different width — cache should recompute
+        let backend = TestBackend::new(80, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| panel.render(frame, frame.area()))
+            .unwrap();
+
+        assert_ne!(
+            panel.cached_display_width, cached_width,
+            "cached width should update after width change"
+        );
+    }
+
+    #[test]
+    fn visual_line_count_cache_reused_when_unchanged() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let mut panel = ExpertPanelDisplay::new();
+        panel.set_content(Text::raw("line1\nline2\nline3"), 3);
+
+        // Render twice at same width
+        let backend = TestBackend::new(40, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| panel.render(frame, frame.area()))
+            .unwrap();
+
+        let count_after_first = panel.cached_visual_line_count;
+        let width_after_first = panel.cached_display_width;
+
+        let backend = TestBackend::new(40, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| panel.render(frame, frame.area()))
+            .unwrap();
+
+        assert_eq!(
+            panel.cached_visual_line_count, count_after_first,
+            "cache should be reused when width is unchanged"
+        );
+        assert_eq!(
+            panel.cached_display_width, width_after_first,
+            "cached width should remain unchanged"
+        );
+    }
+
+    #[test]
+    fn scroll_state_preserved_after_cache_invalidation() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.set_content(Text::raw("a\nb\nc\nd\ne"), 5);
+        panel.scroll_up();
+
+        // Trigger cache invalidation via enter/exit scroll mode
+        panel.enter_scroll_mode("x\ny\nz");
+        assert_eq!(
+            panel.cached_visual_line_count, 0,
+            "cache should be invalidated on enter_scroll_mode"
+        );
+        assert!(panel.is_scrolling, "should be in scroll mode");
+
+        panel.exit_scroll_mode();
+        assert_eq!(
+            panel.cached_visual_line_count, 0,
+            "cache should be invalidated on exit_scroll_mode"
+        );
+
+        // Verify scroll state was reset as expected by exit_scroll_mode
+        assert!(
+            panel.auto_scroll,
+            "auto_scroll should be re-enabled after exit_scroll_mode"
+        );
+        assert!(
+            !panel.is_scrolling,
+            "should not be in scroll mode after exit"
+        );
+
+        // set_expert with same id should preserve scroll state
+        let mut panel2 = ExpertPanelDisplay::new();
+        panel2.set_expert(1, "Alice".to_string());
+        panel2.set_content(Text::raw("a\nb\nc\nd\ne"), 5);
+        panel2.scroll_up();
+        let offset = panel2.scroll_offset;
+        let auto = panel2.auto_scroll;
+
+        panel2.set_expert(1, "Alice".to_string());
+        assert_eq!(
+            panel2.scroll_offset, offset,
+            "same expert should preserve scroll offset"
+        );
+        assert_eq!(
+            panel2.auto_scroll, auto,
+            "same expert should preserve auto_scroll"
+        );
+    }
+
+    // Render idempotency tests (Phase 1, Task 2.1)
+
+    #[test]
+    fn render_idempotent_with_cache() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let mut panel = ExpertPanelDisplay::new();
+        panel.set_expert(1, "Alice".to_string());
+        panel.set_content(Text::raw("line1\nline2\nline3\nline4\nline5"), 5);
+
+        // First render
+        let backend = TestBackend::new(40, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| panel.render(frame, frame.area()))
+            .unwrap();
+        let buffer1 = terminal.backend().buffer().clone();
+        let cache_count_1 = panel.cached_visual_line_count;
+        let cache_width_1 = panel.cached_display_width;
+
+        // Second render with same state — should produce identical output
+        let backend = TestBackend::new(40, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| panel.render(frame, frame.area()))
+            .unwrap();
+        let buffer2 = terminal.backend().buffer().clone();
+        let cache_count_2 = panel.cached_visual_line_count;
+        let cache_width_2 = panel.cached_display_width;
+
+        assert_eq!(
+            cache_count_1, cache_count_2,
+            "cached visual line count should be identical across renders"
+        );
+        assert_eq!(
+            cache_width_1, cache_width_2,
+            "cached display width should be identical across renders"
+        );
+
+        // Compare rendered buffers
+        for y in 0..buffer1.area.height {
+            for x in 0..buffer1.area.width {
+                assert_eq!(
+                    buffer1[(x, y)].symbol(),
+                    buffer2[(x, y)].symbol(),
+                    "render output should be identical at ({}, {})",
+                    x,
+                    y
+                );
+            }
+        }
+    }
+
+    // Hash equivalence tests (Phase 3, Task 9.1)
+
+    #[test]
+    fn xxh3_identical_inputs_produce_identical_hashes() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.try_set_content("test content");
+        let hash1 = panel.content_hash;
+
+        // Reset and feed the same content
+        panel.set_expert(1, "A".to_string());
+        panel.try_set_content("test content");
+        let hash2 = panel.content_hash;
+
+        assert_eq!(
+            hash1, hash2,
+            "xxh3: identical inputs must produce identical hashes"
+        );
+    }
+
+    #[test]
+    fn xxh3_distinct_inputs_produce_distinct_hashes() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.try_set_content("content A");
+        let hash_a = panel.content_hash;
+
+        panel.set_expert(1, "X".to_string());
+        panel.try_set_content("content B");
+        let hash_b = panel.content_hash;
+
+        assert_ne!(
+            hash_a, hash_b,
+            "xxh3: distinct inputs must produce distinct hashes"
+        );
+    }
+
+    #[test]
+    fn xxh3_change_detection_matches_sha256_behavior() {
+        let mut panel = ExpertPanelDisplay::new();
+
+        // First content: accepted
+        assert!(
+            panel.try_set_content("hello"),
+            "xxh3: first content should be accepted"
+        );
+        // Same content: rejected
+        assert!(
+            !panel.try_set_content("hello"),
+            "xxh3: same content should be rejected"
+        );
+        // Different content: accepted
+        assert!(
+            panel.try_set_content("world"),
+            "xxh3: different content should be accepted"
+        );
+        // Same again: rejected
+        assert!(
+            !panel.try_set_content("world"),
+            "xxh3: same content should be rejected again"
+        );
+    }
+
+    #[test]
+    fn xxh3_empty_content_handled_correctly() {
+        let mut panel = ExpertPanelDisplay::new();
+        assert!(
+            panel.try_set_content(""),
+            "xxh3: empty content should be accepted on first call"
+        );
+        assert!(
+            !panel.try_set_content(""),
+            "xxh3: empty content should be rejected on second call"
+        );
+        assert!(
+            panel.try_set_content("non-empty"),
+            "xxh3: non-empty should differ from empty"
+        );
     }
 }

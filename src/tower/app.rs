@@ -9,7 +9,7 @@ use crate::config::Config;
 use crate::context::{AvailableRoles, ContextStore, Decision, ExpertContext, SessionExpertRoles};
 use crate::experts::ExpertRegistry;
 use crate::feature::executor::{ExecutionPhase, FeatureExecutor};
-use crate::instructions::{load_instruction_with_template, write_instruction_file};
+use crate::instructions::{load_instruction_with_template, write_agents_file, write_instruction_file};
 use crate::models::ExpertState;
 use crate::models::{ExpertInfo, Role};
 use crate::queue::{MessageRouter, QueueManager};
@@ -22,6 +22,10 @@ use crate::utils::sanitize_branch_name;
 
 /// Message polling interval for the messaging system (3 seconds)
 const MESSAGE_POLL_INTERVAL: Duration = Duration::from_millis(3000);
+
+/// Event poll timeout — the maximum blocking duration for `event::poll()`.
+/// 16ms targets ~60 FPS while keeping CPU usage low.
+const EVENT_POLL_TIMEOUT: Duration = Duration::from_millis(16);
 
 use super::ui::UI;
 use super::widgets::{
@@ -112,6 +116,8 @@ pub struct TowerApp {
     worktree_launch_state: WorktreeLaunchState,
 
     feature_executor: Option<FeatureExecutor>,
+
+    needs_redraw: bool,
 }
 
 impl TowerApp {
@@ -205,6 +211,8 @@ impl TowerApp {
 
             feature_executor: None,
 
+            needs_redraw: true,
+
             config,
         }
     }
@@ -219,6 +227,7 @@ impl TowerApp {
 
     pub fn set_message(&mut self, msg: String) {
         self.message = Some(msg);
+        self.needs_redraw = true;
     }
 
     pub fn clear_message(&mut self) {
@@ -271,6 +280,26 @@ impl TowerApp {
     #[cfg(test)]
     pub fn last_resized_expert_id(&self) -> Option<u32> {
         self.last_resized_expert_id
+    }
+
+    #[cfg(test)]
+    pub fn needs_redraw(&self) -> bool {
+        self.needs_redraw
+    }
+
+    #[cfg(test)]
+    pub fn clear_needs_redraw(&mut self) {
+        self.needs_redraw = false;
+    }
+
+    #[cfg(test)]
+    pub fn reset_poll_timers_for_test(&mut self) {
+        let past = Instant::now() - Duration::from_secs(10);
+        self.last_input_time = past;
+        self.last_status_poll = past;
+        self.last_report_poll = past;
+        self.last_message_poll = past;
+        self.last_panel_poll = past;
     }
 
     pub fn set_layout_areas(&mut self, areas: LayoutAreas) {
@@ -371,6 +400,7 @@ impl TowerApp {
         }
         tracing::debug!("poll_status: executing refresh_status");
         self.last_status_poll = Instant::now();
+        self.needs_redraw = true;
         self.refresh_status().await
     }
 
@@ -389,6 +419,7 @@ impl TowerApp {
         }
         tracing::debug!("poll_reports: executing refresh_reports");
         self.last_report_poll = Instant::now();
+        self.needs_redraw = true;
         self.refresh_reports().await
     }
 
@@ -412,6 +443,7 @@ impl TowerApp {
             return Ok(());
         }
         self.last_message_poll = Instant::now();
+        self.needs_redraw = true;
 
         if let Some(ref mut router) = self.message_router {
             // Update expert states from status marker files
@@ -509,13 +541,19 @@ impl TowerApp {
 
             if (size_changed || expert_changed) && preview_size.0 > 0 && preview_size.1 > 0 {
                 if size_changed {
-                    // Panel size changed (terminal resize): resize ALL expert panes.
+                    // Panel size changed (terminal resize): resize ALL expert panes in parallel.
                     // Mirrors claude-squad's SetSessionPreviewSize() (list.go:86-98).
-                    for id in 0..self.config.num_experts() {
-                        if let Err(e) = self.claude.resize_pane(id, preview_size.0, preview_size.1).await {
-                            tracing::warn!("Failed to resize pane for expert {}: {}", id, e);
-                        }
-                    }
+                    let resize_futures: Vec<_> = (0..self.config.num_experts())
+                        .map(|id| {
+                            let claude = &self.claude;
+                            async move {
+                                if let Err(e) = claude.resize_pane(id, preview_size.0, preview_size.1).await {
+                                    tracing::warn!("Failed to resize pane for expert {}: {}", id, e);
+                                }
+                            }
+                        })
+                        .collect();
+                    futures::future::join_all(resize_futures).await;
                     self.last_preview_size = preview_size;
                 } else {
                     // Expert switched: resize only the newly viewed expert's pane.
@@ -528,7 +566,9 @@ impl TowerApp {
 
             match self.claude.capture_pane_with_escapes(expert_id).await {
                 Ok(raw) => {
-                    self.expert_panel_display.try_set_content(&raw);
+                    if self.expert_panel_display.try_set_content(&raw) {
+                        self.needs_redraw = true;
+                    }
                 }
                 Err(e) => {
                     tracing::warn!("Failed to capture expert {} window: {}", expert_id, e);
@@ -581,7 +621,8 @@ impl TowerApp {
     }
 
     pub async fn handle_events(&mut self) -> Result<()> {
-        if event::poll(Duration::from_millis(1))? {
+        if event::poll(EVENT_POLL_TIMEOUT)? {
+            self.needs_redraw = true;
             match event::read()? {
                 Event::Mouse(mouse) => {
                     // Update input time for mouse events to pause polling during interaction
@@ -1020,10 +1061,14 @@ impl TowerApp {
         } else {
             None
         };
+        let agents_file = match &instruction_result.agents_json {
+            Some(json) => Some(write_agents_file(&self.config.queue_path, expert_id, json)?),
+            None => None,
+        };
 
         let working_dir = self.resolve_expert_working_dir(expert_id).await;
         self.claude
-            .launch_claude(expert_id, &working_dir, instruction_file.as_deref())
+            .launch_claude(expert_id, &working_dir, instruction_file.as_deref(), agents_file.as_deref())
             .await?;
 
         if instruction_result.used_general_fallback {
@@ -1134,9 +1179,13 @@ impl TowerApp {
         } else {
             None
         };
+        let agents_file = match &instruction_result.agents_json {
+            Some(json) => Some(write_agents_file(&self.config.queue_path, expert_id, json)?),
+            None => None,
+        };
 
         self.claude
-            .launch_claude(expert_id, &working_dir, instruction_file.as_deref())
+            .launch_claude(expert_id, &working_dir, instruction_file.as_deref(), agents_file.as_deref())
             .await?;
 
         if instruction_result.used_general_fallback {
@@ -1250,9 +1299,13 @@ impl TowerApp {
             } else {
                 None
             };
+            let agents_file = match &instruction_result.agents_json {
+                Some(json) => Some(write_agents_file(&queue_path, expert_id, json)?),
+                None => None,
+            };
 
             claude
-                .launch_claude(expert_id, &wt_path_str, instruction_file.as_deref())
+                .launch_claude(expert_id, &wt_path_str, instruction_file.as_deref(), agents_file.as_deref())
                 .await?;
 
             let ready = claude.wait_for_ready(expert_id, ready_timeout).await?;
@@ -1277,8 +1330,12 @@ impl TowerApp {
 
     async fn handle_feature_execution(&mut self) -> Result<()> {
         if let Some(ref mut executor) = self.feature_executor {
+            let expert_id = executor.expert_id();
             executor.cancel();
             self.feature_executor = None;
+            if let Err(e) = self.detector.set_marker(expert_id, "pending") {
+                tracing::warn!("Failed to reset status marker for expert {} on cancel: {}", expert_id, e);
+            }
             self.set_message("Feature execution cancelled".to_string());
             return Ok(());
         }
@@ -1334,6 +1391,10 @@ impl TowerApp {
         } else {
             None
         };
+        let agents_file = match &instruction_result.agents_json {
+            Some(json) => Some(write_agents_file(&self.config.queue_path, expert_id, json)?),
+            None => None,
+        };
 
         let working_dir = self.config.project_path.to_str().unwrap_or(".").to_string();
 
@@ -1343,6 +1404,7 @@ impl TowerApp {
             &self.config.feature_execution,
             &self.config.project_path,
             instruction_file,
+            agents_file,
             working_dir,
         );
 
@@ -1390,10 +1452,12 @@ impl TowerApp {
                             expert_id,
                             executor.working_dir(),
                             executor.instruction_file().map(|p| p.as_path()),
+                            executor.agents_file().map(|p| p.as_path()),
                         )
                         .await?;
                     executor.set_phase(ExecutionPhase::RelaunchingExpert {
                         started_at: Instant::now(),
+                        ready_detected_at: None,
                     });
                     self.set_message(format!(
                         "~ {}: resetting expert... | {}/{} tasks",
@@ -1404,26 +1468,38 @@ impl TowerApp {
                 }
             }
 
-            ExecutionPhase::RelaunchingExpert { started_at } => {
+            ExecutionPhase::RelaunchingExpert { started_at, ready_detected_at } => {
                 let started_at = *started_at;
+                let ready_detected_at = *ready_detected_at;
                 let expert_id = executor.expert_id();
                 let timeout = executor.ready_timeout();
-                match self.tmux.capture_pane(expert_id).await {
-                    Ok(content) => {
-                        if content.contains("bypass permissions") {
-                            executor.set_phase(ExecutionPhase::SendingBatch);
-                        } else if started_at.elapsed() >= timeout {
-                            executor.set_phase(ExecutionPhase::Failed(
-                                "Timed out waiting for Claude to restart".into(),
-                            ));
-                        }
+                let grace = executor.ready_grace_period();
+
+                if let Some(detected_at) = ready_detected_at {
+                    if detected_at.elapsed() >= grace {
+                        executor.set_phase(ExecutionPhase::SendingBatch);
                     }
-                    Err(e) => {
-                        if started_at.elapsed() >= timeout {
-                            executor.set_phase(ExecutionPhase::Failed(format!(
-                                "Failed to detect Claude ready: {}",
-                                e
-                            )));
+                } else {
+                    match self.tmux.capture_pane(expert_id).await {
+                        Ok(content) => {
+                            if content.contains("bypass permissions") {
+                                executor.set_phase(ExecutionPhase::RelaunchingExpert {
+                                    started_at,
+                                    ready_detected_at: Some(Instant::now()),
+                                });
+                            } else if started_at.elapsed() >= timeout {
+                                executor.set_phase(ExecutionPhase::Failed(
+                                    "Timed out waiting for Claude to restart".into(),
+                                ));
+                            }
+                        }
+                        Err(e) => {
+                            if started_at.elapsed() >= timeout {
+                                executor.set_phase(ExecutionPhase::Failed(format!(
+                                    "Failed to detect Claude ready: {}",
+                                    e
+                                )));
+                            }
                         }
                     }
                 }
@@ -1585,6 +1661,7 @@ impl TowerApp {
                         }
                     }
                     self.worktree_launch_state = WorktreeLaunchState::Idle;
+                    self.needs_redraw = true;
                 } else {
                     self.worktree_launch_state = WorktreeLaunchState::InProgress {
                         handle,
@@ -1612,7 +1689,10 @@ impl TowerApp {
             let loop_start = Instant::now();
 
             let draw_start = Instant::now();
-            terminal.draw(|frame| UI::render(frame, self))?;
+            if self.needs_redraw {
+                terminal.draw(|frame| UI::render(frame, self))?;
+                self.needs_redraw = false;
+            }
             let draw_elapsed = draw_start.elapsed();
 
             let events_start = Instant::now();
@@ -2492,11 +2572,17 @@ mod tests {
 
     #[tokio::test]
     async fn handle_feature_execution_cancels_when_running() {
-        let mut app = create_test_app();
+        let temp = tempfile::TempDir::new().unwrap();
+        let status_dir = temp.path().join(".macot").join("status");
+        std::fs::create_dir_all(&status_dir).unwrap();
+        std::fs::write(status_dir.join("expert0"), "processing").unwrap();
+
+        let config = Config::default().with_project_path(temp.path().to_path_buf());
+        let wm = WorktreeManager::new(config.project_path.clone());
+        let mut app = TowerApp::new(config, wm);
 
         // Set up a dummy executor in SendingBatch phase
-        let config = crate::config::FeatureExecutionConfig::default();
-        let temp = tempfile::TempDir::new().unwrap();
+        let exec_config = crate::config::FeatureExecutionConfig::default();
         let specs = temp.path().join(".macot").join("specs");
         std::fs::create_dir_all(&specs).unwrap();
         std::fs::write(specs.join("test-tasks.md"), "- [ ] 1. Task\n").unwrap();
@@ -2504,8 +2590,9 @@ mod tests {
         let mut executor = FeatureExecutor::new(
             "test".to_string(),
             0,
-            &config,
+            &exec_config,
             &temp.path().to_path_buf(),
+            None,
             None,
             "/tmp".to_string(),
         );
@@ -2523,6 +2610,11 @@ mod tests {
             app.message(),
             Some("Feature execution cancelled"),
             "handle_feature_execution: should show cancellation message"
+        );
+        let status = std::fs::read_to_string(status_dir.join("expert0")).unwrap();
+        assert_eq!(
+            status, "pending",
+            "handle_feature_execution: should reset expert status to pending on cancel"
         );
     }
 
@@ -2559,6 +2651,219 @@ mod tests {
                 || app.message().unwrap().contains("Error"),
             "start_feature_execution: should show error about missing task file, got: {:?}",
             app.message()
+        );
+    }
+
+    // --- Task 4.1: needs_redraw flag state transitions (P2: Dirty Flag Completeness) ---
+
+    #[test]
+    fn needs_redraw_initialized_to_true() {
+        let app = create_test_app();
+        assert!(
+            app.needs_redraw(),
+            "needs_redraw: should be true after construction"
+        );
+    }
+
+    #[test]
+    fn set_message_sets_needs_redraw() {
+        let mut app = create_test_app();
+        app.clear_needs_redraw();
+        assert!(!app.needs_redraw());
+
+        app.set_message("hello".to_string());
+        assert!(
+            app.needs_redraw(),
+            "needs_redraw: set_message should set the flag"
+        );
+    }
+
+    #[test]
+    fn clear_needs_redraw_resets_flag() {
+        let mut app = create_test_app();
+        assert!(app.needs_redraw());
+
+        app.clear_needs_redraw();
+        assert!(
+            !app.needs_redraw(),
+            "needs_redraw: clear_needs_redraw should reset the flag"
+        );
+    }
+
+    #[tokio::test]
+    async fn poll_status_sets_needs_redraw() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let status_dir = temp.path().join(".macot").join("status");
+        std::fs::create_dir_all(&status_dir).unwrap();
+
+        let config = Config::default().with_project_path(temp.path().to_path_buf());
+        let wm = WorktreeManager::new(config.project_path.clone());
+        let mut app = TowerApp::new(config, wm);
+        app.reset_poll_timers_for_test();
+        app.clear_needs_redraw();
+
+        let _ = app.poll_status().await;
+        assert!(
+            app.needs_redraw(),
+            "needs_redraw: poll_status should set the flag"
+        );
+    }
+
+    #[tokio::test]
+    async fn poll_reports_sets_needs_redraw() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let reports_dir = temp.path().join(".macot").join("reports");
+        std::fs::create_dir_all(&reports_dir).unwrap();
+
+        let config = Config::default().with_project_path(temp.path().to_path_buf());
+        let wm = WorktreeManager::new(config.project_path.clone());
+        let mut app = TowerApp::new(config, wm);
+        app.reset_poll_timers_for_test();
+        app.clear_needs_redraw();
+
+        let _ = app.poll_reports().await;
+        assert!(
+            app.needs_redraw(),
+            "needs_redraw: poll_reports should set the flag"
+        );
+    }
+
+    #[tokio::test]
+    async fn poll_messages_sets_needs_redraw() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let queue_dir = temp.path().join(".macot");
+        std::fs::create_dir_all(queue_dir.join("status")).unwrap();
+
+        let config = Config::default().with_project_path(temp.path().to_path_buf());
+        let wm = WorktreeManager::new(config.project_path.clone());
+        let mut app = TowerApp::new(config, wm);
+        app.reset_poll_timers_for_test();
+        app.clear_needs_redraw();
+
+        let _ = app.poll_messages().await;
+        assert!(
+            app.needs_redraw(),
+            "needs_redraw: poll_messages should set the flag"
+        );
+    }
+
+    #[tokio::test]
+    async fn poll_worktree_launch_sets_needs_redraw_on_completion() {
+        let mut app = create_test_app();
+
+        let handle = tokio::spawn(async {
+            Ok(WorktreeLaunchResult {
+                expert_id: 0,
+                expert_name: "test".to_string(),
+                branch_name: "test-branch".to_string(),
+                worktree_path: "/tmp/wt".to_string(),
+                claude_ready: true,
+            })
+        });
+        wait_for_handle(&handle).await;
+
+        app.worktree_launch_state = WorktreeLaunchState::InProgress {
+            handle,
+            expert_name: "test".to_string(),
+            branch_name: "test-branch".to_string(),
+        };
+        app.clear_needs_redraw();
+
+        app.poll_worktree_launch().await.unwrap();
+        assert!(
+            app.needs_redraw(),
+            "needs_redraw: poll_worktree_launch should set flag on completion"
+        );
+    }
+
+    #[tokio::test]
+    async fn poll_status_skipped_during_debounce_no_redraw() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let status_dir = temp.path().join(".macot").join("status");
+        std::fs::create_dir_all(&status_dir).unwrap();
+
+        let config = Config::default().with_project_path(temp.path().to_path_buf());
+        let wm = WorktreeManager::new(config.project_path.clone());
+        let mut app = TowerApp::new(config, wm);
+        // Do NOT reset timers — last_input_time is recent, triggering debounce skip
+        app.clear_needs_redraw();
+
+        let _ = app.poll_status().await;
+        assert!(
+            !app.needs_redraw(),
+            "needs_redraw: poll_status should NOT set flag when debounce skips"
+        );
+    }
+
+    // --- Task 6.1: Event responsiveness tests (P2, P7) ---
+
+    #[test]
+    fn event_poll_timeout_is_16ms() {
+        assert_eq!(
+            EVENT_POLL_TIMEOUT,
+            Duration::from_millis(16),
+            "EVENT_POLL_TIMEOUT: should be 16ms for ~60 FPS"
+        );
+    }
+
+    #[test]
+    fn key_event_triggers_quit_synchronously() {
+        let mut app = create_test_app();
+        assert!(app.is_running());
+
+        app.quit();
+        assert!(
+            !app.is_running(),
+            "quit: should stop the app immediately without delay"
+        );
+    }
+
+    #[test]
+    fn editing_keys_update_debounce_timer() {
+        let editing_keys: Vec<(KeyCode, KeyModifiers)> = vec![
+            (KeyCode::Char('a'), KeyModifiers::NONE),
+            (KeyCode::Backspace, KeyModifiers::NONE),
+            (KeyCode::Delete, KeyModifiers::NONE),
+            (KeyCode::Enter, KeyModifiers::NONE),
+            (KeyCode::Char('h'), KeyModifiers::CONTROL),
+            (KeyCode::Char('d'), KeyModifiers::CONTROL),
+            (KeyCode::Char('u'), KeyModifiers::CONTROL),
+            (KeyCode::Char('k'), KeyModifiers::CONTROL),
+        ];
+
+        for (code, modifiers) in editing_keys {
+            let mut app = create_test_app();
+            app.task_input.set_content("test".to_string());
+            // Reset timer to the past
+            app.reset_poll_timers_for_test();
+            let before = app.last_input_time();
+
+            std::thread::sleep(std::time::Duration::from_millis(2));
+            app.handle_task_input_keys(code, modifiers);
+            assert!(
+                app.last_input_time() > before,
+                "editing key {:?} (modifiers: {:?}) should update last_input_time",
+                code,
+                modifiers
+            );
+        }
+    }
+
+    #[test]
+    fn cursor_movement_keys_do_not_update_debounce_timer() {
+        let mut app = create_test_app();
+        app.task_input.set_content("hello".to_string());
+        app.reset_poll_timers_for_test();
+        let before = app.last_input_time();
+
+        std::thread::sleep(std::time::Duration::from_millis(2));
+
+        // Ctrl+B is cursor movement, should NOT update timer
+        app.handle_task_input_keys(KeyCode::Char('b'), KeyModifiers::CONTROL);
+        assert_eq!(
+            app.last_input_time(),
+            before,
+            "cursor_movement: Ctrl+B should not update last_input_time"
         );
     }
 }

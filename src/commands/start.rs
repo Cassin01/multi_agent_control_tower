@@ -5,7 +5,7 @@ use tokio::task::JoinSet;
 
 use crate::config::Config;
 use crate::context::ContextStore;
-use crate::instructions::{load_instruction_with_template, write_instruction_file};
+use crate::instructions::{load_instruction_with_template, write_agents_file, write_instruction_file};
 use crate::queue::QueueManager;
 use crate::session::{ClaudeManager, ExpertStateDetector, TmuxManager};
 
@@ -87,22 +87,33 @@ pub async fn execute(args: Args) -> Result<()> {
         let working_dir = project_path.to_str().unwrap().to_string();
         let timeout = config.timeouts.agent_ready;
 
-        let instruction = load_instruction(&config, expert_id, &expert.name)?;
-        let instruction_file = if !instruction.is_empty() {
+        let instruction_result = load_instruction_with_template(
+            &config.core_instructions_path,
+            &config.role_instructions_path,
+            &expert.name,
+            expert_id,
+            &expert.name,
+            &config.status_file_path(expert_id),
+        )?;
+        let instruction_file = if !instruction_result.content.is_empty() {
             Some(write_instruction_file(
                 &config.queue_path,
                 expert_id,
-                &instruction,
+                &instruction_result.content,
             )?)
         } else {
             None
+        };
+        let agents_file = match &instruction_result.agents_json {
+            Some(json) => Some(write_agents_file(&config.queue_path, expert_id, json)?),
+            None => None,
         };
 
         tasks.spawn(async move {
             tmux.set_pane_title(expert_id, &expert_name).await?;
 
             claude
-                .launch_claude(expert_id, &working_dir, instruction_file.as_deref())
+                .launch_claude(expert_id, &working_dir, instruction_file.as_deref(), agents_file.as_deref())
                 .await?;
 
             let ready = claude.wait_for_ready(expert_id, timeout).await?;
@@ -139,16 +150,3 @@ pub async fn execute(args: Args) -> Result<()> {
     Ok(())
 }
 
-fn load_instruction(config: &Config, expert_id: u32, expert_name: &str) -> Result<String> {
-    let result = load_instruction_with_template(
-        &config.core_instructions_path,
-        &config.role_instructions_path,
-        expert_name,
-        expert_id,
-        expert_name,
-        &config.status_file_path(expert_id),
-    )?;
-    // Note: In start command, we don't show toast for general fallback
-    // because the UI is not available yet
-    Ok(result.content)
-}

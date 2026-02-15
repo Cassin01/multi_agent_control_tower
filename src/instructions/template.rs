@@ -11,6 +11,7 @@ pub struct InstructionResult {
     pub content: String,
     pub requested_role: String,
     pub used_general_fallback: bool,
+    pub agents_json: Option<String>,
 }
 
 /// Render a template file with the yaml_schema, expert_id, expert_name, and status_file_path variables.
@@ -85,10 +86,14 @@ pub fn load_instruction_with_template(
 
     content.push_str(&role_content);
 
+    // Render agent templates (for --agents CLI flag)
+    let agents_json = super::agents::render_agents_json(core_path, expert_id, expert_name)?;
+
     Ok(InstructionResult {
         content,
         requested_role: role_name.to_string(),
         used_general_fallback,
+        agents_json,
     })
 }
 
@@ -272,5 +277,64 @@ mod tests {
 
         assert!(rendered.contains("/tmp/project/.macot/status/expert0"));
         assert!(!rendered.contains("{{ status_file_path }}"));
+    }
+
+    #[test]
+    fn instruction_result_includes_agents_json() {
+        let core_dir = TempDir::new().unwrap();
+        let role_dir = TempDir::new().unwrap();
+
+        let agents_dir = core_dir.path().join("templates").join("agents");
+        std::fs::create_dir_all(&agents_dir).unwrap();
+        std::fs::write(
+            agents_dir.join("messaging.md.tmpl"),
+            "from_expert_id: {{ expert_id }}",
+        )
+        .unwrap();
+
+        let result = load_instruction_with_template(
+            core_dir.path(),
+            role_dir.path(),
+            "architect",
+            3,
+            "TestExpert",
+            "/tmp/status/expert3",
+        )
+        .unwrap();
+
+        assert!(
+            result.agents_json.is_some(),
+            "instruction_result: agents_json should be Some when agent templates exist"
+        );
+        let json: serde_json::Value =
+            serde_json::from_str(result.agents_json.as_ref().unwrap()).unwrap();
+        assert!(
+            json["messaging"]["prompt"]
+                .as_str()
+                .unwrap()
+                .contains("from_expert_id: 3"),
+            "instruction_result: agents_json should contain rendered expert_id"
+        );
+    }
+
+    #[test]
+    fn instruction_result_agents_json_none_without_template() {
+        let core_dir = TempDir::new().unwrap();
+        let role_dir = TempDir::new().unwrap();
+
+        let result = load_instruction_with_template(
+            core_dir.path(),
+            role_dir.path(),
+            "architect",
+            0,
+            "test",
+            "/tmp/status/expert0",
+        )
+        .unwrap();
+
+        assert!(
+            result.agents_json.is_none(),
+            "instruction_result: agents_json should be None when no agent templates exist"
+        );
     }
 }

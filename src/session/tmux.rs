@@ -1,5 +1,6 @@
 use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::process::{Output, Stdio};
 use tokio::process::Command;
 
@@ -31,6 +32,13 @@ fn check_tmux_status(output: Output, context: &str) -> Result<()> {
     Ok(())
 }
 
+static NEXT_BUFFER_ID: AtomicU64 = AtomicU64::new(1);
+
+fn next_tmux_buffer_name(window_id: u32) -> String {
+    let id = NEXT_BUFFER_ID.fetch_add(1, Ordering::Relaxed);
+    format!("macot-{}-{}-{}", std::process::id(), window_id, id)
+}
+
 /// Trait for sending keys to and capturing output from tmux windows.
 /// Extracted to allow mocking in tests.
 #[async_trait::async_trait]
@@ -38,9 +46,24 @@ pub trait TmuxSender: Send + Sync {
     async fn send_keys(&self, window_id: u32, keys: &str) -> Result<()>;
     async fn capture_pane(&self, window_id: u32) -> Result<String>;
 
+    fn pre_enter_delay(&self) -> std::time::Duration {
+        std::time::Duration::ZERO
+    }
+
+    /// Send text content to a pane. For multiline text, implementations should
+    /// use bracketed paste to prevent newlines from acting as Enter keypresses.
+    /// Default falls back to send_keys (suitable for mocks and single-line text).
+    async fn send_text(&self, window_id: u32, text: &str) -> Result<()> {
+        self.send_keys(window_id, text).await
+    }
+
     async fn send_keys_with_enter(&self, window_id: u32, keys: &str) -> Result<()> {
         self.send_keys(window_id, "C-u").await?;
-        self.send_keys(window_id, keys).await?;
+        self.send_text(window_id, keys).await?;
+        let delay = self.pre_enter_delay();
+        if !delay.is_zero() {
+            tokio::time::sleep(delay).await;
+        }
         self.send_keys(window_id, "Enter").await?;
         Ok(())
     }
@@ -74,12 +97,29 @@ impl TmuxSender for TmuxManager {
         check_tmux_status(output, &format!("send-keys to window {}", window_id))
     }
 
-    async fn send_keys_with_enter(&self, window_id: u32, keys: &str) -> Result<()> {
-        self.send_keys(window_id, "C-u").await?;
-        self.send_keys(window_id, keys).await?;
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        self.send_keys(window_id, "Enter").await?;
-        Ok(())
+    fn pre_enter_delay(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(300)
+    }
+
+    async fn send_text(&self, window_id: u32, text: &str) -> Result<()> {
+        if !text.contains('\n') {
+            return self.send_keys(window_id, text).await;
+        }
+        let target = format!("{}:{}", self.session_name, window_id);
+        let buffer_name = next_tmux_buffer_name(window_id);
+        let output = Command::new("tmux")
+            .args(["set-buffer", "-b", &buffer_name, "--", text])
+            .output()
+            .await
+            .context("Failed to set tmux buffer")?;
+        check_tmux_status(output, "set-buffer")?;
+
+        let output = Command::new("tmux")
+            .args(["paste-buffer", "-d", "-p", "-b", &buffer_name, "-t", &target])
+            .output()
+            .await
+            .context(format!("Failed to paste buffer to window {}", window_id))?;
+        check_tmux_status(output, &format!("paste-buffer to window {}", window_id))
     }
 
     async fn capture_pane(&self, window_id: u32) -> Result<String> {
@@ -505,6 +545,86 @@ mod tests {
         assert_eq!(
             result, "mock pane content",
             "capture_pane_with_escapes: default impl should fall back to capture_pane"
+        );
+    }
+
+    #[tokio::test]
+    async fn send_text_default_falls_back_to_send_keys() {
+        use std::sync::{Arc, Mutex};
+
+        struct RecordingSender {
+            sent: Arc<Mutex<Vec<String>>>,
+        }
+
+        #[async_trait::async_trait]
+        impl TmuxSender for RecordingSender {
+            async fn send_keys(&self, _window_id: u32, keys: &str) -> Result<()> {
+                self.sent.lock().unwrap().push(keys.to_string());
+                Ok(())
+            }
+            async fn capture_pane(&self, _window_id: u32) -> Result<String> {
+                Ok(String::new())
+            }
+        }
+
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let sender = RecordingSender { sent: sent.clone() };
+
+        sender.send_text(0, "multiline\ntext").await.unwrap();
+
+        let recorded = sent.lock().unwrap();
+        assert_eq!(
+            recorded.as_slice(),
+            &["multiline\ntext"],
+            "send_text: default impl should fall back to send_keys"
+        );
+    }
+
+    #[tokio::test]
+    async fn send_keys_with_enter_routes_text_through_send_text() {
+        use std::sync::{Arc, Mutex};
+
+        struct TextTracker {
+            keys: Arc<Mutex<Vec<String>>>,
+        }
+
+        #[async_trait::async_trait]
+        impl TmuxSender for TextTracker {
+            async fn send_keys(&self, _window_id: u32, keys: &str) -> Result<()> {
+                self.keys.lock().unwrap().push(format!("keys:{}", keys));
+                Ok(())
+            }
+            async fn send_text(&self, _window_id: u32, text: &str) -> Result<()> {
+                self.keys.lock().unwrap().push(format!("text:{}", text));
+                Ok(())
+            }
+            async fn capture_pane(&self, _window_id: u32) -> Result<String> {
+                Ok(String::new())
+            }
+        }
+
+        let keys = Arc::new(Mutex::new(Vec::new()));
+        let tracker = TextTracker { keys: keys.clone() };
+
+        tracker.send_keys_with_enter(0, "hello\nworld").await.unwrap();
+
+        let recorded = keys.lock().unwrap();
+        assert_eq!(recorded[0], "keys:C-u", "send_keys_with_enter: should send C-u via send_keys");
+        assert_eq!(recorded[1], "text:hello\nworld", "send_keys_with_enter: should route text through send_text");
+        assert_eq!(recorded[2], "keys:Enter", "send_keys_with_enter: should send Enter via send_keys");
+    }
+
+    #[test]
+    fn next_tmux_buffer_name_is_unique() {
+        let a = next_tmux_buffer_name(0);
+        let b = next_tmux_buffer_name(0);
+        assert_ne!(
+            a, b,
+            "next_tmux_buffer_name: successive calls should be unique"
+        );
+        assert!(
+            a.starts_with("macot-"),
+            "next_tmux_buffer_name: should use macot- prefix"
         );
     }
 }
