@@ -177,14 +177,17 @@ Contributions are welcome. This project follows standard Rust conventions.
 # Build
 make build
 
+# Full local CI checks
+make ci
+
 # Run tests
 make test
 
 # Lint
 make lint
 
-# Format
-make fmt
+# Format check (CI-aligned)
+make fmt-check
 ```
 
 Please open an issue before submitting large changes to discuss the approach.
