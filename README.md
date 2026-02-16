@@ -146,6 +146,16 @@ More examples and TUI keybindings: [`doc/cli.md`](doc/cli.md)
 
 Inside your project at `.macot/`.
 
+### How do agents communicate with each other?
+
+Use the built-in async messaging queue. Each expert can send messages through a dedicated messaging subagent, and those messages are created as YAML files in `.macot/messages/outbox/` and routed automatically to matching experts (by id, name, or role) when recipients are idle, so a `debugger` expert can report a root cause and delegate the fix to a `backend` expert.
+
+### How do I run tasks automatically from a spec?
+
+In the tower Task Input, enter a feature name (for example `auth-refactor`) and press `Ctrl+G`.
+`<feature>-tasks.md` is created by the `planner` expert, and `<feature>-design.md` is created by the `architect` expert.  
+macot will execute tasks from `.macot/specs/<feature>-tasks.md` in batches (and also references `.macot/specs/<feature>-design.md` when present).
+
 ## 🤝 Contributing
 
 Contributions are welcome. Contribution flow, issue templates, and PR checklist are documented in [`CONTRIBUTING.md`](CONTRIBUTING.md).
