@@ -1,153 +1,149 @@
+<div align="center">
+
 # macot
 
-[![Crates.io](https://img.shields.io/badge/crates.io-macot-blue)](https://crates.io/crates/macot)
-[![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
-[![CI](https://img.shields.io/badge/ci-passing-brightgreen)](./.github)
+[![CI](https://github.com/Cassin01/multi_agent_control_tower/actions/workflows/ci.yml/badge.svg)](https://github.com/Cassin01/multi_agent_control_tower/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/macot.svg)](https://crates.io/crates/macot)
+[![docs.rs](https://img.shields.io/docsrs/macot)](https://docs.rs/macot)
+[![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-1.74%2B-orange.svg)](https://www.rust-lang.org/)
 
-**Multi Agent Control Tower for your terminal**: orchestrate parallel coding agents with one Rust-native command line and a focused TUI.
+**Control Tower for parallel Claude workflows in your terminal**
 
-## Key Features
+Coordinate multiple role-based coding agents on one codebase with a Rust-native CLI + TUI.
 
-- `⚡ Parallel orchestration`: run multiple experts concurrently in isolated tmux panes.
-- `🧠 Role-based execution`: assign specialized roles (`architect`, `frontend`, `backend`, `tester`, and more).
-- `🖥️ Control Tower TUI`: dispatch tasks, monitor states, and inspect reports from one screen.
-- `🌲 Worktree-friendly workflows`: launch experts against isolated workspaces to reduce branch conflicts.
-- `🧩 Configurable by design`: tune experts, roles, timeouts, and paths via YAML.
-- `🔒 Local-first architecture`: file-based coordination and queue state, no external control service required.
-- `🦀 Rust fundamentals`: safety, performance, and maintainability built into the runtime.
+![demo](assets/demo-quickstart.gif)
 
-## Installation
+[Features](#-features) •
+[Quick Start](#-quick-start) •
+[Installation](#-installation) •
+[Configuration](#%EF%B8%8F-configuration) •
+[Commands](#-commands) •
+[FAQ](#-faq) •
+[Contributing](#-contributing)
 
-### Prerequisites
+</div>
 
-- Rust toolchain (`rustup`, `cargo`)
-- [tmux](https://github.com/tmux/tmux)
-- Current runtime integration: [Claude CLI](https://docs.anthropic.com/en/docs/claude-code)
+---
 
-### Install from crates.io
+## ✨ Features
+
+- **⚡ Parallel orchestration**: run multiple experts concurrently in isolated tmux panes.
+- **🧠 Role-based execution**: assign experts like `architect`, `backend`, `frontend`, and `tester`.
+- **🖥️ Control Tower TUI**: dispatch tasks, monitor status, and review reports in one screen.
+- **🌲 Worktree-friendly flow**: reduce branch conflicts with isolated workspaces per expert.
+- **🧩 Configurable by design**: tune experts, roles, timeouts, and paths via YAML.
+- **🔒 Local-first runtime**: queue and context live locally with no external coordinator service.
+
+## 🚀 Quick Start
+
+Install, launch, and verify in under a minute.
+
+```bash
+# 0) Prerequisites: rust + tmux + Claude CLI
+cargo install macot
+
+# 1) Start a session in your current project
+macot start .
+
+# 2) Open the control tower
+macot tower
+
+# 3) Verify from another terminal
+macot status
+```
+
+Success looks like:
+
+- session name appears as `macot-<hash>`
+- at least one expert moves to `Thinking` or `Executing`
+- a report appears in the tower report list
+
+## 📦 Installation
+
+Use crates.io for the fastest setup.
 
 ```bash
 cargo install macot
 ```
 
-### Install from source
+<details>
+<summary><b>Install from source</b></summary>
 
 ```bash
+git clone https://github.com/Cassin01/multi_agent_control_tower.git
+cd multi_agent_control_tower
 cargo install --path .
 ```
 
-### Homebrew (coming soon)
+</details>
 
-```bash
-brew install macot
+<details>
+<summary><b>Homebrew / prebuilt binaries</b></summary>
+
+Homebrew formula and release binaries are planned but not published yet.
+
+</details>
+
+## ⚙️ Configuration
+
+Use YAML config when you need custom experts, roles, or runtime timeouts.
+
+```yaml
+experts:
+  - name: architect
+    role: architect
+  - name: backend
+    role: backend
+  - name: frontend
+    role: frontend
+  - name: tester
+    role: tester
+
+runtime:
+  startup_timeout_seconds: 30
+  graceful_shutdown_timeout_seconds: 10
+
+paths:
+  instructions_dir: ./instructions
 ```
 
-### Prebuilt binaries (coming soon)
-
-Download from GitHub Releases (TBD).
-
-## Quick Start
-
-Run this inside a project directory:
-
 ```bash
-# 1) Start a session (defaults to current directory and 4 experts)
-macot start
-
-# 2) Open the control tower UI
-macot tower
-
-# 3) Pick an expert, enter a task, submit
+macot start -c ./config/macot.yaml
+macot tower --config ./config/macot.yaml
 ```
 
-Within ~30 seconds, you should see experts move from idle to active and reports start appearing in the TUI.
+See full reference: [`doc/configuration.md`](doc/configuration.md)
 
-## Usage
+## 📋 Commands
 
-### Command Overview
+Core command surface:
 
 | Command | Purpose |
 |---|---|
 | `macot start [project_path]` | Initialize a session and launch experts |
 | `macot tower [session_name]` | Open the control tower UI |
-| `macot status [session_name]` | Print live session/expert status |
+| `macot status [session_name]` | Print live session and expert status |
 | `macot sessions` | List running `macot-*` sessions |
-| `macot down [session_name]` | Stop a session gracefully (or force) |
+| `macot down [session_name]` | Stop a session gracefully or forcefully |
 | `macot reset expert <id\|name>` | Reset one expert context/runtime |
 
-### Common Examples
+More examples and TUI keybindings: [`doc/cli.md`](doc/cli.md)
+
+## ❓ FAQ
+
+### Where are session artifacts stored?
+
+Inside your project at `.macot/`.
+
+## 🤝 Contributing
+
+Contributions are welcome. Contribution flow, issue templates, and PR checklist are documented in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ```bash
-# Start in current directory
-macot start
-
-# Start with explicit project path and 6 experts
-macot start /path/to/project -n 6
-
-# Start with custom config
-macot start -c ./config/macot.yaml
-
-# Open UI (auto-resolves when exactly one session exists)
-macot tower
-
-# Open UI for a specific session
-macot tower macot-a1b2c3d4
-
-# Status for active/specific session
-macot status
-macot status macot-a1b2c3d4
-
-# List all sessions
-macot sessions
-
-# Graceful shutdown / force shutdown / cleanup
-macot down
-macot down macot-a1b2c3d4 --force
-macot down macot-a1b2c3d4 --cleanup
-
-# Reset one expert by id or name
-macot reset expert 1 --session macot-a1b2c3d4
-macot reset expert frontend --session macot-a1b2c3d4 --keep-history
-macot reset expert backend --session macot-a1b2c3d4 --full
-```
-
-### Primary Options
-
-- `start`
-- `-n, --num-experts <N>`: override expert count
-- `-c, --config <PATH>`: load custom config file
-- `down`
-- `-f, --force`: kill without graceful exit
-- `--cleanup`: remove session context data after shutdown
-- `reset expert`
-- `-s, --session <NAME>`: target session explicitly
-- `--keep-history`: clear working context while preserving history
-- `--full`: full reset and Claude session restart
-
-## Contributing
-
-Contributions are welcome. `macot` follows standard Rust OSS practices: small focused PRs, clear rationale, and tests for behavior changes.
-
-1. Open an issue for large changes to align on approach.
-2. Keep PRs scoped and reviewable.
-3. Update docs/tests with code changes when relevant.
-
-```bash
-# Build
-make build
-
-# Test
-make test
-
-# Lint
-make lint
-
-# Full local CI checks
 make ci
 ```
 
-Rust values apply here: safety, correctness, and fearless concurrency in real workflows.
-
-## License
+## 📄 License
 
 [Apache-2.0](LICENSE) © Cassin01

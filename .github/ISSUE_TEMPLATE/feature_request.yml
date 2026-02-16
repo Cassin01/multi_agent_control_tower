@@ -1,0 +1,30 @@
+name: Feature request
+description: Suggest an improvement for macot
+labels: [enhancement]
+body:
+  - type: input
+    id: summary
+    attributes:
+      label: Problem summary
+      description: What problem are you trying to solve?
+      placeholder: Coordinating role handoff between experts is hard because ...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      placeholder: Describe behavior, UX flow, and CLI/TUI impact.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      placeholder: |
+        - [ ] Criterion 1
+        - [ ] Criterion 2

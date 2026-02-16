@@ -1,0 +1,61 @@
+name: Bug report
+description: Report a reproducible problem in macot
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Please provide reproducible detail.
+  - type: input
+    id: macot_version
+    attributes:
+      label: macot version
+      description: Output of `macot --version`
+      placeholder: macot 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, shell, tmux version, Claude CLI version
+      placeholder: macOS 14, zsh, tmux 3.4, claude x.y.z
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run ...
+        2. Run ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and output
+      description: Include snippets from `/tmp/macot-debug.log` when available.
+      render: shell
+  - type: dropdown
+    id: regression
+    attributes:
+      label: Regression?
+      options:
+        - "No / Unknown"
+        - "Yes"
+    validations:
+      required: true
