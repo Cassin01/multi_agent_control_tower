@@ -30,6 +30,8 @@ Coordinate multiple role-based coding agents on one codebase with a Rust-native 
 
 - **⚡ Parallel orchestration**: run multiple experts concurrently in isolated tmux panes.
 - **🧠 Role-based execution**: assign experts like `architect`, `backend`, `frontend`, and `tester`.
+- **🤖 Automated feature execution**: run task batches from spec files automatically.
+- **📨 Async inter-expert messaging**: deliver queued messages to available experts.
 - **🖥️ Control Tower TUI**: dispatch tasks, monitor status, and review reports in one screen.
 - **🌲 Worktree-friendly flow**: reduce branch conflicts with isolated workspaces per expert.
 - **🧩 Configurable by design**: tune experts, roles, timeouts, and paths via YAML.
