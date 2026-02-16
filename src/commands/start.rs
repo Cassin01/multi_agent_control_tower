@@ -52,7 +52,8 @@ pub async fn execute(args: Args) -> Result<()> {
         let working_dir = project_path.to_str().unwrap().to_string();
         let timeout = config.timeouts.agent_ready;
 
-        let (instruction_file, agents_file) = common::prepare_expert_files(&config, expert_id)?;
+        let (instruction_file, agents_file, settings_file) =
+            common::prepare_expert_files(&config, expert_id)?;
 
         tasks.spawn(async move {
             tmux.set_pane_title(expert_id, &expert_name).await?;
@@ -63,6 +64,7 @@ pub async fn execute(args: Args) -> Result<()> {
                     &working_dir,
                     instruction_file.as_deref(),
                     agents_file.as_deref(),
+                    settings_file.as_deref(),
                 )
                 .await?;
 

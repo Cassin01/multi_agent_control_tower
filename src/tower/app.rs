@@ -10,7 +10,8 @@ use crate::context::{AvailableRoles, ContextStore, Decision, ExpertContext, Sess
 use crate::experts::ExpertRegistry;
 use crate::feature::executor::{ExecutionPhase, FeatureExecutor};
 use crate::instructions::{
-    load_instruction_with_template, write_agents_file, write_instruction_file,
+    generate_hooks_settings, load_instruction_with_template, write_agents_file,
+    write_instruction_file, write_settings_file,
 };
 use crate::models::ExpertState;
 use crate::models::{ExpertInfo, Role};
@@ -1175,6 +1176,12 @@ impl TowerApp {
             Some(json) => Some(write_agents_file(&self.config.queue_path, expert_id, json)?),
             None => None,
         };
+        let hooks_json = generate_hooks_settings(&self.config.status_file_path(expert_id));
+        let settings_file = Some(write_settings_file(
+            &self.config.queue_path,
+            expert_id,
+            &hooks_json,
+        )?);
 
         let working_dir = self.resolve_expert_working_dir(expert_id).await;
         self.claude
@@ -1183,6 +1190,7 @@ impl TowerApp {
                 &working_dir,
                 instruction_file.as_deref(),
                 agents_file.as_deref(),
+                settings_file.as_deref(),
             )
             .await?;
 
@@ -1298,6 +1306,12 @@ impl TowerApp {
             Some(json) => Some(write_agents_file(&self.config.queue_path, expert_id, json)?),
             None => None,
         };
+        let hooks_json = generate_hooks_settings(&self.config.status_file_path(expert_id));
+        let settings_file = Some(write_settings_file(
+            &self.config.queue_path,
+            expert_id,
+            &hooks_json,
+        )?);
 
         self.claude
             .launch_claude(
@@ -1305,6 +1319,7 @@ impl TowerApp {
                 &working_dir,
                 instruction_file.as_deref(),
                 agents_file.as_deref(),
+                settings_file.as_deref(),
             )
             .await?;
 
@@ -1423,6 +1438,8 @@ impl TowerApp {
                 Some(json) => Some(write_agents_file(&queue_path, expert_id, json)?),
                 None => None,
             };
+            let hooks_json = generate_hooks_settings(&status_file_path);
+            let settings_file = Some(write_settings_file(&queue_path, expert_id, &hooks_json)?);
 
             claude
                 .launch_claude(
@@ -1430,6 +1447,7 @@ impl TowerApp {
                     &wt_path_str,
                     instruction_file.as_deref(),
                     agents_file.as_deref(),
+                    settings_file.as_deref(),
                 )
                 .await?;
 
@@ -1524,6 +1542,12 @@ impl TowerApp {
             Some(json) => Some(write_agents_file(&self.config.queue_path, expert_id, json)?),
             None => None,
         };
+        let hooks_json = generate_hooks_settings(&self.config.status_file_path(expert_id));
+        let settings_file = Some(write_settings_file(
+            &self.config.queue_path,
+            expert_id,
+            &hooks_json,
+        )?);
 
         let working_dir = self.config.project_path.to_str().unwrap_or(".").to_string();
 
@@ -1534,6 +1558,7 @@ impl TowerApp {
             &self.config.project_path,
             instruction_file,
             agents_file,
+            settings_file,
             working_dir,
         );
 
@@ -1586,6 +1611,7 @@ impl TowerApp {
                             executor.working_dir(),
                             executor.instruction_file().map(|p| p.as_path()),
                             executor.agents_file().map(|p| p.as_path()),
+                            executor.settings_file().map(|p| p.as_path()),
                         )
                         .await?;
                     executor.set_phase(ExecutionPhase::RelaunchingExpert {
@@ -2756,6 +2782,7 @@ mod tests {
             0,
             &exec_config,
             &temp.path().to_path_buf(),
+            None,
             None,
             None,
             "/tmp".to_string(),

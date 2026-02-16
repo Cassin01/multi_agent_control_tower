@@ -6,7 +6,8 @@ use crate::commands::common;
 use crate::config::Config;
 use crate::context::ContextStore;
 use crate::instructions::{
-    load_instruction_with_template, write_agents_file, write_instruction_file,
+    generate_hooks_settings, load_instruction_with_template, write_agents_file,
+    write_instruction_file, write_settings_file,
 };
 use crate::session::{ClaudeManager, ExpertStateDetector, TmuxManager};
 
@@ -161,6 +162,13 @@ async fn reset_expert(
         );
     }
 
+    let hooks_json = generate_hooks_settings(&config.status_file_path(expert_id));
+    let settings_file = Some(write_settings_file(
+        &config.queue_path,
+        expert_id,
+        &hooks_json,
+    )?);
+
     println!("  Restarting Claude...");
     claude
         .launch_claude(
@@ -168,6 +176,7 @@ async fn reset_expert(
             &project_path,
             instruction_file.as_deref(),
             agents_file.as_deref(),
+            settings_file.as_deref(),
         )
         .await?;
 

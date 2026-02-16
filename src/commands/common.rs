@@ -5,7 +5,8 @@ use anyhow::{bail, Context, Result};
 use crate::config::Config;
 use crate::context::ContextStore;
 use crate::instructions::{
-    load_instruction_with_template, write_agents_file, write_instruction_file,
+    generate_hooks_settings, load_instruction_with_template, write_agents_file,
+    write_instruction_file, write_settings_file,
 };
 use crate::queue::QueueManager;
 use crate::session::{ClaudeManager, ExpertStateDetector, TmuxManager};
@@ -106,12 +107,12 @@ pub async fn init_session(config: &Config, project_path: &Path) -> Result<Sessio
     Ok(SessionManagers { tmux, claude })
 }
 
-/// Load instruction template and write instruction/agents files for a single expert.
-/// Returns `(instruction_file, agents_file)` paths.
+/// Load instruction template and write instruction/agents/settings files for a single expert.
+/// Returns `(instruction_file, agents_file, settings_file)` paths.
 pub fn prepare_expert_files(
     config: &Config,
     expert_id: u32,
-) -> Result<(Option<PathBuf>, Option<PathBuf>)> {
+) -> Result<(Option<PathBuf>, Option<PathBuf>, Option<PathBuf>)> {
     let expert = config
         .get_expert(expert_id)
         .context("Expert not found in config")?;
@@ -140,5 +141,12 @@ pub fn prepare_expert_files(
         None => None,
     };
 
-    Ok((instruction_file, agents_file))
+    let hooks_json = generate_hooks_settings(&config.status_file_path(expert_id));
+    let settings_file = Some(write_settings_file(
+        &config.queue_path,
+        expert_id,
+        &hooks_json,
+    )?);
+
+    Ok((instruction_file, agents_file, settings_file))
 }

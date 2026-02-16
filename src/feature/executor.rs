@@ -45,10 +45,12 @@ pub struct FeatureExecutor {
 
     instruction_file: Option<PathBuf>,
     agents_file: Option<PathBuf>,
+    settings_file: Option<PathBuf>,
     working_dir: String,
 }
 
 impl FeatureExecutor {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         feature_name: String,
         expert_id: u32,
@@ -56,6 +58,7 @@ impl FeatureExecutor {
         project_path: &Path,
         instruction_file: Option<PathBuf>,
         agents_file: Option<PathBuf>,
+        settings_file: Option<PathBuf>,
         working_dir: String,
     ) -> Self {
         let specs_dir = project_path.join(".macot").join("specs");
@@ -76,6 +79,7 @@ impl FeatureExecutor {
             completed_tasks: 0,
             instruction_file,
             agents_file,
+            settings_file,
             working_dir,
         }
     }
@@ -204,6 +208,10 @@ impl FeatureExecutor {
         self.agents_file.as_ref()
     }
 
+    pub fn settings_file(&self) -> Option<&PathBuf> {
+        self.settings_file.as_ref()
+    }
+
     pub fn current_batch(&self) -> &[String] {
         &self.current_batch
     }
@@ -275,6 +283,7 @@ mod tests {
             0,
             &config,
             &temp.path().to_path_buf(),
+            None,
             None,
             None,
             "/tmp/project".to_string(),

@@ -58,7 +58,7 @@ pub async fn execute(args: Args) -> Result<()> {
             let working_dir = project_path.to_str().unwrap().to_string();
             let timeout = config.timeouts.agent_ready;
 
-            let (instruction_file, agents_file) =
+            let (instruction_file, agents_file, settings_file) =
                 match common::prepare_expert_files(&config, expert_id) {
                     Ok(files) => files,
                     Err(e) => {
@@ -77,6 +77,7 @@ pub async fn execute(args: Args) -> Result<()> {
                     &working_dir,
                     instruction_file.as_deref(),
                     agents_file.as_deref(),
+                    settings_file.as_deref(),
                 )
                 .await
             {

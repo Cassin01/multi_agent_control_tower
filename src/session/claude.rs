@@ -29,20 +29,39 @@ impl<T: TmuxSender> ClaudeManager<T> {
         working_dir: &str,
         instruction_file: Option<&Path>,
         agents_file: Option<&Path>,
+        settings_file: Option<&Path>,
     ) -> Result<()> {
         let mut args = vec!["--dangerously-skip-permissions".to_string()];
 
         if let Some(file) = instruction_file {
             args.push("--append-system-prompt".to_string());
-            args.push(format!("\"$(cat '{}')\"", file.display()));
+            args.push(format!(
+                "\"$(cat {})\"",
+                shell_single_quote(&file.display().to_string())
+            ));
         }
 
         if let Some(file) = agents_file {
             args.push("--agents".to_string());
-            args.push(format!("\"$(cat '{}')\"", file.display()));
+            args.push(format!(
+                "\"$(cat {})\"",
+                shell_single_quote(&file.display().to_string())
+            ));
         }
 
-        let claude_cmd = format!("cd {} && claude {}", working_dir, args.join(" "));
+        if let Some(file) = settings_file {
+            args.push("--settings".to_string());
+            args.push(format!(
+                "\"$(cat {})\"",
+                shell_single_quote(&file.display().to_string())
+            ));
+        }
+
+        let claude_cmd = format!(
+            "cd {} && claude {}",
+            shell_single_quote(working_dir),
+            args.join(" ")
+        );
 
         self.tmux
             .send_keys_with_enter(expert_id, &claude_cmd)
@@ -109,6 +128,10 @@ impl<T: TmuxSender> ClaudeManager<T> {
     }
 }
 
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,7 +193,13 @@ mod tests {
 
         let instruction_file = std::path::PathBuf::from("/tmp/instructions.txt");
         manager
-            .launch_claude(0, "/tmp/workdir", Some(instruction_file.as_path()), None)
+            .launch_claude(
+                0,
+                "/tmp/workdir",
+                Some(instruction_file.as_path()),
+                None,
+                None,
+            )
             .await
             .unwrap();
 
@@ -196,7 +225,7 @@ mod tests {
         let manager = create_mock_manager(mock.clone());
 
         manager
-            .launch_claude(0, "/tmp/workdir", None, None)
+            .launch_claude(0, "/tmp/workdir", None, None, None)
             .await
             .unwrap();
 
@@ -223,7 +252,7 @@ mod tests {
 
         let agents_file = std::path::PathBuf::from("/tmp/agents.json");
         manager
-            .launch_claude(0, "/tmp/workdir", None, Some(agents_file.as_path()))
+            .launch_claude(0, "/tmp/workdir", None, Some(agents_file.as_path()), None)
             .await
             .unwrap();
 
@@ -256,6 +285,7 @@ mod tests {
                 "/tmp/workdir",
                 Some(instruction_file.as_path()),
                 Some(agents_file.as_path()),
+                None,
             )
             .await
             .unwrap();
@@ -528,6 +558,106 @@ mod tests {
             sender.resized_ids(),
             vec![1, 3],
             "resize_multi_fail: experts 1, 3 should succeed despite experts 0, 2 failing"
+        );
+    }
+
+    #[tokio::test]
+    async fn launch_claude_with_settings_file() {
+        let mock = MockTmuxSender::new();
+        let manager = create_mock_manager(mock.clone());
+
+        let settings_file = std::path::PathBuf::from("/tmp/settings.json");
+        manager
+            .launch_claude(0, "/tmp/workdir", None, None, Some(settings_file.as_path()))
+            .await
+            .unwrap();
+
+        let keys = mock.sent_keys();
+        let cmd = keys
+            .iter()
+            .find(|(_, k)| k.contains("claude"))
+            .map(|(_, k)| k.as_str())
+            .expect("launch_claude: should send a claude command");
+        assert!(
+            cmd.contains("--settings"),
+            "launch_claude: should include --settings flag when settings_file is provided"
+        );
+        assert!(
+            cmd.contains("/tmp/settings.json"),
+            "launch_claude: should include settings file path"
+        );
+    }
+
+    #[tokio::test]
+    async fn launch_claude_with_all_three_files() {
+        let mock = MockTmuxSender::new();
+        let manager = create_mock_manager(mock.clone());
+
+        let instruction_file = std::path::PathBuf::from("/tmp/instructions.txt");
+        let agents_file = std::path::PathBuf::from("/tmp/agents.json");
+        let settings_file = std::path::PathBuf::from("/tmp/settings.json");
+        manager
+            .launch_claude(
+                0,
+                "/tmp/workdir",
+                Some(instruction_file.as_path()),
+                Some(agents_file.as_path()),
+                Some(settings_file.as_path()),
+            )
+            .await
+            .unwrap();
+
+        let keys = mock.sent_keys();
+        let cmd = keys
+            .iter()
+            .find(|(_, k)| k.contains("claude"))
+            .map(|(_, k)| k.as_str())
+            .expect("launch_claude: should send a claude command");
+        assert!(
+            cmd.contains("--append-system-prompt"),
+            "launch_claude: should include --append-system-prompt flag"
+        );
+        assert!(
+            cmd.contains("--agents"),
+            "launch_claude: should include --agents flag"
+        );
+        assert!(
+            cmd.contains("--settings"),
+            "launch_claude: should include --settings flag"
+        );
+    }
+
+    #[tokio::test]
+    async fn launch_claude_quotes_paths_for_shell_safety() {
+        let mock = MockTmuxSender::new();
+        let manager = create_mock_manager(mock.clone());
+
+        let instruction_file = std::path::PathBuf::from("/tmp/o'hara/instructions.txt");
+        manager
+            .launch_claude(
+                0,
+                "/tmp/work dir/it's",
+                Some(instruction_file.as_path()),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        let keys = mock.sent_keys();
+        let cmd = keys
+            .iter()
+            .find(|(_, k)| k.contains("claude"))
+            .map(|(_, k)| k.as_str())
+            .expect("launch_claude: should send a claude command");
+
+        assert!(
+            cmd.contains("cd '/tmp/work dir/it'\\''s' && claude"),
+            "launch_claude: should safely quote working dir"
+        );
+        assert!(
+            cmd.contains("$(cat '/tmp/o'\\''hara/instructions.txt')"),
+            "launch_claude: should safely quote file paths"
         );
     }
 
