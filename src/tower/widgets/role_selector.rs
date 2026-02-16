@@ -180,7 +180,7 @@ impl RoleSelector {
         let footer = Paragraph::new(Line::from(vec![
             Span::styled("Enter", Style::default().fg(Color::Cyan)),
             Span::raw(": Select  |  "),
-            Span::styled("Esc", Style::default().fg(Color::Cyan)),
+            Span::styled("Esc/q/Ctrl+O", Style::default().fg(Color::Cyan)),
             Span::raw(": Cancel  |  "),
             Span::styled("j/k", Style::default().fg(Color::Cyan)),
             Span::raw(": Navigate"),

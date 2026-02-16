@@ -725,6 +725,7 @@ impl TowerApp {
                     if mouse.kind == MouseEventKind::Down(MouseButton::Left)
                         && !self.help_modal.is_visible()
                         && self.report_display.view_mode() != ViewMode::Detail
+                        && !self.role_selector.is_visible()
                     {
                         self.handle_mouse_click(mouse.column, mouse.row);
                     }
@@ -795,7 +796,10 @@ impl TowerApp {
 
                     if self.role_selector.is_visible() {
                         match key.code {
-                            KeyCode::Char('q') => {
+                            KeyCode::Esc | KeyCode::Char('q') => {
+                                self.role_selector.hide();
+                            }
+                            KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 self.role_selector.hide();
                             }
                             KeyCode::Enter => {
