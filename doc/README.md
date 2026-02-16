@@ -11,5 +11,6 @@ Use this index to move from quick usage to deeper internals.
 
 - [Expert Role Selection](design/expert_role_selection.md)
 - [Inter-Expert Messaging](design/inter_expert_messaging.md)
+- [Launch Command](design/launch_command.md)
 - [Worktree Branch Launch](design/worktree_branch_launch.md)
 - [Worktree Nesting Fix](design/worktree_nesting_fix.md)

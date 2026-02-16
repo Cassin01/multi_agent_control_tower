@@ -1,6 +1,15 @@
-use crate::session::TmuxManager;
+use std::path::{Path, PathBuf};
+
+use anyhow::{bail, Context, Result};
+
+use crate::config::Config;
+use crate::context::ContextStore;
+use crate::instructions::{
+    load_instruction_with_template, write_agents_file, write_instruction_file,
+};
+use crate::queue::QueueManager;
+use crate::session::{ClaudeManager, ExpertStateDetector, TmuxManager};
 use crate::utils::compute_path_hash;
-use anyhow::{bail, Result};
 
 /// Try to find a running session that matches the current directory's hash.
 /// Returns the session name if exactly one match is found.
@@ -49,4 +58,87 @@ pub async fn resolve_single_session(no_sessions_msg: &str) -> Result<String> {
 /// Default message version for resolve_single_session
 pub async fn resolve_single_session_default() -> Result<String> {
     resolve_single_session("No macot sessions running").await
+}
+
+pub struct SessionManagers {
+    pub tmux: TmuxManager,
+    pub claude: ClaudeManager,
+}
+
+/// Initialize a new macot session: check no existing session, set up queue/status/context,
+/// create the tmux session, and return managers for tmux and claude.
+pub async fn init_session(config: &Config, project_path: &Path) -> Result<SessionManagers> {
+    let tmux = TmuxManager::from_config(config);
+
+    if tmux.session_exists().await {
+        bail!(
+            "Session {} already exists. Run 'macot down' first.",
+            config.session_name()
+        );
+    }
+
+    let queue = QueueManager::new(config.queue_path.clone());
+    queue.init().await.context("Failed to initialize queue")?;
+
+    let detector = ExpertStateDetector::new(config.queue_path.join("status"));
+    for i in 0..config.num_experts() {
+        detector
+            .set_marker(i, "pending")
+            .context("Failed to initialize expert status")?;
+    }
+
+    let context_store = ContextStore::new(config.queue_path.clone());
+    context_store
+        .init_session(&config.session_hash(), config.num_experts())
+        .await
+        .context("Failed to initialize context store")?;
+
+    let project_str = project_path.to_str().unwrap();
+    tmux.create_session(config.num_experts(), project_str)
+        .await
+        .context("Failed to create tmux session")?;
+
+    tmux.init_session_metadata(project_str, config.num_experts())
+        .await?;
+
+    let claude = ClaudeManager::new(config.session_name());
+
+    Ok(SessionManagers { tmux, claude })
+}
+
+/// Load instruction template and write instruction/agents files for a single expert.
+/// Returns `(instruction_file, agents_file)` paths.
+pub fn prepare_expert_files(
+    config: &Config,
+    expert_id: u32,
+) -> Result<(Option<PathBuf>, Option<PathBuf>)> {
+    let expert = config
+        .get_expert(expert_id)
+        .context("Expert not found in config")?;
+
+    let instruction_result = load_instruction_with_template(
+        &config.core_instructions_path,
+        &config.role_instructions_path,
+        &expert.name,
+        expert_id,
+        &expert.name,
+        &config.status_file_path(expert_id),
+    )?;
+
+    let instruction_file = if !instruction_result.content.is_empty() {
+        Some(write_instruction_file(
+            &config.queue_path,
+            expert_id,
+            &instruction_result.content,
+        )?)
+    } else {
+        None
+    };
+
+    let agents_file = match &instruction_result.agents_json {
+        Some(json) => Some(write_agents_file(&config.queue_path, expert_id, json)?),
+        None => None,
+    };
+
+    Ok((instruction_file, agents_file))
 }

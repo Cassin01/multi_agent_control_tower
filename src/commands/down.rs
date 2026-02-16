@@ -57,8 +57,12 @@ pub async fn execute(args: Args) -> Result<()> {
             }
         }
 
-        println!("Waiting for graceful shutdown ({} seconds)...", 10);
-        sleep(Duration::from_secs(10)).await;
+        let delay = Duration::from_secs(2);
+        println!(
+            "Waiting for graceful shutdown ({} seconds)...",
+            delay.as_secs_f32()
+        );
+        sleep(delay).await;
     }
 
     println!("Killing tmux session...");

@@ -11,6 +11,7 @@
 | [`start`](#macot-start) | Initialize expert session with Claude agents |
 | [`down`](#macot-down) | Gracefully shut down expert session |
 | [`tower`](#macot-tower) | Launch the control tower TUI |
+| [`launch`](#macot-launch) | Initialize session and open TUI in one step |
 | [`status`](#macot-status) | Display current session status |
 | [`sessions`](#macot-sessions) | List all running macot sessions |
 | [`reset`](#macot-reset) | Reset expert context and instructions |
@@ -192,6 +193,48 @@ macot tower --config ./custom-config.yaml
 The TUI displays:
 - Expert status panel (list of experts with current state)
 - Task input panel (compose and assign tasks)
+
+---
+
+## macot launch
+
+Initialize expert session and open the control tower TUI in one step. Equivalent to running `macot start` followed by `macot tower`.
+
+Session infrastructure (tmux session, queue, context store) is initialized synchronously, then expert agents are launched asynchronously in the background while the TUI starts immediately. Experts transition from "pending" to "ready" in the TUI as they come online.
+
+### Arguments
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `project_path` | PathBuf | `.` | Path to project directory |
+
+### Options
+
+| Option | Short | Type | Description |
+|--------|-------|------|-------------|
+| `--num-experts` | `-n` | u32 | Number of experts (overrides config) |
+| `--config` | `-c` | PathBuf | Custom config file path |
+
+### Examples
+
+```bash
+# Launch session and TUI in current directory
+macot launch
+
+# Launch with specific project path and 4 experts
+macot launch /path/to/project -n 4
+
+# Launch with custom config
+macot launch . --config ./custom-config.yaml
+```
+
+### Behavior
+
+1. **Infrastructure sync** — Resolves project path, loads configuration, creates tmux session, initializes queue and context storage
+2. **Expert async** — Spawns expert agent launch in the background (Claude CLI launch + readiness wait per expert)
+3. **TUI foreground** — Opens the control tower UI immediately; expert startup progress is visible in real-time
+
+> **Note:** This is equivalent to `macot start` + `macot tower`, but the TUI opens sooner because expert readiness is not awaited before launching the UI.
 
 ---
 
