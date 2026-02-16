@@ -324,13 +324,11 @@ mod tests {
             .expect("generate_hooks_settings: command should be string");
 
         assert_eq!(
-            processing_cmd,
-            "echo -n processing > '/tmp/status/it'\\''s/me'",
+            processing_cmd, "echo -n processing > '/tmp/status/it'\\''s/me'",
             "generate_hooks_settings: processing command should safely quote path"
         );
         assert_eq!(
-            stop_cmd,
-            "echo -n pending > '/tmp/status/it'\\''s/me'",
+            stop_cmd, "echo -n pending > '/tmp/status/it'\\''s/me'",
             "generate_hooks_settings: stop command should safely quote path"
         );
     }

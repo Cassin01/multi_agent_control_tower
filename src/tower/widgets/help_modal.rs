@@ -300,7 +300,7 @@ mod tests {
             "build_help_lines: should show Ctrl+G for feature execution"
         );
         assert!(
-            text.contains("Execute feature"),
+            text.contains("Implement tasks"),
             "build_help_lines: should describe feature execution functionality"
         );
     }
