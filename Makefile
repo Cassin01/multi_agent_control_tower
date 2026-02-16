@@ -1,4 +1,4 @@
-.PHONY: build test check clean install fmt fmt-check lint ci
+.PHONY: build test check clean install fmt fmt-check lint ci demo-gif-validate demo-gif
 build: ## Build the project in release mode
 	cargo build --release
 
@@ -26,3 +26,10 @@ lint: ## Run clippy lints and fail on warnings
 
 ci: build lint fmt-check test ## Run local CI checks (build, lint, format, test)
 
+demo-gif-validate: ## Validate the VHS tape for the README demo
+	vhs validate assets/demo-quickstart.tape
+
+demo-gif: demo-gif-validate ## Regenerate assets/demo-quickstart.gif
+	vhs assets/demo-quickstart.tape
+	ffmpeg -y -i assets/demo-quickstart.gif -vf "fps=15,scale=960:-1:flags=lanczos" -loop 0 /tmp/demo-quickstart.gif >/dev/null 2>&1
+	mv /tmp/demo-quickstart.gif assets/demo-quickstart.gif
