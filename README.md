@@ -45,6 +45,13 @@ Install, launch, and verify in under a minute.
 # 0) Prerequisites: rust + tmux + Claude CLI
 cargo install macot
 
+# 1) Launch session + TUI in one step
+macot launch
+```
+
+Or, if you prefer separate steps:
+
+```bash
 # 1) Start a session in your current project
 macot start .
 
@@ -125,6 +132,7 @@ Core command surface:
 |---|---|
 | `macot start [project_path]` | Initialize a session and launch experts |
 | `macot tower [session_name]` | Open the control tower UI |
+| `macot launch [project_path]` | Start a session and open the control tower in one step |
 | `macot status [session_name]` | Print live session and expert status |
 | `macot sessions` | List running `macot-*` sessions |
 | `macot down [session_name]` | Stop a session gracefully or forcefully |

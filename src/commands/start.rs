@@ -1,15 +1,10 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
 use std::path::PathBuf;
 use tokio::task::JoinSet;
 
+use crate::commands::common;
 use crate::config::Config;
-use crate::context::ContextStore;
-use crate::instructions::{
-    load_instruction_with_template, write_agents_file, write_instruction_file,
-};
-use crate::queue::QueueManager;
-use crate::session::{ClaudeManager, ExpertStateDetector, TmuxManager};
 
 #[derive(ClapArgs)]
 pub struct Args {
@@ -40,42 +35,10 @@ pub async fn execute(args: Args) -> Result<()> {
         config = config.with_num_experts(n);
     }
 
-    let tmux = TmuxManager::from_config(&config);
-
-    if tmux.session_exists().await {
-        bail!(
-            "Session {} already exists. Run 'macot down' first.",
-            config.session_name()
-        );
-    }
-
     println!("Creating session: {}", config.session_name());
     println!("Number of experts: {}", config.num_experts());
 
-    let queue = QueueManager::new(config.queue_path.clone());
-    queue.init().await.context("Failed to initialize queue")?;
-
-    let detector = ExpertStateDetector::new(config.queue_path.join("status"));
-    for i in 0..config.num_experts() {
-        detector
-            .set_marker(i, "pending")
-            .context("Failed to initialize expert status")?;
-    }
-
-    let context_store = ContextStore::new(config.queue_path.clone());
-    context_store
-        .init_session(&config.session_hash(), config.num_experts())
-        .await
-        .context("Failed to initialize context store")?;
-
-    tmux.create_session(config.num_experts(), project_path.to_str().unwrap())
-        .await
-        .context("Failed to create tmux session")?;
-
-    tmux.init_session_metadata(project_path.to_str().unwrap(), config.num_experts())
-        .await?;
-
-    let claude = ClaudeManager::new(config.session_name());
+    let managers = common::init_session(&config, &project_path).await?;
 
     println!("Launching {} experts in parallel...", config.num_experts());
 
@@ -84,32 +47,12 @@ pub async fn execute(args: Args) -> Result<()> {
     for (i, expert) in config.experts.iter().enumerate() {
         let expert_id = i as u32;
         let expert_name = expert.name.clone();
-        let tmux = tmux.clone();
-        let claude = claude.clone();
+        let tmux = managers.tmux.clone();
+        let claude = managers.claude.clone();
         let working_dir = project_path.to_str().unwrap().to_string();
         let timeout = config.timeouts.agent_ready;
 
-        let instruction_result = load_instruction_with_template(
-            &config.core_instructions_path,
-            &config.role_instructions_path,
-            &expert.name,
-            expert_id,
-            &expert.name,
-            &config.status_file_path(expert_id),
-        )?;
-        let instruction_file = if !instruction_result.content.is_empty() {
-            Some(write_instruction_file(
-                &config.queue_path,
-                expert_id,
-                &instruction_result.content,
-            )?)
-        } else {
-            None
-        };
-        let agents_file = match &instruction_result.agents_json {
-            Some(json) => Some(write_agents_file(&config.queue_path, expert_id, json)?),
-            None => None,
-        };
+        let (instruction_file, agents_file) = common::prepare_expert_files(&config, expert_id)?;
 
         tasks.spawn(async move {
             tmux.set_pane_title(expert_id, &expert_name).await?;

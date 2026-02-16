@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 
-use crate::commands::{down, reset, start, status, tower};
+use crate::commands::{down, launch, reset, start, status, tower};
 
 #[derive(Parser)]
 #[command(name = "macot")]
@@ -21,6 +21,9 @@ pub enum Commands {
 
     /// Launch the control tower UI
     Tower(tower::Args),
+
+    /// Initialize expert session and launch the control tower UI
+    Launch(launch::Args),
 
     /// Display current session status
     Status(status::Args),

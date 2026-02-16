@@ -33,6 +33,7 @@ async fn main() -> Result<()> {
         Commands::Start(args) => commands::start::execute(args).await,
         Commands::Down(args) => commands::down::execute(args).await,
         Commands::Tower(args) => commands::tower::execute(args).await,
+        Commands::Launch(args) => commands::launch::execute(args).await,
         Commands::Status(args) => commands::status::execute(args).await,
         Commands::Sessions => commands::sessions::execute().await,
         Commands::Reset(args) => commands::reset::execute(args).await,
