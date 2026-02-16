@@ -31,5 +31,6 @@ demo-gif-validate: ## Validate the VHS tape for the README demo
 
 demo-gif: demo-gif-validate ## Regenerate assets/demo-quickstart.gif
 	vhs assets/demo-quickstart.tape
-	ffmpeg -y -i assets/demo-quickstart.gif -vf "fps=15,scale=960:-1:flags=lanczos" -loop 0 /tmp/demo-quickstart.gif >/dev/null 2>&1
-	mv /tmp/demo-quickstart.gif assets/demo-quickstart.gif
+	tmp_gif="$$(mktemp "$${TMPDIR:-/tmp}/demo-quickstart.XXXXXX.gif")"; \
+	ffmpeg -y -i assets/demo-quickstart.gif -vf "fps=12,scale=800:-1:flags=lanczos,split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle" -loop 0 "$$tmp_gif" >/dev/null 2>&1; \
+	mv "$$tmp_gif" assets/demo-quickstart.gif

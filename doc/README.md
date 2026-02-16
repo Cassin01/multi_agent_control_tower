@@ -6,7 +6,6 @@ Use this index to move from quick usage to deeper internals.
 
 - [CLI Reference](cli.md)
 - [Configuration Guide](configuration.md)
-- [Troubleshooting](troubleshooting.md)
 
 ## Design Documents
 

@@ -17,7 +17,7 @@ Coordinate multiple role-based coding agents on one codebase with a Rust-native 
 [Features](#-features) •
 [Quick Start](#-quick-start) •
 [Installation](#-installation) •
-[Configuration](#%EF%B8%8F-configuration) •
+[Configuration](#-configuration) •
 [Commands](#-commands) •
 [FAQ](#-faq) •
 [Contributing](#-contributing)

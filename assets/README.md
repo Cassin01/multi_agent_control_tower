@@ -2,8 +2,8 @@
 
 This directory contains repository presentation assets.
 
-- `demo-quickstart.gif`: primary README hero demo (6-8 second loop)
 - `demo-quickstart.tape`: VHS source used to regenerate the demo GIF
+- `demo-quickstart.gif`: generated README hero demo (6-8 second loop). This file is produced by `make demo-gif` and is not checked into the repository by default.
 
 ## Capture guidance
 

@@ -10,4 +10,4 @@ The format is based on Keep a Changelog.
 
 - Contribution and governance scaffolding (`CONTRIBUTING.md`, issue templates, PR template)
 - README onboarding funnel, live badges, and architecture/configuration cross-links
-- Initial architecture and troubleshooting docs
+- Initial architecture docs

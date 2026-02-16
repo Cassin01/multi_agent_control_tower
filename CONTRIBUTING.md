@@ -60,7 +60,6 @@ A contribution is done when:
 ## Good first issue ideas
 
 - README: add finalized `assets/demo-quickstart.gif` and screenshot captions
-- docs: expand `doc/troubleshooting.md` with known tmux edge cases
 - UX: improve `macot status` formatting for narrow terminals
 - docs: add multi-session workflow examples to `doc/cli.md`
 - CI: add docs link checker to CI workflow
