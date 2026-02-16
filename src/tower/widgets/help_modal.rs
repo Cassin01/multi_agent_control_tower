@@ -83,7 +83,7 @@ impl HelpModal {
                 "Ctrl+W",
                 "Launch expert in worktree (uses task input as branch name)",
             ),
-            Self::key_line("Ctrl+G", "Execute feature / Cancel execution"),
+            Self::key_line("Ctrl+G", "Implement tasks / Cancel implementation"),
             Self::key_line("Ctrl+X", "View report for selected expert"),
             Self::nested_subsection_title("Cursor Movement"),
             Self::key_line("Ctrl+B / Ctrl+F", "Move cursor left / right"),
