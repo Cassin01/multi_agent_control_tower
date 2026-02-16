@@ -164,6 +164,10 @@ Contributions are welcome. Contribution flow, issue templates, and PR checklist 
 make ci
 ```
 
+## ☕ Support
+
+Support this project: https://buymeacoffee.com/Cassin01
+
 ## 📄 License
 
 [Apache-2.0](LICENSE) © Cassin01
