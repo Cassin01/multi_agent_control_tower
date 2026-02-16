@@ -531,8 +531,8 @@ mod tests {
 - [x] 1. Done
 - [x] 2. Done
 - [ ] 3. Task three
+  - [ ] 3.1. Sub-task three one
 - [ ] 4. Task four
-- [ ] 5. Task five
 ",
         );
         let mut executor = make_executor(&temp);
@@ -542,7 +542,7 @@ mod tests {
         let prompt = executor.build_prompt(&batch);
 
         assert!(
-            prompt.contains("Execute Tasks {3, 4, 5}"),
+            prompt.contains("Execute Tasks {3, 3.1, 4}"),
             "build_prompt: should contain comma-separated task numbers, got: {}",
             prompt
         );
