@@ -100,6 +100,7 @@ impl HelpModal {
             Self::nested_subsection_title("Submit"),
             Self::key_line("Ctrl+S", "Assign task to selected expert"),
             Self::key_line("Enter", "Insert newline"),
+            Self::key_line("Shift+Tab", "Send to selected expert (tmux BTab)"),
             Line::from(""),
             Self::subsection_title("Expert Panel"),
             Self::key_line("PageUp", "Enter scroll mode / Scroll up"),

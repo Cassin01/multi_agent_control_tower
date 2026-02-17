@@ -171,7 +171,7 @@ macot tower --config ./custom-config.yaml
 | Key | Action |
 |-----|--------|
 | **Global** | |
-| `Tab` / `Shift+Tab` | Switch focus between panels |
+| `Ctrl+T` | Switch focus between panels |
 | `Ctrl+H` | Toggle help |
 | `Ctrl+C` / `Ctrl+Q` | Quit application |
 | **Task Input** | |
@@ -180,6 +180,7 @@ macot tower --config ./custom-config.yaml
 | `Ctrl+O` | Change expert role |
 | `Ctrl+R` | Reset selected expert |
 | `Ctrl+W` | Launch expert in worktree |
+| `Shift+Tab` | Send `BTab` to selected expert (tmux) |
 | `Esc` | Clear input |
 | **Report List** | |
 | `j` / `↓` | Select next report |

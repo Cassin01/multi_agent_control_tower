@@ -78,6 +78,11 @@ fn keycode_to_tmux_key(code: KeyCode, modifiers: KeyModifiers) -> Option<String>
     }
 }
 
+fn is_shift_tab_for_task_input(code: KeyCode, modifiers: KeyModifiers) -> bool {
+    matches!(code, KeyCode::BackTab)
+        || (matches!(code, KeyCode::Tab) && modifiers.contains(KeyModifiers::SHIFT))
+}
+
 struct ExpertPanelUpdateResult {
     expert_id: u32,
     content: String,
@@ -809,6 +814,22 @@ impl TowerApp {
                             KeyCode::Up | KeyCode::Char('k') => self.role_selector.prev(),
                             KeyCode::Down | KeyCode::Char('j') => self.role_selector.next(),
                             _ => {}
+                        }
+                        return Ok(());
+                    }
+
+                    if self.focus == FocusArea::TaskInput
+                        && is_shift_tab_for_task_input(key.code, key.modifiers)
+                    {
+                        if let Some(expert_id) = self.status_display.selected_expert_id() {
+                            if let Err(e) = self.claude.send_keys(expert_id, "BTab").await {
+                                tracing::warn!(
+                                    "Failed to send Shift+Tab to expert {}: {}",
+                                    expert_id,
+                                    e
+                                );
+                                self.set_message(format!("Error sending keys to expert: {}", e));
+                            }
                         }
                         return Ok(());
                     }
@@ -2029,6 +2050,30 @@ mod tests {
             keycode_to_tmux_key(KeyCode::End, KeyModifiers::NONE),
             None,
             "keycode_to_tmux_key: End should return None (reserved for local scroll)"
+        );
+    }
+
+    #[test]
+    fn is_shift_tab_for_task_input_backtab_returns_true() {
+        assert!(
+            is_shift_tab_for_task_input(KeyCode::BackTab, KeyModifiers::NONE),
+            "is_shift_tab_for_task_input: BackTab should be recognized as Shift+Tab"
+        );
+    }
+
+    #[test]
+    fn is_shift_tab_for_task_input_tab_with_shift_returns_true() {
+        assert!(
+            is_shift_tab_for_task_input(KeyCode::Tab, KeyModifiers::SHIFT),
+            "is_shift_tab_for_task_input: Tab+Shift should be recognized as Shift+Tab"
+        );
+    }
+
+    #[test]
+    fn is_shift_tab_for_task_input_plain_tab_returns_false() {
+        assert!(
+            !is_shift_tab_for_task_input(KeyCode::Tab, KeyModifiers::NONE),
+            "is_shift_tab_for_task_input: plain Tab should not be recognized as Shift+Tab"
         );
     }
 
