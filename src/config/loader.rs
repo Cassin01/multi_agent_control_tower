@@ -44,7 +44,7 @@ impl Default for FeatureExecutionConfig {
         Self {
             batch_size: 4,
             poll_delay_secs: 30,
-            exit_wait_secs: 3,
+            exit_wait_secs: 5,
             ready_timeout_secs: 60,
             ready_grace_secs: 5,
         }
@@ -59,7 +59,7 @@ impl FeatureExecutionConfig {
         30
     }
     fn default_exit_wait_secs() -> u64 {
-        3
+        5
     }
     fn default_ready_timeout_secs() -> u64 {
         60
@@ -512,8 +512,8 @@ experts:
             "feature_execution_config: default poll_delay_secs should be 30"
         );
         assert_eq!(
-            config.exit_wait_secs, 3,
-            "feature_execution_config: default exit_wait_secs should be 3"
+            config.exit_wait_secs, 5,
+            "feature_execution_config: default exit_wait_secs should be 5"
         );
         assert_eq!(
             config.ready_timeout_secs, 60,
@@ -553,7 +553,7 @@ feature_execution:
             "feature_execution_config: overridden poll_delay_secs"
         );
         assert_eq!(
-            config.feature_execution.exit_wait_secs, 3,
+            config.feature_execution.exit_wait_secs, 5,
             "feature_execution_config: non-overridden exit_wait_secs keeps default"
         );
         assert_eq!(
