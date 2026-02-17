@@ -5,7 +5,6 @@ pub const DEFAULT_BACKEND: &str = include_str!("../../instructions/backend.md");
 pub const DEFAULT_DEBUGGER: &str = include_str!("../../instructions/debugger.md");
 pub const DEFAULT_FRONTEND: &str = include_str!("../../instructions/frontend.md");
 pub const DEFAULT_PLANNER: &str = include_str!("../../instructions/planner.md");
-pub const DEFAULT_TESTER: &str = include_str!("../../instructions/tester.md");
 pub const DEFAULT_GENERAL: &str = include_str!("../../instructions/general.md");
 
 /// Get embedded default instruction for a role.
@@ -17,7 +16,6 @@ pub fn get_default(role: &str) -> Option<&'static str> {
         "debugger" => Some(DEFAULT_DEBUGGER),
         "frontend" => Some(DEFAULT_FRONTEND),
         "planner" => Some(DEFAULT_PLANNER),
-        "tester" => Some(DEFAULT_TESTER),
         "general" => Some(DEFAULT_GENERAL),
         _ => None,
     }
@@ -32,7 +30,6 @@ pub fn default_role_names() -> &'static [&'static str] {
         "frontend",
         "general",
         "planner",
-        "tester",
     ]
 }
 
@@ -47,7 +44,6 @@ mod tests {
         assert!(get_default("debugger").is_some());
         assert!(get_default("frontend").is_some());
         assert!(get_default("planner").is_some());
-        assert!(get_default("tester").is_some());
         assert!(get_default("general").is_some());
     }
 
@@ -65,7 +61,6 @@ mod tests {
         assert!(names.contains(&"debugger"));
         assert!(names.contains(&"frontend"));
         assert!(names.contains(&"planner"));
-        assert!(names.contains(&"tester"));
         assert!(names.contains(&"general"));
     }
 
@@ -76,7 +71,6 @@ mod tests {
         assert!(!DEFAULT_DEBUGGER.is_empty());
         assert!(!DEFAULT_FRONTEND.is_empty());
         assert!(!DEFAULT_PLANNER.is_empty());
-        assert!(!DEFAULT_TESTER.is_empty());
         assert!(!DEFAULT_GENERAL.is_empty());
     }
 }

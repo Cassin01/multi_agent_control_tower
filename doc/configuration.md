@@ -11,14 +11,14 @@ macot tower --config ./config/macot.yaml
 
 ```yaml
 experts:
-  - name: architect
+  - name: Linda
     role: architect
-  - name: backend
-    role: backend
-  - name: frontend
-    role: frontend
-  - name: tester
-    role: tester
+  - name: James
+    role: planner
+  - name: John
+    role: general
+  - name: Sarah
+    role: debugger
 
 runtime:
   startup_timeout_seconds: 30

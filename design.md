@@ -104,13 +104,9 @@ session_prefix: "macot"
 # Expert configuration
 experts:
   - name: "architect"
-    color: "red"
-  - name: "frontend"
-    color: "blue"
-  - name: "backend"
-    color: "green"
-  - name: "tester"
-    color: "yellow"
+  - name: "planner"
+  - name: "general"
+  - name: "debugger"
 
 # Timeouts (in seconds)
 timeouts:
@@ -259,9 +255,9 @@ Session: macot-a1b2c3d4 (running)
 Project: /Users/user/myproject
 Experts:
   [0] architect  - idle
-  [1] frontend   - busy
-  [2] backend    - idle
-  [3] tester     - offline
+  [1] planner    - busy
+  [2] general    - idle
+  [3] debugger   - offline
 ```
 
 ---
@@ -316,9 +312,9 @@ multi_agent_control_tower/
 │   ├── templates/
 │   │   └── core.md.tmpl
 │   ├── architect.md
-│   ├── frontend.md
 │   ├── backend.md
-│   ├── tester.md
+│   ├── debugger.md
+│   ├── frontend.md
 │   ├── planner.md
 │   └── general.md
 ├── doc/

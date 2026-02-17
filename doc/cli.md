@@ -65,15 +65,15 @@ Starting macot session for: /path/to/project
 Creating session: macot-a1b2c3d4
 Number of experts: 4
   [0] architect - Launching Claude...
-  [1] backend - Launching Claude...
-  [2] frontend - Launching Claude...
-  [3] tester - Launching Claude...
+  [1] planner - Launching Claude...
+  [2] general - Launching Claude...
+  [3] debugger - Launching Claude...
 
 Waiting for agents to be ready...
   [0] architect - Ready
-  [1] backend - Ready
-  [2] frontend - Ready
-  [3] tester - Ready
+  [1] planner - Ready
+  [2] general - Ready
+  [3] debugger - Ready
 
 Session started successfully!
 Run 'macot tower' to open the control tower UI
@@ -269,9 +269,9 @@ Created: 2025-01-31 10:00:00
 
 Experts:
   [0] architect    ○ - Idle
-  [1] backend      ◐ - Thinking
-  [2] frontend     ● - Executing
-  [3] tester       ○ - Idle
+  [1] planner      ◐ - Thinking
+  [2] general      ● - Executing
+  [3] debugger     ○ - Idle
 ```
 
 ### Status Indicators

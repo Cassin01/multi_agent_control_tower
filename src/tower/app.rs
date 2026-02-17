@@ -3075,7 +3075,6 @@ mod property_tests {
         config.experts = (0..num_experts)
             .map(|i| crate::config::ExpertConfig {
                 name: format!("expert{}", i),
-                color: "white".to_string(),
                 role: format!("role{}", i % 4),
             })
             .collect();

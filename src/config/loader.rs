@@ -5,7 +5,6 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExpertConfig {
     pub name: String, // Display name only
-    pub color: String,
     #[serde(default)]
     pub role: String, // Instruction file name (required for instruction loading)
 }
@@ -14,7 +13,6 @@ impl Default for ExpertConfig {
     fn default() -> Self {
         Self {
             name: "expert".to_string(),
-            color: "white".to_string(),
             role: "general".to_string(),
         }
     }
@@ -106,23 +104,19 @@ impl Default for Config {
             experts: vec![
                 ExpertConfig {
                     name: "Alyosha".to_string(),
-                    color: "red".to_string(),
                     role: "architect".to_string(),
                 },
                 ExpertConfig {
                     name: "Ilyusha".to_string(),
-                    color: "blue".to_string(),
-                    role: "frontend".to_string(),
+                    role: "planner".to_string(),
                 },
                 ExpertConfig {
                     name: "Grigory".to_string(),
-                    color: "green".to_string(),
-                    role: "backend".to_string(),
+                    role: "general".to_string(),
                 },
                 ExpertConfig {
                     name: "Katya".to_string(),
-                    color: "yellow".to_string(),
-                    role: "tester".to_string(),
+                    role: "debugger".to_string(),
                 },
             ],
             timeouts: TimeoutConfig::default(),
@@ -186,7 +180,6 @@ impl Config {
             let idx = self.experts.len();
             self.experts.push(ExpertConfig {
                 name: format!("expert{}", idx),
-                color: "white".to_string(),
                 role: "general".to_string(),
             });
         }
@@ -359,11 +352,8 @@ num_experts: 3
 session_prefix: "test"
 experts:
   - name: "lead"
-    color: "cyan"
   - name: "dev"
-    color: "magenta"
   - name: "qa"
-    color: "yellow"
 timeouts:
   agent_ready: 60
   task_completion: 1200
@@ -455,16 +445,18 @@ timeouts:
     fn config_expert_has_role_field() {
         let config = Config::default();
         assert_eq!(config.experts[0].role, "architect");
-        assert_eq!(config.experts[1].role, "frontend");
-        assert_eq!(config.experts[2].role, "backend");
-        assert_eq!(config.experts[3].role, "tester");
+        assert_eq!(config.experts[1].role, "planner");
+        assert_eq!(config.experts[2].role, "general");
+        assert_eq!(config.experts[3].role, "debugger");
     }
 
     #[test]
     fn config_get_expert_role_valid() {
         let config = Config::default();
         assert_eq!(config.get_expert_role(0), "architect");
-        assert_eq!(config.get_expert_role(1), "frontend");
+        assert_eq!(config.get_expert_role(1), "planner");
+        assert_eq!(config.get_expert_role(2), "general");
+        assert_eq!(config.get_expert_role(3), "debugger");
     }
 
     #[test]
@@ -482,10 +474,8 @@ timeouts:
 session_prefix: "test"
 experts:
   - name: "Lead Architect"
-    color: "cyan"
     role: "architect"
   - name: "Frontend Dev"
-    color: "magenta"
     role: "frontend"
 "#;
         std::fs::write(&config_path, yaml).unwrap();
@@ -547,7 +537,6 @@ experts:
 session_prefix: "test"
 experts:
   - name: "dev"
-    color: "cyan"
 feature_execution:
   batch_size: 8
   poll_delay_secs: 60
@@ -582,7 +571,6 @@ feature_execution:
 session_prefix: "test"
 experts:
   - name: "lead"
-    color: "cyan"
 "#;
         std::fs::write(&config_path, yaml).unwrap();
 

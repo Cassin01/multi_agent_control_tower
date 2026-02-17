@@ -29,7 +29,7 @@ Coordinate multiple role-based coding agents on one codebase with a Rust-native 
 ## ✨ Features
 
 - **⚡ Parallel orchestration**: run multiple experts concurrently in isolated tmux panes.
-- **🧠 Role-based execution**: assign experts like `architect`, `backend`, `frontend`, and `tester`.
+- **🧠 Role-based execution**: assign experts like `architect`, `planner`, `general`, and `debugger`.
 - **🤖 Automated feature execution**: run task batches from spec files automatically.
 - **📨 Async inter-expert messaging**: deliver queued messages to available experts.
 - **🖥️ Control Tower TUI**: dispatch tasks, monitor status, and review reports in one screen.
@@ -100,14 +100,14 @@ Use YAML config when you need custom experts, roles, or runtime timeouts.
 
 ```yaml
 experts:
-  - name: architect
+  - name: Linda
     role: architect
-  - name: backend
-    role: backend
-  - name: frontend
-    role: frontend
-  - name: tester
-    role: tester
+  - name: James
+    role: planner
+  - name: John
+    role: general
+  - name: Sarah
+    role: debugger
 
 runtime:
   startup_timeout_seconds: 30
