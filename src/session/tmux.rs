@@ -33,6 +33,27 @@ fn check_tmux_status(output: Output, context: &str) -> Result<()> {
     Ok(())
 }
 
+fn parse_pane_paths(stdout: &str) -> HashMap<u32, String> {
+    let mut paths = HashMap::new();
+    for line in stdout.lines() {
+        let mut parts = line.splitn(2, '\t');
+        let Some(window_str) = parts.next() else {
+            continue;
+        };
+        let Some(path) = parts.next() else {
+            continue;
+        };
+        let Ok(window_id) = window_str.parse::<u32>() else {
+            continue;
+        };
+        let path = path.trim();
+        if !path.is_empty() {
+            paths.insert(window_id, path.to_string());
+        }
+    }
+    paths
+}
+
 static NEXT_BUFFER_ID: AtomicU64 = AtomicU64::new(1);
 
 fn next_tmux_buffer_name(window_id: u32) -> String {
@@ -365,6 +386,7 @@ impl TmuxManager {
         let output = Command::new("tmux")
             .args([
                 "list-panes",
+                "-s",
                 "-t",
                 &self.session_name,
                 "-F",
@@ -379,24 +401,7 @@ impl TmuxManager {
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let mut paths = HashMap::new();
-        for line in stdout.lines() {
-            let mut parts = line.splitn(2, '\t');
-            let Some(window_str) = parts.next() else {
-                continue;
-            };
-            let Some(path) = parts.next() else {
-                continue;
-            };
-            let Ok(window_id) = window_str.parse::<u32>() else {
-                continue;
-            };
-            let path = path.trim();
-            if !path.is_empty() {
-                paths.insert(window_id, path.to_string());
-            }
-        }
-        Ok(paths)
+        Ok(parse_pane_paths(&stdout))
     }
 
     pub async fn list_all_macot_sessions() -> Result<Vec<SessionInfo>> {
@@ -688,5 +693,53 @@ mod tests {
             a.starts_with("macot-"),
             "next_tmux_buffer_name: should use macot- prefix"
         );
+    }
+
+    #[test]
+    fn parse_pane_paths_multiple_windows() {
+        let stdout = "0\t/home/user/project\n1\t/home/user/docs\n2\t/tmp\n";
+        let paths = parse_pane_paths(stdout);
+        assert_eq!(
+            paths.len(),
+            3,
+            "parse_pane_paths: should parse all window entries"
+        );
+        assert_eq!(paths[&0], "/home/user/project");
+        assert_eq!(paths[&1], "/home/user/docs");
+        assert_eq!(paths[&2], "/tmp");
+    }
+
+    #[test]
+    fn parse_pane_paths_single_window() {
+        let stdout = "0\t/home/user/project\n";
+        let paths = parse_pane_paths(stdout);
+        assert_eq!(
+            paths.len(),
+            1,
+            "parse_pane_paths: should parse single entry"
+        );
+        assert_eq!(paths[&0], "/home/user/project");
+    }
+
+    #[test]
+    fn parse_pane_paths_empty_input() {
+        let paths = parse_pane_paths("");
+        assert!(
+            paths.is_empty(),
+            "parse_pane_paths: empty input should return empty map"
+        );
+    }
+
+    #[test]
+    fn parse_pane_paths_skips_malformed_lines() {
+        let stdout = "0\t/valid/path\nnot_a_number\t/skip\n\n1\t/another/path\n";
+        let paths = parse_pane_paths(stdout);
+        assert_eq!(
+            paths.len(),
+            2,
+            "parse_pane_paths: should skip malformed lines"
+        );
+        assert_eq!(paths[&0], "/valid/path");
+        assert_eq!(paths[&1], "/another/path");
     }
 }
