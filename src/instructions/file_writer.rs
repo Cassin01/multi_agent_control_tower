@@ -61,13 +61,13 @@ pub fn generate_hooks_settings(status_file_path: &str) -> String {
             "UserPromptSubmit": [{
                 "hooks": [{
                     "type": "command",
-                    "command": format!("printf '%s' processing > {}", quoted_path),
+                    "command": format!("printf '%s' processing >| {}", quoted_path),
                 }]
             }],
             "Stop": [{
                 "hooks": [{
                     "type": "command",
-                    "command": format!("printf '%s' pending > {}", quoted_path),
+                    "command": format!("printf '%s' pending >| {}", quoted_path),
                 }]
             }]
         }
@@ -324,11 +324,11 @@ mod tests {
             .expect("generate_hooks_settings: command should be string");
 
         assert_eq!(
-            processing_cmd, "printf '%s' processing > '/tmp/status/it'\\''s/me'",
+            processing_cmd, "printf '%s' processing >| '/tmp/status/it'\\''s/me'",
             "generate_hooks_settings: processing command should safely quote path"
         );
         assert_eq!(
-            stop_cmd, "printf '%s' pending > '/tmp/status/it'\\''s/me'",
+            stop_cmd, "printf '%s' pending >| '/tmp/status/it'\\''s/me'",
             "generate_hooks_settings: stop command should safely quote path"
         );
     }

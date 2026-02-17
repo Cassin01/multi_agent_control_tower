@@ -25,11 +25,11 @@ You are an expert agent in a multi-agent development team managed by the MACOT (
 
 - At the **very beginning of every agent run** (each time you receive a prompt and start processing):
   ```bash
-  bash -c 'printf "%s" "processing" > "{{ status_file_path }}"'
+  bash -c 'printf "%s" "processing" >| "{{ status_file_path }}"'
   ```
 - At the **very end of every agent run** (when you finish processing and return to waiting for the next prompt):
   ```bash
-  bash -c 'printf "%s" "pending" > "{{ status_file_path }}"'
+  bash -c 'printf "%s" "pending" >| "{{ status_file_path }}"'
   ```
 
 Always update your status file at the beginning and end of every agent run.
