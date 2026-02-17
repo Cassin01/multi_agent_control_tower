@@ -152,7 +152,7 @@ impl FeatureExecutor {
         prompt.push_str(&format!(
             "After completing all tasks, set your status to pending by running:\n\
              ```bash\n\
-             bash -c 'echo -n \"pending\" > \"{}\"'\n\
+             bash -c 'printf \"%s\" \"pending\" > \"{}\"'\n\
              ```\n",
             status_path
         ));
@@ -516,7 +516,7 @@ mod tests {
         let prompt = executor.build_prompt(&batch);
 
         assert!(
-            prompt.contains(r#"echo -n "pending" > "/tmp/project/.macot/status/expert0""#),
+            prompt.contains(r#"printf "%s" "pending" > "/tmp/project/.macot/status/expert0""#),
             "build_prompt: should include status pending instruction with correct path, got: {}",
             prompt
         );
