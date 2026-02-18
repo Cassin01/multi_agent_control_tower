@@ -101,6 +101,13 @@ pub trait TmuxSender: Send + Sync {
     async fn resize_pane(&self, _window_id: u32, _width: u16, _height: u16) -> Result<()> {
         Ok(())
     }
+
+    /// Get the current foreground command running in a tmux pane.
+    /// Returns `None` by default (for mocks); real implementations should
+    /// query tmux for `pane_current_command`.
+    async fn get_pane_current_command(&self, _window_id: u32) -> Result<Option<String>> {
+        Ok(None)
+    }
 }
 
 #[async_trait::async_trait]
@@ -222,6 +229,34 @@ impl TmuxSender for TmuxManager {
             .await
             .context(format!("Failed to resize window {}", window_id))?;
         check_tmux_status(output, &format!("resize-pane {}", window_id))
+    }
+
+    async fn get_pane_current_command(&self, window_id: u32) -> Result<Option<String>> {
+        let output = Command::new("tmux")
+            .args([
+                "display-message",
+                "-t",
+                &format!("{}:{}", self.session_name, window_id),
+                "-p",
+                "#{pane_current_command}",
+            ])
+            .output()
+            .await
+            .context(format!(
+                "Failed to get pane_current_command for window {}",
+                window_id
+            ))?;
+
+        if output.status.success() {
+            let cmd = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if cmd.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(cmd))
+            }
+        } else {
+            Ok(None)
+        }
     }
 }
 
@@ -741,5 +776,27 @@ mod tests {
         );
         assert_eq!(paths[&0], "/valid/path");
         assert_eq!(paths[&1], "/another/path");
+    }
+
+    #[tokio::test]
+    async fn get_pane_current_command_default_returns_none() {
+        struct NoopSender;
+
+        #[async_trait::async_trait]
+        impl TmuxSender for NoopSender {
+            async fn send_keys(&self, _window_id: u32, _keys: &str) -> Result<()> {
+                Ok(())
+            }
+            async fn capture_pane(&self, _window_id: u32) -> Result<String> {
+                Ok(String::new())
+            }
+        }
+
+        let sender = NoopSender;
+        let result = sender.get_pane_current_command(0).await.unwrap();
+        assert!(
+            result.is_none(),
+            "get_pane_current_command: default trait impl should return None"
+        );
     }
 }

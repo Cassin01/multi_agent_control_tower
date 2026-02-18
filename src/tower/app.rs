@@ -1588,6 +1588,7 @@ impl TowerApp {
                 self.claude.send_exit(expert_id).await?;
                 executor.set_phase(ExecutionPhase::ExitingExpert {
                     started_at: Instant::now(),
+                    exit_retries: 0,
                 });
                 self.feature_executor = Some(executor);
                 self.task_input.clear();
@@ -1615,10 +1616,55 @@ impl TowerApp {
         match executor.phase() {
             ExecutionPhase::Idle => {}
 
-            ExecutionPhase::ExitingExpert { started_at } => {
+            ExecutionPhase::ExitingExpert {
+                started_at,
+                exit_retries,
+            } => {
                 let started_at = *started_at;
+                let exit_retries = *exit_retries;
+                const MAX_EXIT_RETRIES: u32 = 3;
+
                 if started_at.elapsed() >= executor.exit_wait() {
                     let expert_id = executor.expert_id();
+
+                    // Verify Claude has actually exited by checking foreground process
+                    let shell_ready = match self.claude.is_shell_foreground(expert_id).await {
+                        Ok(is_shell) => is_shell,
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to check foreground process for expert {}: {}",
+                                expert_id,
+                                e
+                            );
+                            // Assume shell is ready if we can't check
+                            true
+                        }
+                    };
+
+                    if !shell_ready {
+                        if exit_retries >= MAX_EXIT_RETRIES {
+                            tracing::error!(
+                                "Expert {} did not exit after {} retries, forcing relaunch",
+                                expert_id,
+                                MAX_EXIT_RETRIES
+                            );
+                            // Fall through to relaunch anyway as a last resort
+                        } else {
+                            tracing::warn!(
+                                "Expert {} still running after exit_wait, retrying /exit (attempt {})",
+                                expert_id,
+                                exit_retries + 1
+                            );
+                            self.claude.send_exit(expert_id).await?;
+                            executor.set_phase(ExecutionPhase::ExitingExpert {
+                                started_at: Instant::now(),
+                                exit_retries: exit_retries + 1,
+                            });
+                            self.feature_executor = Some(executor);
+                            return Ok(());
+                        }
+                    }
+
                     if let Err(e) = self.detector.set_marker(expert_id, "pending") {
                         tracing::warn!(
                             "Failed to reset status marker for expert {}: {}",
@@ -1690,11 +1736,11 @@ impl TowerApp {
 
             ExecutionPhase::SendingBatch => {
                 match executor.parse_tasks() {
-                    Ok(tasks) => {
-                        let batch = executor.next_batch(&tasks);
-                        if batch.is_empty() {
+                    Ok(tasks) => match executor.next_batch(&tasks) {
+                        Ok(batch) if batch.is_empty() => {
                             executor.set_phase(ExecutionPhase::Completed);
-                        } else {
+                        }
+                        Ok(batch) => {
                             let prompt = executor.build_prompt(&batch);
                             let expert_id = executor.expert_id();
                             executor.record_batch_sent(&batch);
@@ -1720,7 +1766,10 @@ impl TowerApp {
                                 started_at: Instant::now(),
                             });
                         }
-                    }
+                        Err(blocked_msg) => {
+                            executor.set_phase(ExecutionPhase::Failed(blocked_msg));
+                        }
+                    },
                     Err(e) => {
                         executor.set_phase(ExecutionPhase::Failed(format!(
                             "Failed to parse task file: {}",
@@ -1759,6 +1808,7 @@ impl TowerApp {
                                     self.claude.send_exit(expert_id).await?;
                                     executor.set_phase(ExecutionPhase::ExitingExpert {
                                         started_at: Instant::now(),
+                                        exit_retries: 0,
                                     });
                                 } else {
                                     tracing::debug!(
@@ -1771,6 +1821,7 @@ impl TowerApp {
                                 self.claude.send_exit(expert_id).await?;
                                 executor.set_phase(ExecutionPhase::ExitingExpert {
                                     started_at: Instant::now(),
+                                    exit_retries: 0,
                                 });
                             }
                         }
@@ -3101,6 +3152,120 @@ mod tests {
             app.last_input_time(),
             before,
             "cursor_movement: Ctrl+B should not update last_input_time"
+        );
+    }
+
+    // --- Task 9.1: Integration tests for phase transitions with DAG scheduling ---
+
+    #[tokio::test]
+    async fn poll_feature_executor_sending_batch_blocked_transitions_to_failed() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let status_dir = temp.path().join(".macot").join("status");
+        std::fs::create_dir_all(&status_dir).unwrap();
+        std::fs::write(status_dir.join("expert0"), "pending").unwrap();
+
+        let specs = temp.path().join(".macot").join("specs");
+        std::fs::create_dir_all(&specs).unwrap();
+        std::fs::write(
+            specs.join("blocked-tasks.md"),
+            "\
+- [ ] 1. Task A [deps: 2]
+- [ ] 2. Task B [deps: 1]
+",
+        )
+        .unwrap();
+
+        let config = Config::default().with_project_path(temp.path().to_path_buf());
+        let exec_config = &config.feature_execution;
+        let mut executor = FeatureExecutor::new(
+            "blocked".to_string(),
+            0,
+            exec_config,
+            &temp.path().to_path_buf(),
+            None,
+            None,
+            None,
+            temp.path().to_str().unwrap().to_string(),
+        );
+        executor.validate().unwrap();
+        executor.set_phase(ExecutionPhase::SendingBatch);
+
+        let wm = WorktreeManager::new(config.project_path.clone());
+        let mut app = TowerApp::new(config, wm);
+        app.feature_executor = Some(executor);
+
+        app.poll_feature_executor().await.unwrap();
+
+        assert!(
+            app.feature_executor.is_none(),
+            "poll_feature_executor: executor should be discarded on Failed"
+        );
+        let msg = app.message().unwrap();
+        assert!(
+            msg.contains("failed") || msg.contains("Failed") || msg.contains("blocked"),
+            "poll_feature_executor: should show failure message with blocked diagnostic, got: {}",
+            msg
+        );
+    }
+
+    #[tokio::test]
+    async fn poll_feature_executor_sending_batch_all_done_transitions_to_completed() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let status_dir = temp.path().join(".macot").join("status");
+        std::fs::create_dir_all(&status_dir).unwrap();
+        std::fs::write(status_dir.join("expert0"), "pending").unwrap();
+
+        let specs = temp.path().join(".macot").join("specs");
+        std::fs::create_dir_all(&specs).unwrap();
+        std::fs::write(
+            specs.join("alldone-tasks.md"),
+            "\
+- [x] 1. Task A
+- [x] 2. Task B
+",
+        )
+        .unwrap();
+
+        let config = Config::default().with_project_path(temp.path().to_path_buf());
+        let exec_config = &config.feature_execution;
+        let mut executor = FeatureExecutor::new(
+            "alldone".to_string(),
+            0,
+            exec_config,
+            &temp.path().to_path_buf(),
+            None,
+            None,
+            None,
+            temp.path().to_str().unwrap().to_string(),
+        );
+        executor.validate().unwrap();
+        executor.set_phase(ExecutionPhase::SendingBatch);
+
+        let wm = WorktreeManager::new(config.project_path.clone());
+        let mut app = TowerApp::new(config, wm);
+        app.feature_executor = Some(executor);
+
+        app.poll_feature_executor().await.unwrap();
+
+        assert!(
+            app.feature_executor.is_none(),
+            "poll_feature_executor: executor should be discarded on Completed"
+        );
+        let msg = app.message().unwrap();
+        assert!(
+            msg.contains("completed"),
+            "poll_feature_executor: should show completion message, got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn default_config_uses_dag_scheduler_mode() {
+        let config = Config::default();
+        assert_eq!(
+            config.feature_execution.scheduler_mode,
+            crate::feature::scheduler::SchedulerMode::Dag,
+            "default_config_uses_dag: feature_execution.scheduler_mode should default to Dag"
         );
     }
 }

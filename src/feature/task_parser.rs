@@ -8,6 +8,8 @@ pub struct TaskEntry {
     pub completed: bool,
     #[allow(dead_code)]
     pub indent_level: usize,
+    #[allow(dead_code)]
+    pub dependencies: Vec<String>,
 }
 
 /// Parse a task file and extract task entries.
@@ -15,7 +17,9 @@ pub struct TaskEntry {
 /// Matches lines of the form `- [ ] N. Title` or `- [x] N. Title`
 /// where N is an integer or dot-notation number (e.g. 1, 1.1, 2.3).
 pub fn parse_tasks(content: &str) -> Vec<TaskEntry> {
-    let re = Regex::new(r"^(\s*)- \[([ x])\] (\d+(?:\.\d+)?)\.\s+(.+)$").unwrap();
+    let re =
+        Regex::new(r"^(\s*)- \[([ x])\] (\d+(?:\.\d+)*)\.\s+(.+?)(?:\s+\[deps:\s*([^\]]*)\])?\s*$")
+            .unwrap();
     let mut tasks = Vec::new();
 
     for line in content.lines() {
@@ -25,12 +29,23 @@ pub fn parse_tasks(content: &str) -> Vec<TaskEntry> {
             let completed = &caps[2] == "x";
             let number = caps[3].to_string();
             let title = caps[4].to_string();
+            let dependencies = caps
+                .get(5)
+                .map(|m| {
+                    m.as_str()
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default();
 
             tasks.push(TaskEntry {
                 number,
                 title,
                 completed,
                 indent_level,
+                dependencies,
             });
         }
     }
@@ -204,6 +219,155 @@ Some text without any task lines.
         assert!(
             tasks.is_empty(),
             "parse_tasks: content without task lines should return empty vec"
+        );
+    }
+
+    #[test]
+    fn parse_tasks_with_deps() {
+        let content = "\
+- [ ] 1. Setup database
+- [ ] 2. Create API [deps: 1]
+- [ ] 3. Build frontend [deps: 1, 2]
+";
+        let tasks = parse_tasks(content);
+        assert_eq!(tasks.len(), 3, "parse_tasks_with_deps: should find 3 tasks");
+        assert!(
+            tasks[0].dependencies.is_empty(),
+            "parse_tasks_with_deps: task 1 should have no deps"
+        );
+        assert_eq!(
+            tasks[1].dependencies,
+            vec!["1"],
+            "parse_tasks_with_deps: task 2 should depend on 1"
+        );
+        assert_eq!(
+            tasks[2].dependencies,
+            vec!["1", "2"],
+            "parse_tasks_with_deps: task 3 should depend on 1 and 2"
+        );
+    }
+
+    #[test]
+    fn parse_tasks_without_deps() {
+        let content = "\
+- [ ] 1. Task one
+- [ ] 2. Task two
+";
+        let tasks = parse_tasks(content);
+        assert_eq!(
+            tasks.len(),
+            2,
+            "parse_tasks_without_deps: should find 2 tasks"
+        );
+        assert!(
+            tasks[0].dependencies.is_empty(),
+            "parse_tasks_without_deps: task 1 should have empty deps"
+        );
+        assert!(
+            tasks[1].dependencies.is_empty(),
+            "parse_tasks_without_deps: task 2 should have empty deps"
+        );
+    }
+
+    #[test]
+    fn parse_tasks_mixed_deps_and_no_deps() {
+        let content = "\
+- [ ] 1. Independent task
+- [ ] 2. Dependent task [deps: 1]
+- [ ] 3. Another independent
+";
+        let tasks = parse_tasks(content);
+        assert_eq!(
+            tasks.len(),
+            3,
+            "parse_tasks_mixed_deps_and_no_deps: should find 3 tasks"
+        );
+        assert!(tasks[0].dependencies.is_empty());
+        assert_eq!(tasks[1].dependencies, vec!["1"]);
+        assert!(tasks[2].dependencies.is_empty());
+    }
+
+    #[test]
+    fn parse_tasks_deps_with_dot_notation() {
+        let content = "\
+- [ ] 1. Main task
+  - [ ] 1.1. Sub task
+- [ ] 2. Depends on sub [deps: 1.1, 2.3]
+";
+        let tasks = parse_tasks(content);
+        let task2 = tasks.iter().find(|t| t.number == "2").unwrap();
+        assert_eq!(
+            task2.dependencies,
+            vec!["1.1", "2.3"],
+            "parse_tasks_deps_with_dot_notation: should parse dot-notation deps"
+        );
+    }
+
+    #[test]
+    fn parse_tasks_deps_empty_bracket() {
+        let content = "- [ ] 1. Task with empty deps [deps: ]\n";
+        let tasks = parse_tasks(content);
+        assert_eq!(tasks.len(), 1);
+        assert!(
+            tasks[0].dependencies.is_empty(),
+            "parse_tasks_deps_empty_bracket: empty [deps: ] should produce empty dependencies"
+        );
+    }
+
+    #[test]
+    fn parse_tasks_deps_whitespace_variants() {
+        let content = "\
+- [ ] 1. Tight [deps:1,2]
+- [ ] 2. Spaced [deps: 1 , 2 ]
+- [ ] 3. Extra spaces [deps:  1  ,  2  ]
+";
+        let tasks = parse_tasks(content);
+        assert_eq!(
+            tasks[0].dependencies,
+            vec!["1", "2"],
+            "parse_tasks_deps_whitespace_variants: tight spacing"
+        );
+        assert_eq!(
+            tasks[1].dependencies,
+            vec!["1", "2"],
+            "parse_tasks_deps_whitespace_variants: normal spacing"
+        );
+        assert_eq!(
+            tasks[2].dependencies,
+            vec!["1", "2"],
+            "parse_tasks_deps_whitespace_variants: extra spacing"
+        );
+    }
+
+    #[test]
+    fn parse_tasks_multi_level_dot_notation() {
+        let content = "\
+- [ ] 1. Root
+  - [ ] 1.2. Mid
+    - [ ] 1.2.3. Leaf
+- [ ] 2. Depends on leaf [deps: 1.2.3]
+";
+        let tasks = parse_tasks(content);
+        let leaf = tasks.iter().find(|t| t.number == "1.2.3").unwrap();
+        assert_eq!(
+            leaf.number, "1.2.3",
+            "parse_tasks_multi_level_dot_notation: should parse multi-level number"
+        );
+        let task2 = tasks.iter().find(|t| t.number == "2").unwrap();
+        assert_eq!(
+            task2.dependencies,
+            vec!["1.2.3"],
+            "parse_tasks_multi_level_dot_notation: should parse multi-level dep reference"
+        );
+    }
+
+    #[test]
+    fn parse_tasks_title_preserved_with_deps() {
+        let content = "- [ ] 1. Build the API server [deps: 2, 3]\n";
+        let tasks = parse_tasks(content);
+        assert_eq!(
+            tasks[0].title, "Build the API server",
+            "parse_tasks_title_preserved_with_deps: title should not include [deps: ...]"
         );
     }
 

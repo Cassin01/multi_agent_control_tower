@@ -94,6 +94,19 @@ impl<T: TmuxSender> ClaudeManager<T> {
         self.send_keys_with_enter(expert_id, "/exit").await
     }
 
+    /// Check whether the foreground process in the pane is a shell (not claude).
+    /// Returns `true` if a shell prompt is detected (claude has exited).
+    pub async fn is_shell_foreground(&self, expert_id: u32) -> Result<bool> {
+        match self.tmux.get_pane_current_command(expert_id).await? {
+            Some(cmd) => {
+                let cmd_lower = cmd.to_lowercase();
+                let shell_names = ["bash", "zsh", "fish", "sh", "dash", "ksh"];
+                Ok(shell_names.iter().any(|s| cmd_lower.contains(s)))
+            }
+            None => Ok(false),
+        }
+    }
+
     #[allow(dead_code)]
     pub async fn send_clear(&self, expert_id: u32) -> Result<()> {
         self.send_keys_with_enter(expert_id, "/clear").await
@@ -141,6 +154,7 @@ mod tests {
     struct MockTmuxSender {
         sent_keys: Arc<Mutex<Vec<(u32, String)>>>,
         capture_response: Arc<Mutex<String>>,
+        pane_command_response: Arc<Mutex<Option<String>>>,
     }
 
     impl MockTmuxSender {
@@ -148,11 +162,17 @@ mod tests {
             Self {
                 sent_keys: Arc::new(Mutex::new(Vec::new())),
                 capture_response: Arc::new(Mutex::new(String::new())),
+                pane_command_response: Arc::new(Mutex::new(None)),
             }
         }
 
         fn with_capture_response(self, response: &str) -> Self {
             *self.capture_response.lock().unwrap() = response.to_string();
+            self
+        }
+
+        fn with_pane_command(self, cmd: &str) -> Self {
+            *self.pane_command_response.lock().unwrap() = Some(cmd.to_string());
             self
         }
 
@@ -173,6 +193,10 @@ mod tests {
 
         async fn capture_pane(&self, _window_id: u32) -> Result<String> {
             Ok(self.capture_response.lock().unwrap().clone())
+        }
+
+        async fn get_pane_current_command(&self, _window_id: u32) -> Result<Option<String>> {
+            Ok(self.pane_command_response.lock().unwrap().clone())
         }
     }
 
@@ -681,6 +705,56 @@ mod tests {
         assert!(
             sender.resized_ids().is_empty(),
             "resize_all_fail: no panes should be resized when all fail"
+        );
+    }
+
+    #[tokio::test]
+    async fn is_shell_foreground_returns_true_for_bash() {
+        let mock = MockTmuxSender::new().with_pane_command("bash");
+        let manager = create_mock_manager(mock);
+        assert!(
+            manager.is_shell_foreground(0).await.unwrap(),
+            "is_shell_foreground: should return true for bash"
+        );
+    }
+
+    #[tokio::test]
+    async fn is_shell_foreground_returns_true_for_zsh() {
+        let mock = MockTmuxSender::new().with_pane_command("zsh");
+        let manager = create_mock_manager(mock);
+        assert!(
+            manager.is_shell_foreground(0).await.unwrap(),
+            "is_shell_foreground: should return true for zsh"
+        );
+    }
+
+    #[tokio::test]
+    async fn is_shell_foreground_returns_false_for_claude() {
+        let mock = MockTmuxSender::new().with_pane_command("claude");
+        let manager = create_mock_manager(mock);
+        assert!(
+            !manager.is_shell_foreground(0).await.unwrap(),
+            "is_shell_foreground: should return false for claude"
+        );
+    }
+
+    #[tokio::test]
+    async fn is_shell_foreground_returns_false_for_node() {
+        let mock = MockTmuxSender::new().with_pane_command("node");
+        let manager = create_mock_manager(mock);
+        assert!(
+            !manager.is_shell_foreground(0).await.unwrap(),
+            "is_shell_foreground: should return false for node"
+        );
+    }
+
+    #[tokio::test]
+    async fn is_shell_foreground_returns_false_when_none() {
+        let mock = MockTmuxSender::new();
+        let manager = create_mock_manager(mock);
+        assert!(
+            !manager.is_shell_foreground(0).await.unwrap(),
+            "is_shell_foreground: should return false when no command detected"
         );
     }
 }
