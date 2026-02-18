@@ -91,6 +91,8 @@ pub struct ExpertInfo {
     pub tmux_window: String,
     pub state: ExpertState,
     pub last_activity: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree_path: Option<String>,
 }
 
 impl ExpertInfo {
@@ -109,6 +111,7 @@ impl ExpertInfo {
             tmux_window,
             state: ExpertState::default(),
             last_activity: Utc::now(),
+            worktree_path: None,
         }
     }
 
@@ -139,6 +142,14 @@ impl ExpertInfo {
     #[allow(dead_code)]
     pub fn matches_role(&self, role: &str) -> bool {
         self.role.matches(role)
+    }
+
+    pub fn set_worktree_path(&mut self, path: Option<String>) {
+        self.worktree_path = path;
+    }
+
+    pub fn same_worktree(&self, other: &ExpertInfo) -> bool {
+        self.worktree_path == other.worktree_path
     }
 
     #[allow(dead_code)]
@@ -304,6 +315,250 @@ last_activity: "2024-01-15T10:30:00Z"
         assert_eq!(expert.name, "frontend-expert");
         assert_eq!(expert.role, Role::Developer);
         assert_eq!(expert.state, ExpertState::Idle);
+    }
+
+    #[test]
+    fn worktree_path_defaults_to_none() {
+        let expert = ExpertInfo::new(
+            0,
+            "test".to_string(),
+            Role::Developer,
+            "session".to_string(),
+            "0".to_string(),
+        );
+        assert!(
+            expert.worktree_path.is_none(),
+            "worktree_path: should default to None"
+        );
+    }
+
+    #[test]
+    fn set_worktree_path_updates_field() {
+        let mut expert = ExpertInfo::new(
+            0,
+            "test".to_string(),
+            Role::Developer,
+            "session".to_string(),
+            "0".to_string(),
+        );
+
+        expert.set_worktree_path(Some("/path/to/worktree".to_string()));
+        assert_eq!(
+            expert.worktree_path,
+            Some("/path/to/worktree".to_string()),
+            "set_worktree_path: should set to Some"
+        );
+
+        expert.set_worktree_path(None);
+        assert!(
+            expert.worktree_path.is_none(),
+            "set_worktree_path: should set back to None"
+        );
+    }
+
+    #[test]
+    fn same_worktree_both_none() {
+        let a = ExpertInfo::new(
+            0,
+            "a".to_string(),
+            Role::Developer,
+            "s".to_string(),
+            "0".to_string(),
+        );
+        let b = ExpertInfo::new(
+            1,
+            "b".to_string(),
+            Role::Developer,
+            "s".to_string(),
+            "1".to_string(),
+        );
+        assert!(
+            a.same_worktree(&b),
+            "same_worktree: (None, None) should be true"
+        );
+    }
+
+    #[test]
+    fn same_worktree_both_same_path() {
+        let mut a = ExpertInfo::new(
+            0,
+            "a".to_string(),
+            Role::Developer,
+            "s".to_string(),
+            "0".to_string(),
+        );
+        let mut b = ExpertInfo::new(
+            1,
+            "b".to_string(),
+            Role::Developer,
+            "s".to_string(),
+            "1".to_string(),
+        );
+        a.set_worktree_path(Some("/worktree/feature-auth".to_string()));
+        b.set_worktree_path(Some("/worktree/feature-auth".to_string()));
+        assert!(
+            a.same_worktree(&b),
+            "same_worktree: (Some(X), Some(X)) should be true"
+        );
+    }
+
+    #[test]
+    fn same_worktree_none_vs_some() {
+        let a = ExpertInfo::new(
+            0,
+            "a".to_string(),
+            Role::Developer,
+            "s".to_string(),
+            "0".to_string(),
+        );
+        let mut b = ExpertInfo::new(
+            1,
+            "b".to_string(),
+            Role::Developer,
+            "s".to_string(),
+            "1".to_string(),
+        );
+        b.set_worktree_path(Some("/worktree/feature-auth".to_string()));
+        assert!(
+            !a.same_worktree(&b),
+            "same_worktree: (None, Some(X)) should be false"
+        );
+        assert!(
+            !b.same_worktree(&a),
+            "same_worktree: (Some(X), None) should be false"
+        );
+    }
+
+    #[test]
+    fn same_worktree_different_paths() {
+        let mut a = ExpertInfo::new(
+            0,
+            "a".to_string(),
+            Role::Developer,
+            "s".to_string(),
+            "0".to_string(),
+        );
+        let mut b = ExpertInfo::new(
+            1,
+            "b".to_string(),
+            Role::Developer,
+            "s".to_string(),
+            "1".to_string(),
+        );
+        a.set_worktree_path(Some("/worktree/feature-auth".to_string()));
+        b.set_worktree_path(Some("/worktree/feature-payments".to_string()));
+        assert!(
+            !a.same_worktree(&b),
+            "same_worktree: (Some(X), Some(Y)) should be false"
+        );
+    }
+
+    #[test]
+    fn same_worktree_is_symmetric() {
+        let a = ExpertInfo::new(
+            0,
+            "a".to_string(),
+            Role::Developer,
+            "s".to_string(),
+            "0".to_string(),
+        );
+        let mut b = ExpertInfo::new(
+            1,
+            "b".to_string(),
+            Role::Developer,
+            "s".to_string(),
+            "1".to_string(),
+        );
+        b.set_worktree_path(Some("/worktree/feature-auth".to_string()));
+
+        assert_eq!(
+            a.same_worktree(&b),
+            b.same_worktree(&a),
+            "same_worktree: should be symmetric"
+        );
+    }
+
+    #[test]
+    fn same_worktree_is_reflexive() {
+        let a = ExpertInfo::new(
+            0,
+            "a".to_string(),
+            Role::Developer,
+            "s".to_string(),
+            "0".to_string(),
+        );
+        assert!(a.same_worktree(&a), "same_worktree: reflexive with None");
+
+        let mut b = ExpertInfo::new(
+            1,
+            "b".to_string(),
+            Role::Developer,
+            "s".to_string(),
+            "1".to_string(),
+        );
+        b.set_worktree_path(Some("/worktree/feature-auth".to_string()));
+        assert!(b.same_worktree(&b), "same_worktree: reflexive with Some");
+    }
+
+    #[test]
+    fn worktree_path_backward_compat_deserialization() {
+        // YAML without worktree_path field should deserialize to None
+        let yaml = r#"
+id: 2
+name: "test-expert"
+role: developer
+tmux_session: "session"
+tmux_pane: "0"
+state: idle
+last_activity: "2024-01-15T10:30:00Z"
+"#;
+        let expert: ExpertInfo = serde_yaml::from_str(yaml).unwrap();
+        assert!(
+            expert.worktree_path.is_none(),
+            "backward_compat: missing worktree_path should deserialize as None"
+        );
+    }
+
+    #[test]
+    fn worktree_path_serialization_roundtrip() {
+        let mut expert = ExpertInfo::new(
+            0,
+            "test".to_string(),
+            Role::Developer,
+            "session".to_string(),
+            "0".to_string(),
+        );
+        expert.set_worktree_path(Some("/worktree/feature".to_string()));
+
+        let yaml = serde_yaml::to_string(&expert).unwrap();
+        assert!(
+            yaml.contains("worktree_path"),
+            "serialization: should include worktree_path when Some"
+        );
+
+        let deserialized: ExpertInfo = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(
+            deserialized.worktree_path,
+            Some("/worktree/feature".to_string()),
+            "serialization: roundtrip should preserve worktree_path"
+        );
+    }
+
+    #[test]
+    fn worktree_path_none_omitted_in_serialization() {
+        let expert = ExpertInfo::new(
+            0,
+            "test".to_string(),
+            Role::Developer,
+            "session".to_string(),
+            "0".to_string(),
+        );
+
+        let yaml = serde_yaml::to_string(&expert).unwrap();
+        assert!(
+            !yaml.contains("worktree_path"),
+            "serialization: should omit worktree_path when None"
+        );
     }
 
     #[test]

@@ -1874,6 +1874,17 @@ impl TowerApp {
                 if handle.is_finished() {
                     match handle.await {
                         Ok(Ok(result)) => {
+                            // Propagate worktree path to both registries
+                            let wt_path = Some(result.worktree_path.clone());
+                            let _ = self
+                                .expert_registry
+                                .update_expert_worktree(result.expert_id, wt_path.clone());
+                            if let Some(ref mut router) = self.message_router {
+                                let _ = router
+                                    .expert_registry_mut()
+                                    .update_expert_worktree(result.expert_id, wt_path);
+                            }
+
                             let msg = if result.claude_ready {
                                 format!(
                                     "{} launched in worktree '{}'",

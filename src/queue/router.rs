@@ -211,8 +211,9 @@ impl<T: TmuxSender> MessageRouter<T> {
             MAX_DELIVERY_ATTEMPTS
         );
 
-        // Find recipient expert
-        let expert_id = match self.find_recipient(&message.to).await? {
+        // Find recipient expert (worktree-aware)
+        let sender_id = message.from_expert_id;
+        let expert_id = match self.find_recipient(&message.to, sender_id).await? {
             Some(id) => id,
             None => {
                 let error = format!("No recipient found for targeting: {:?}", message.to);
@@ -253,21 +254,46 @@ impl<T: TmuxSender> MessageRouter<T> {
         }
     }
 
+    /// Check if sender and recipient share the same worktree context
+    fn worktree_matches(&self, sender_id: ExpertId, recipient_id: ExpertId) -> bool {
+        let sender = match self.expert_registry.get_expert(sender_id) {
+            Some(s) => s,
+            None => return false,
+        };
+        let recipient = match self.expert_registry.get_expert(recipient_id) {
+            Some(r) => r,
+            None => return false,
+        };
+        sender.same_worktree(recipient)
+    }
+
     /// Find the appropriate recipient expert based on targeting strategy
     ///
     /// Supports three targeting strategies:
     /// 1. ExpertId: Direct targeting by expert ID
     /// 2. ExpertName: Targeting by expert name (case-insensitive)
     /// 3. Role: Targeting by role (finds first idle expert with matching role)
+    ///
+    /// All strategies enforce worktree affinity: the recipient must share the
+    /// same worktree context as the sender.
     pub async fn find_recipient(
         &self,
         recipient: &MessageRecipient,
+        sender_id: ExpertId,
     ) -> Result<Option<ExpertId>, RouterError> {
         match recipient {
             MessageRecipient::ExpertId { expert_id } => {
                 // Direct targeting by ID
                 if self.expert_registry.get_expert(*expert_id).is_some() {
-                    Ok(Some(*expert_id))
+                    if self.worktree_matches(sender_id, *expert_id) {
+                        Ok(Some(*expert_id))
+                    } else {
+                        warn!(
+                            "Expert {} is in a different worktree than sender {}",
+                            expert_id, sender_id
+                        );
+                        Ok(None)
+                    }
                 } else {
                     warn!("Expert with ID {} not found in registry", expert_id);
                     Ok(None)
@@ -276,7 +302,17 @@ impl<T: TmuxSender> MessageRouter<T> {
             MessageRecipient::ExpertName { expert_name } => {
                 // Targeting by name (case-insensitive)
                 match self.expert_registry.find_by_name(expert_name) {
-                    Some(expert_id) => Ok(Some(expert_id)),
+                    Some(expert_id) => {
+                        if self.worktree_matches(sender_id, expert_id) {
+                            Ok(Some(expert_id))
+                        } else {
+                            warn!(
+                                "Expert {} is in a different worktree than sender {}",
+                                expert_id, sender_id
+                            );
+                            Ok(None)
+                        }
+                    }
                     None => {
                         warn!("Expert with name '{}' not found in registry", expert_name);
                         Ok(None)
@@ -284,14 +320,28 @@ impl<T: TmuxSender> MessageRouter<T> {
                 }
             }
             MessageRecipient::Role { role } => {
-                // Role-based targeting - find first idle expert with matching role
-                let idle_experts = self.expert_registry.get_idle_experts_by_role_str(role);
+                // Role-based targeting - find first idle expert with matching role and worktree
+                let sender_worktree = self
+                    .expert_registry
+                    .get_expert(sender_id)
+                    .map(|e| e.worktree_path.clone());
+                let idle_experts = match sender_worktree {
+                    Some(ref wt) => self
+                        .expert_registry
+                        .get_idle_experts_by_role_str_in_worktree(role, wt),
+                    None => {
+                        // Sender not found in registry; fall back to empty
+                        vec![]
+                    }
+                };
 
                 if idle_experts.is_empty() {
-                    debug!("No idle experts found for role '{}'", role);
+                    debug!(
+                        "No idle experts found for role '{}' in sender's worktree",
+                        role
+                    );
                     Ok(None)
                 } else {
-                    // Return first idle expert with the role
                     let expert_id = idle_experts[0];
                     debug!("Found idle expert {} for role '{}'", expert_id, role);
                     Ok(Some(expert_id))
@@ -559,7 +609,7 @@ mod tests {
             body: "Test Body".to_string(),
         };
         let recipient = MessageRecipient::expert_id(1);
-        Message::new(0, recipient, MessageType::Query, content)
+        Message::new(1, recipient, MessageType::Query, content)
     }
 
     #[tokio::test]
@@ -572,12 +622,13 @@ mod tests {
     async fn find_recipient_by_expert_id() {
         let (router, _temp) = create_test_router().await;
 
+        // sender_id=1 (same worktree=None as recipient)
         let recipient = MessageRecipient::expert_id(1);
-        let result = router.find_recipient(&recipient).await.unwrap();
+        let result = router.find_recipient(&recipient, 2).await.unwrap();
         assert_eq!(result, Some(1));
 
         let recipient = MessageRecipient::expert_id(999);
-        let result = router.find_recipient(&recipient).await.unwrap();
+        let result = router.find_recipient(&recipient, 1).await.unwrap();
         assert_eq!(result, None);
     }
 
@@ -586,11 +637,11 @@ mod tests {
         let (router, _temp) = create_test_router().await;
 
         let recipient = MessageRecipient::expert_name("backend-dev".to_string());
-        let result = router.find_recipient(&recipient).await.unwrap();
+        let result = router.find_recipient(&recipient, 2).await.unwrap();
         assert_eq!(result, Some(1));
 
         let recipient = MessageRecipient::expert_name("nonexistent".to_string());
-        let result = router.find_recipient(&recipient).await.unwrap();
+        let result = router.find_recipient(&recipient, 1).await.unwrap();
         assert_eq!(result, None);
     }
 
@@ -605,7 +656,7 @@ mod tests {
             .unwrap();
 
         let recipient = MessageRecipient::role("developer".to_string());
-        let result = router.find_recipient(&recipient).await.unwrap();
+        let result = router.find_recipient(&recipient, 2).await.unwrap();
         assert_eq!(result, Some(1));
     }
 
@@ -615,7 +666,7 @@ mod tests {
 
         // Both experts are offline by default
         let recipient = MessageRecipient::role("developer".to_string());
-        let result = router.find_recipient(&recipient).await.unwrap();
+        let result = router.find_recipient(&recipient, 1).await.unwrap();
         assert_eq!(result, None);
     }
 
@@ -652,7 +703,7 @@ mod tests {
         let formatted = router.format_message_for_delivery(&message, "backend-dev");
 
         assert!(formatted.contains("📨 INCOMING MESSAGE"));
-        assert!(formatted.contains("From: Unknown (Expert 0)"));
+        assert!(formatted.contains("From: backend-dev (Expert 1)"));
         assert!(formatted.contains("To: backend-dev"));
         assert!(formatted.contains("Type: QUERY"));
         assert!(formatted.contains("Priority: NORMAL"));
@@ -720,6 +771,324 @@ mod tests {
         // Process outbox (should be empty)
         let processed = router.process_outbox().await.unwrap();
         assert!(processed.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod worktree_tests {
+    use super::mock_tmux::MockTmuxSender;
+    use super::*;
+    use crate::models::{
+        ExpertInfo, ExpertState, MessageContent, MessageType, QueuedMessage, Role,
+    };
+    use tempfile::TempDir;
+
+    async fn create_worktree_router() -> (MessageRouter<MockTmuxSender>, TempDir) {
+        let temp_dir = TempDir::new().unwrap();
+        let queue_manager = QueueManager::new(temp_dir.path().to_path_buf());
+        queue_manager.init().await.unwrap();
+
+        let mut expert_registry = ExpertRegistry::new();
+
+        // Expert 0: main repo (architect)
+        let expert0 = ExpertInfo::new(
+            0,
+            "architect".to_string(),
+            Role::Analyst,
+            "test-session".to_string(),
+            "0".to_string(),
+        );
+        // Expert 1: worktree feature-auth (developer)
+        let mut expert1 = ExpertInfo::new(
+            1,
+            "auth-dev".to_string(),
+            Role::Developer,
+            "test-session".to_string(),
+            "1".to_string(),
+        );
+        expert1.set_worktree_path(Some("/wt/feature-auth".to_string()));
+
+        // Expert 2: worktree feature-auth (reviewer)
+        let mut expert2 = ExpertInfo::new(
+            2,
+            "auth-reviewer".to_string(),
+            Role::Reviewer,
+            "test-session".to_string(),
+            "2".to_string(),
+        );
+        expert2.set_worktree_path(Some("/wt/feature-auth".to_string()));
+
+        // Expert 3: worktree feature-payments (developer)
+        let mut expert3 = ExpertInfo::new(
+            3,
+            "payments-dev".to_string(),
+            Role::Developer,
+            "test-session".to_string(),
+            "3".to_string(),
+        );
+        expert3.set_worktree_path(Some("/wt/feature-payments".to_string()));
+
+        // Expert 4: main repo (developer)
+        let expert4 = ExpertInfo::new(
+            4,
+            "main-dev".to_string(),
+            Role::Developer,
+            "test-session".to_string(),
+            "4".to_string(),
+        );
+
+        expert_registry.register_expert(expert0).unwrap();
+        expert_registry.register_expert(expert1).unwrap();
+        expert_registry.register_expert(expert2).unwrap();
+        expert_registry.register_expert(expert3).unwrap();
+        expert_registry.register_expert(expert4).unwrap();
+
+        // Set all experts to idle
+        for id in 0..5 {
+            expert_registry
+                .update_expert_state(id, ExpertState::Idle)
+                .unwrap();
+        }
+
+        let router = MessageRouter::new(queue_manager, expert_registry, MockTmuxSender);
+        (router, temp_dir)
+    }
+
+    // Property 1: worktree_matches returns correct results for all affinity matrix combinations
+    #[tokio::test]
+    async fn worktree_matches_none_none() {
+        let (router, _temp) = create_worktree_router().await;
+        // Expert 0 (None) and Expert 4 (None)
+        assert!(
+            router.worktree_matches(0, 4),
+            "worktree_matches: (None, None) should be true"
+        );
+    }
+
+    #[tokio::test]
+    async fn worktree_matches_some_same() {
+        let (router, _temp) = create_worktree_router().await;
+        // Expert 1 and Expert 2 both in /wt/feature-auth
+        assert!(
+            router.worktree_matches(1, 2),
+            "worktree_matches: (Some(X), Some(X)) should be true"
+        );
+    }
+
+    #[tokio::test]
+    async fn worktree_matches_none_some() {
+        let (router, _temp) = create_worktree_router().await;
+        // Expert 0 (None) vs Expert 1 (Some)
+        assert!(
+            !router.worktree_matches(0, 1),
+            "worktree_matches: (None, Some(X)) should be false"
+        );
+    }
+
+    #[tokio::test]
+    async fn worktree_matches_some_none() {
+        let (router, _temp) = create_worktree_router().await;
+        // Expert 1 (Some) vs Expert 0 (None)
+        assert!(
+            !router.worktree_matches(1, 0),
+            "worktree_matches: (Some(X), None) should be false"
+        );
+    }
+
+    #[tokio::test]
+    async fn worktree_matches_different_worktrees() {
+        let (router, _temp) = create_worktree_router().await;
+        // Expert 1 (/wt/feature-auth) vs Expert 3 (/wt/feature-payments)
+        assert!(
+            !router.worktree_matches(1, 3),
+            "worktree_matches: (Some(X), Some(Y)) should be false"
+        );
+    }
+
+    #[tokio::test]
+    async fn worktree_matches_nonexistent_sender() {
+        let (router, _temp) = create_worktree_router().await;
+        assert!(
+            !router.worktree_matches(999, 0),
+            "worktree_matches: nonexistent sender should return false"
+        );
+    }
+
+    // Property 4: ID/Name Targeting Enforcement
+    #[tokio::test]
+    async fn find_recipient_by_id_worktree_mismatch_returns_none() {
+        let (router, _temp) = create_worktree_router().await;
+        // Expert 0 (main) tries to reach Expert 1 (feature-auth) by ID
+        let recipient = MessageRecipient::expert_id(1);
+        let result = router.find_recipient(&recipient, 0).await.unwrap();
+        assert_eq!(
+            result, None,
+            "find_recipient: ID targeting across worktrees should return None"
+        );
+    }
+
+    #[tokio::test]
+    async fn find_recipient_by_name_worktree_mismatch_returns_none() {
+        let (router, _temp) = create_worktree_router().await;
+        // Expert 0 (main) tries to reach "auth-dev" (feature-auth) by name
+        let recipient = MessageRecipient::expert_name("auth-dev".to_string());
+        let result = router.find_recipient(&recipient, 0).await.unwrap();
+        assert_eq!(
+            result, None,
+            "find_recipient: name targeting across worktrees should return None"
+        );
+    }
+
+    // Property 3: Role Scoping
+    #[tokio::test]
+    async fn find_recipient_by_role_returns_only_same_worktree() {
+        let (router, _temp) = create_worktree_router().await;
+        // Expert 1 (feature-auth) targets role "reviewer" -> should find Expert 2 (feature-auth)
+        let recipient = MessageRecipient::role("reviewer".to_string());
+        let result = router.find_recipient(&recipient, 1).await.unwrap();
+        assert_eq!(
+            result,
+            Some(2),
+            "find_recipient: role targeting should find expert in same worktree"
+        );
+    }
+
+    #[tokio::test]
+    async fn find_recipient_by_role_different_worktree_returns_none() {
+        let (router, _temp) = create_worktree_router().await;
+        // Expert 3 (feature-payments) targets role "reviewer" -> no reviewer in feature-payments
+        let recipient = MessageRecipient::role("reviewer".to_string());
+        let result = router.find_recipient(&recipient, 3).await.unwrap();
+        assert_eq!(
+            result, None,
+            "find_recipient: role targeting should not find expert in different worktree"
+        );
+    }
+
+    #[tokio::test]
+    async fn find_recipient_by_role_main_repo_only_finds_main_repo() {
+        let (router, _temp) = create_worktree_router().await;
+        // Expert 0 (main) targets role "developer" -> should find Expert 4 (main), not 1 or 3
+        let recipient = MessageRecipient::role("developer".to_string());
+        let result = router.find_recipient(&recipient, 0).await.unwrap();
+        assert_eq!(
+            result,
+            Some(4),
+            "find_recipient: main repo role targeting should only find main repo experts"
+        );
+    }
+
+    // Property 2: Main Repo Affinity
+    #[tokio::test]
+    async fn main_repo_experts_can_find_each_other_by_id() {
+        let (router, _temp) = create_worktree_router().await;
+        let recipient = MessageRecipient::expert_id(4);
+        let result = router.find_recipient(&recipient, 0).await.unwrap();
+        assert_eq!(
+            result,
+            Some(4),
+            "find_recipient: main repo experts should find each other by ID"
+        );
+    }
+
+    #[tokio::test]
+    async fn main_repo_experts_can_find_each_other_by_name() {
+        let (router, _temp) = create_worktree_router().await;
+        let recipient = MessageRecipient::expert_name("main-dev".to_string());
+        let result = router.find_recipient(&recipient, 0).await.unwrap();
+        assert_eq!(
+            result,
+            Some(4),
+            "find_recipient: main repo experts should find each other by name"
+        );
+    }
+
+    // Property 7: Retry Semantics Preserved
+    #[tokio::test]
+    async fn attempt_delivery_worktree_mismatch_produces_failed_result() {
+        let (mut router, _temp) = create_worktree_router().await;
+
+        // Expert 0 (main) sends to Expert 1 (feature-auth) by ID
+        let content = MessageContent {
+            subject: "Cross-worktree".to_string(),
+            body: "Should fail".to_string(),
+        };
+        let message = Message::new(
+            0,
+            MessageRecipient::expert_id(1),
+            MessageType::Query,
+            content,
+        );
+        let queued = QueuedMessage::new(message);
+        let result = router.attempt_delivery(&queued).await.unwrap();
+
+        assert!(
+            !result.success,
+            "attempt_delivery: cross-worktree delivery should fail"
+        );
+        assert!(
+            result.error.is_some(),
+            "attempt_delivery: failed result should have error message"
+        );
+    }
+
+    // Same-worktree delivery proceeds past recipient finding
+    #[tokio::test]
+    async fn attempt_delivery_same_worktree_finds_recipient() {
+        let (mut router, _temp) = create_worktree_router().await;
+
+        // Expert 1 (feature-auth) sends to Expert 2 (feature-auth) by ID
+        let content = MessageContent {
+            subject: "Same worktree".to_string(),
+            body: "Should find recipient".to_string(),
+        };
+        let message = Message::new(
+            1,
+            MessageRecipient::expert_id(2),
+            MessageType::Query,
+            content,
+        );
+        let queued = QueuedMessage::new(message);
+        let result = router.attempt_delivery(&queued).await.unwrap();
+
+        // Delivery may fail at tmux level in tests, but should find the recipient
+        // (not fail with "No recipient found")
+        if !result.success {
+            let err = result.error.as_deref().unwrap_or("");
+            assert!(
+                !err.contains("No recipient found"),
+                "attempt_delivery: same-worktree delivery should find recipient"
+            );
+        }
+    }
+
+    // End-to-end: process_queue with worktree isolation
+    #[tokio::test]
+    async fn process_queue_respects_worktree_isolation() {
+        let (mut router, _temp) = create_worktree_router().await;
+
+        // Enqueue cross-worktree message: Expert 0 (main) -> Expert 1 (feature-auth)
+        let content = MessageContent {
+            subject: "Cross-worktree via queue".to_string(),
+            body: "Should not deliver".to_string(),
+        };
+        let msg = Message::new(
+            0,
+            MessageRecipient::expert_id(1),
+            MessageType::Notify,
+            content,
+        );
+        router.queue_manager_mut().enqueue(&msg).await.unwrap();
+
+        let stats = router.process_queue().await.unwrap();
+        assert_eq!(
+            stats.messages_delivered, 0,
+            "process_queue: cross-worktree message should not be delivered"
+        );
+        assert!(
+            stats.messages_failed > 0,
+            "process_queue: cross-worktree message should be marked as failed"
+        );
     }
 }
 
@@ -838,8 +1207,11 @@ mod property_tests {
                     router.expert_registry_mut().update_expert_state(expert_id, state).unwrap();
                 }
 
+                // Use first expert as sender (all have worktree_path=None)
+                let sender_id = expert_ids[0];
+
                 for message in messages {
-                    let result = router.find_recipient(&message.to).await.unwrap();
+                    let result = router.find_recipient(&message.to, sender_id).await.unwrap();
 
                     match &message.to {
                         MessageRecipient::ExpertId { expert_id } => {
@@ -906,19 +1278,22 @@ mod property_tests {
                     }
                 }
 
+                // Use a different expert as sender (all have worktree_path=None)
+                let sender_id = expert_ids[(target_expert_index + 1) % expert_ids.len()];
+
                 // Test targeting by ID - should find exactly the target expert
                 let by_id = MessageRecipient::expert_id(target_expert_id);
-                let result = router.find_recipient(&by_id).await.unwrap();
+                let result = router.find_recipient(&by_id, sender_id).await.unwrap();
                 assert_eq!(result, Some(target_expert_id));
 
                 // Test targeting by name - should find exactly the target expert
                 let by_name = MessageRecipient::expert_name(target_expert.name.clone());
-                let result = router.find_recipient(&by_name).await.unwrap();
+                let result = router.find_recipient(&by_name, sender_id).await.unwrap();
                 assert_eq!(result, Some(target_expert_id));
 
                 // Test targeting by role - should find the target expert if it's the only idle one with that role
                 let by_role = MessageRecipient::role(target_expert.role.as_str().to_string());
-                let result = router.find_recipient(&by_role).await.unwrap();
+                let result = router.find_recipient(&by_role, sender_id).await.unwrap();
 
                 // Should either find the target expert or no expert (if others with same role are also idle)
                 if let Some(found_id) = result {
@@ -947,10 +1322,13 @@ mod property_tests {
                     router.expert_registry_mut().update_expert_state(expert_id, state).unwrap();
                 }
 
+                // Use first expert as sender (all have worktree_path=None)
+                let sender_id = expert_ids[0];
+
                 // Multiple calls to find_recipient should return consistent results
-                let result1 = router.find_recipient(&recipient).await.unwrap();
-                let result2 = router.find_recipient(&recipient).await.unwrap();
-                let result3 = router.find_recipient(&recipient).await.unwrap();
+                let result1 = router.find_recipient(&recipient, sender_id).await.unwrap();
+                let result2 = router.find_recipient(&recipient, sender_id).await.unwrap();
+                let result3 = router.find_recipient(&recipient, sender_id).await.unwrap();
 
                 assert_eq!(result1, result2);
                 assert_eq!(result2, result3);
@@ -998,8 +1376,8 @@ mod property_tests {
                     // Attempt delivery
                     let delivery_result = router.attempt_delivery(&queued_message).await.unwrap();
 
-                    // Find the target expert for this message
-                    let target_expert_id = router.find_recipient(&message.to).await.unwrap();
+                    // Find the target expert for this message (use same sender_id as attempt_delivery)
+                    let target_expert_id = router.find_recipient(&message.to, message.from_expert_id).await.unwrap();
 
                     if let Some(expert_id) = target_expert_id {
                         let expert_info = router.expert_registry().get_expert(expert_id).unwrap();
@@ -1057,8 +1435,9 @@ mod property_tests {
                 let (mut router, _temp, expert_ids) = create_test_router_with_experts(vec![expert]).await;
                 let expert_id = expert_ids[0];
 
-                // Create a message targeting this specific expert
+                // Create a message targeting this specific expert (sender must be registered for worktree check)
                 let mut test_message = message;
+                test_message.from_expert_id = expert_id;
                 test_message.to = MessageRecipient::expert_id(expert_id);
                 let queued_message = QueuedMessage::new(test_message);
 
@@ -1118,8 +1497,8 @@ mod property_tests {
                     let first_result = router.attempt_delivery(&queued_message).await.unwrap();
                     assert!(!first_result.success);
 
-                    // Find target expert and set to idle
-                    if let Some(target_expert_id) = router.find_recipient(&message.to).await.unwrap() {
+                    // Find target expert and set to idle (use same sender_id as attempt_delivery)
+                    if let Some(target_expert_id) = router.find_recipient(&message.to, message.from_expert_id).await.unwrap() {
                         router.expert_registry_mut().update_expert_state(target_expert_id, ExpertState::Idle).unwrap();
 
                         // Second delivery attempt - should now proceed (may fail at tmux level)
@@ -1925,8 +2304,11 @@ mod integration_tests {
             content,
         );
 
-        // Find recipient should return the idle backend expert
-        let recipient = router.find_recipient(&message.to).await.unwrap();
+        // Find recipient should return the idle backend expert (sender=frontend_id, same worktree=None)
+        let recipient = router
+            .find_recipient(&message.to, frontend_id)
+            .await
+            .unwrap();
         assert_eq!(
             recipient,
             Some(backend2_id),

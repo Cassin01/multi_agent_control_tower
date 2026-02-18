@@ -48,6 +48,16 @@ to:
 | `notify` | Send information, no response expected |
 | `delegate` | Hand off a task to another expert |
 
+### Worktree Isolation
+
+Messages are scoped to the sender's worktree context. When experts are launched in git worktrees, the following rules apply:
+
+- Experts in the **same worktree** can exchange messages freely using any targeting strategy (ID, name, or role).
+- Experts in **different worktrees** cannot exchange messages. Delivery will fail even when targeting by explicit ID or name.
+- Experts in the **main repository** (not in a worktree) form a default communication group and can message each other.
+
+If you are in a worktree, your messages will only reach other experts in the same worktree.
+
 ### Example: Query Message
 
 ```yaml

@@ -195,6 +195,7 @@ impl ExpertRegistry {
     }
 
     /// Get all expert IDs with a role matching the string that are currently idle
+    #[allow(dead_code)]
     pub fn get_idle_experts_by_role_str(&self, role_str: &str) -> Vec<ExpertId> {
         let role_experts = self.find_by_role_str(role_str);
         role_experts
@@ -265,6 +266,37 @@ impl ExpertRegistry {
     #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.experts.is_empty()
+    }
+
+    /// Update the worktree path for an expert
+    pub fn update_expert_worktree(
+        &mut self,
+        expert_id: ExpertId,
+        worktree_path: Option<String>,
+    ) -> Result<(), RegistryError> {
+        let expert = self
+            .experts
+            .get_mut(&expert_id)
+            .ok_or(RegistryError::ExpertNotFound(expert_id))?;
+        expert.set_worktree_path(worktree_path);
+        Ok(())
+    }
+
+    /// Get idle experts by role string, filtered to only those sharing the given worktree
+    pub fn get_idle_experts_by_role_str_in_worktree(
+        &self,
+        role_str: &str,
+        worktree_path: &Option<String>,
+    ) -> Vec<ExpertId> {
+        self.find_by_role_str(role_str)
+            .into_iter()
+            .filter(|&expert_id| {
+                self.experts
+                    .get(&expert_id)
+                    .map(|expert| expert.is_idle() && expert.worktree_path == *worktree_path)
+                    .unwrap_or(false)
+            })
+            .collect()
     }
 
     /// Update the role of an expert, maintaining lookup table consistency
@@ -707,6 +739,187 @@ mod tests {
         assert_eq!(registry.find_by_role_str("backend"), vec![id2]);
         // expert1 should be in general
         assert_eq!(registry.find_by_role_str("general"), vec![id1]);
+    }
+
+    #[test]
+    fn update_expert_worktree_sets_path() {
+        let mut registry = ExpertRegistry::new();
+        let expert = create_test_expert("test", Role::Developer);
+        let expert_id = registry.register_expert(expert).unwrap();
+
+        registry
+            .update_expert_worktree(expert_id, Some("/worktrees/feature-auth".to_string()))
+            .unwrap();
+
+        let expert = registry.get_expert(expert_id).unwrap();
+        assert_eq!(
+            expert.worktree_path,
+            Some("/worktrees/feature-auth".to_string()),
+            "update_expert_worktree: should set worktree_path"
+        );
+    }
+
+    #[test]
+    fn update_expert_worktree_clears_path() {
+        let mut registry = ExpertRegistry::new();
+        let expert = create_test_expert("test", Role::Developer);
+        let expert_id = registry.register_expert(expert).unwrap();
+
+        registry
+            .update_expert_worktree(expert_id, Some("/worktrees/feature".to_string()))
+            .unwrap();
+        registry.update_expert_worktree(expert_id, None).unwrap();
+
+        let expert = registry.get_expert(expert_id).unwrap();
+        assert!(
+            expert.worktree_path.is_none(),
+            "update_expert_worktree: should clear worktree_path to None"
+        );
+    }
+
+    #[test]
+    fn update_expert_worktree_nonexistent_expert_fails() {
+        let mut registry = ExpertRegistry::new();
+        let result = registry.update_expert_worktree(999, Some("/path".to_string()));
+        assert!(
+            matches!(result, Err(RegistryError::ExpertNotFound(999))),
+            "update_expert_worktree: should fail for nonexistent expert"
+        );
+    }
+
+    #[test]
+    fn get_idle_experts_by_role_str_in_worktree_filters_by_worktree() {
+        let mut registry = ExpertRegistry::new();
+
+        let dev1 = create_test_expert("dev1", Role::Developer);
+        let dev2 = create_test_expert("dev2", Role::Developer);
+        let dev3 = create_test_expert("dev3", Role::Developer);
+
+        let id1 = registry.register_expert(dev1).unwrap();
+        let id2 = registry.register_expert(dev2).unwrap();
+        let id3 = registry.register_expert(dev3).unwrap();
+
+        // Set all idle
+        for &id in &[id1, id2, id3] {
+            registry.update_expert_state(id, ExpertState::Idle).unwrap();
+        }
+
+        // Assign worktrees: dev1 in feature-auth, dev2 in feature-auth, dev3 in main (None)
+        registry
+            .update_expert_worktree(id1, Some("/wt/feature-auth".to_string()))
+            .unwrap();
+        registry
+            .update_expert_worktree(id2, Some("/wt/feature-auth".to_string()))
+            .unwrap();
+        // dev3 stays None (main repo)
+
+        // Query for developers in feature-auth worktree
+        let wt = Some("/wt/feature-auth".to_string());
+        let result = registry.get_idle_experts_by_role_str_in_worktree("developer", &wt);
+        assert_eq!(
+            result.len(),
+            2,
+            "role_in_worktree: should return 2 devs in feature-auth"
+        );
+        assert!(result.contains(&id1));
+        assert!(result.contains(&id2));
+        assert!(!result.contains(&id3));
+    }
+
+    #[test]
+    fn get_idle_experts_by_role_str_in_worktree_none_returns_only_main_repo() {
+        let mut registry = ExpertRegistry::new();
+
+        let dev1 = create_test_expert("dev1", Role::Developer);
+        let dev2 = create_test_expert("dev2", Role::Developer);
+
+        let id1 = registry.register_expert(dev1).unwrap();
+        let id2 = registry.register_expert(dev2).unwrap();
+
+        for &id in &[id1, id2] {
+            registry.update_expert_state(id, ExpertState::Idle).unwrap();
+        }
+
+        // dev1 in a worktree, dev2 in main repo (None)
+        registry
+            .update_expert_worktree(id1, Some("/wt/feature".to_string()))
+            .unwrap();
+
+        let result = registry.get_idle_experts_by_role_str_in_worktree("developer", &None);
+        assert_eq!(
+            result,
+            vec![id2],
+            "role_in_worktree(None): should return only main repo experts"
+        );
+    }
+
+    #[test]
+    fn get_idle_experts_by_role_str_in_worktree_excludes_non_idle() {
+        let mut registry = ExpertRegistry::new();
+
+        let dev1 = create_test_expert("dev1", Role::Developer);
+        let dev2 = create_test_expert("dev2", Role::Developer);
+
+        let id1 = registry.register_expert(dev1).unwrap();
+        let id2 = registry.register_expert(dev2).unwrap();
+
+        // Both in same worktree
+        let wt = Some("/wt/feature".to_string());
+        registry.update_expert_worktree(id1, wt.clone()).unwrap();
+        registry.update_expert_worktree(id2, wt.clone()).unwrap();
+
+        // Only dev1 is idle
+        registry
+            .update_expert_state(id1, ExpertState::Idle)
+            .unwrap();
+        registry
+            .update_expert_state(id2, ExpertState::Busy)
+            .unwrap();
+
+        let result = registry.get_idle_experts_by_role_str_in_worktree("developer", &wt);
+        assert_eq!(
+            result,
+            vec![id1],
+            "role_in_worktree: should exclude non-idle experts"
+        );
+    }
+
+    #[test]
+    fn get_idle_experts_by_role_str_in_worktree_different_worktrees_isolated() {
+        let mut registry = ExpertRegistry::new();
+
+        let rev1 = create_test_expert("rev1", Role::Reviewer);
+        let rev2 = create_test_expert("rev2", Role::Reviewer);
+
+        let id1 = registry.register_expert(rev1).unwrap();
+        let id2 = registry.register_expert(rev2).unwrap();
+
+        for &id in &[id1, id2] {
+            registry.update_expert_state(id, ExpertState::Idle).unwrap();
+        }
+
+        registry
+            .update_expert_worktree(id1, Some("/wt/feature-auth".to_string()))
+            .unwrap();
+        registry
+            .update_expert_worktree(id2, Some("/wt/feature-payments".to_string()))
+            .unwrap();
+
+        let wt_auth = Some("/wt/feature-auth".to_string());
+        let result = registry.get_idle_experts_by_role_str_in_worktree("reviewer", &wt_auth);
+        assert_eq!(
+            result,
+            vec![id1],
+            "role_in_worktree: experts in different worktrees should be isolated"
+        );
+
+        let wt_payments = Some("/wt/feature-payments".to_string());
+        let result = registry.get_idle_experts_by_role_str_in_worktree("reviewer", &wt_payments);
+        assert_eq!(
+            result,
+            vec![id2],
+            "role_in_worktree: should find expert in matching worktree"
+        );
     }
 }
 

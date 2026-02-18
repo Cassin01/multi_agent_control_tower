@@ -9,11 +9,9 @@ fn path_to_str(path: &Path) -> Result<&str> {
 }
 
 pub struct WorktreeLaunchResult {
-    #[allow(dead_code)]
     pub expert_id: u32,
     pub expert_name: String,
     pub branch_name: String,
-    #[allow(dead_code)]
     pub worktree_path: String,
     pub claude_ready: bool,
 }
