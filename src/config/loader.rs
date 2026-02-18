@@ -2,6 +2,8 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+use crate::feature::scheduler::SchedulerMode;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExpertConfig {
     pub name: String, // Display name only
@@ -37,6 +39,8 @@ pub struct FeatureExecutionConfig {
     pub ready_timeout_secs: u64,
     #[serde(default = "FeatureExecutionConfig::default_ready_grace_secs")]
     pub ready_grace_secs: u64,
+    #[serde(default)]
+    pub scheduler_mode: SchedulerMode,
 }
 
 impl Default for FeatureExecutionConfig {
@@ -47,6 +51,7 @@ impl Default for FeatureExecutionConfig {
             exit_wait_secs: 5,
             ready_timeout_secs: 60,
             ready_grace_secs: 5,
+            scheduler_mode: SchedulerMode::Dag,
         }
     }
 }
@@ -559,6 +564,63 @@ feature_execution:
         assert_eq!(
             config.feature_execution.ready_timeout_secs, 60,
             "feature_execution_config: non-overridden ready_timeout_secs keeps default"
+        );
+    }
+
+    // --- Task 6.1: Config backward compatibility tests ---
+
+    #[test]
+    fn config_scheduler_mode_defaults_to_dag() {
+        let config = FeatureExecutionConfig::default();
+        assert_eq!(
+            config.scheduler_mode,
+            crate::feature::scheduler::SchedulerMode::Dag,
+            "config_scheduler_mode_defaults_to_dag: default should be Dag"
+        );
+    }
+
+    #[test]
+    fn config_scheduler_mode_missing_from_yaml_defaults_to_dag() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.yaml");
+
+        let yaml = r#"
+session_prefix: "test"
+experts:
+  - name: "dev"
+feature_execution:
+  batch_size: 4
+"#;
+        std::fs::write(&config_path, yaml).unwrap();
+
+        let config = Config::load(Some(config_path)).unwrap();
+        assert_eq!(
+            config.feature_execution.scheduler_mode,
+            crate::feature::scheduler::SchedulerMode::Dag,
+            "config_scheduler_mode_missing_from_yaml: should default to Dag"
+        );
+    }
+
+    #[test]
+    fn config_scheduler_mode_sequential_from_yaml() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.yaml");
+
+        let yaml = r#"
+session_prefix: "test"
+experts:
+  - name: "dev"
+feature_execution:
+  batch_size: 4
+  scheduler_mode: sequential
+"#;
+        std::fs::write(&config_path, yaml).unwrap();
+
+        let config = Config::load(Some(config_path)).unwrap();
+        assert_eq!(
+            config.feature_execution.scheduler_mode,
+            crate::feature::scheduler::SchedulerMode::Sequential,
+            "config_scheduler_mode_sequential: should parse 'sequential' correctly"
         );
     }
 

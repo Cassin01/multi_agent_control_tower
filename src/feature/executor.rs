@@ -4,12 +4,14 @@ use std::time::{Duration, Instant};
 use anyhow::{bail, Result};
 
 use crate::config::FeatureExecutionConfig;
+use crate::feature::scheduler::{self, BlockedDiagnostic, ScheduleResult, SchedulerMode};
 use crate::feature::task_parser::{self, TaskEntry};
 
 pub enum ExecutionPhase {
     Idle,
     ExitingExpert {
         started_at: Instant,
+        exit_retries: u32,
     },
     RelaunchingExpert {
         started_at: Instant,
@@ -28,6 +30,7 @@ pub struct FeatureExecutor {
     feature_name: String,
     expert_id: u32,
     batch_size: usize,
+    scheduler_mode: SchedulerMode,
     poll_delay: Duration,
     exit_wait: Duration,
     ready_timeout: Duration,
@@ -66,6 +69,7 @@ impl FeatureExecutor {
             feature_name: feature_name.clone(),
             expert_id,
             batch_size: config.batch_size,
+            scheduler_mode: config.scheduler_mode,
             poll_delay: Duration::from_secs(config.poll_delay_secs),
             exit_wait: Duration::from_secs(config.exit_wait_secs),
             ready_timeout: Duration::from_secs(config.ready_timeout_secs),
@@ -109,12 +113,14 @@ impl FeatureExecutor {
         Ok(tasks)
     }
 
-    pub fn next_batch<'a>(&self, tasks: &'a [TaskEntry]) -> Vec<&'a TaskEntry> {
-        tasks
-            .iter()
-            .filter(|t| !t.completed)
-            .take(self.batch_size)
-            .collect()
+    pub fn next_batch<'a>(&self, tasks: &'a [TaskEntry]) -> Result<Vec<&'a TaskEntry>, String> {
+        match scheduler::select_runnable(tasks, self.scheduler_mode) {
+            ScheduleResult::Runnable(runnable) => {
+                Ok(runnable.into_iter().take(self.batch_size).collect())
+            }
+            ScheduleResult::AllDone => Ok(vec![]),
+            ScheduleResult::Blocked(diag) => Err(format_blocked_message(&diag)),
+        }
     }
 
     pub fn build_prompt(&self, batch: &[&TaskEntry]) -> String {
@@ -271,6 +277,22 @@ impl FeatureExecutor {
     }
 }
 
+fn format_blocked_message(diag: &BlockedDiagnostic) -> String {
+    let count = diag.blocked_tasks.len();
+    let mut msg = format!("Execution blocked: {} tasks cannot proceed.\n", count);
+    for bt in &diag.blocked_tasks {
+        let deps = bt.missing_deps.join(", ");
+        msg.push_str(&format!(
+            "  Task {}: waiting on [{}] (incomplete)\n",
+            bt.number, deps
+        ));
+    }
+    if diag.has_cycle {
+        msg.push_str("Possible circular dependency detected.\n");
+    }
+    msg
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -369,7 +391,7 @@ mod tests {
         let mut executor = make_executor(&temp);
         executor.validate().unwrap();
         let tasks = executor.parse_tasks().unwrap();
-        let batch = executor.next_batch(&tasks);
+        let batch = executor.next_batch(&tasks).unwrap();
         assert_eq!(
             batch.len(),
             4,
@@ -394,7 +416,7 @@ mod tests {
         let mut executor = make_executor(&temp);
         executor.validate().unwrap();
         let tasks = executor.parse_tasks().unwrap();
-        let batch = executor.next_batch(&tasks);
+        let batch = executor.next_batch(&tasks).unwrap();
         assert_eq!(
             batch.len(),
             2,
@@ -417,7 +439,7 @@ mod tests {
         let mut executor = make_executor(&temp);
         executor.validate().unwrap();
         let tasks = executor.parse_tasks().unwrap();
-        let batch = executor.next_batch(&tasks);
+        let batch = executor.next_batch(&tasks).unwrap();
         assert!(
             batch.is_empty(),
             "next_batch: should return empty vec when all tasks completed"
@@ -442,7 +464,7 @@ mod tests {
         let mut executor = make_executor(&temp);
         executor.validate().unwrap();
         let tasks = executor.parse_tasks().unwrap();
-        let batch = executor.next_batch(&tasks);
+        let batch = executor.next_batch(&tasks).unwrap();
         assert_eq!(
             batch.len(),
             4,
@@ -464,7 +486,7 @@ mod tests {
         let mut executor = make_executor(&temp);
         executor.validate().unwrap();
         let tasks = executor.parse_tasks().unwrap();
-        let batch = executor.next_batch(&tasks);
+        let batch = executor.next_batch(&tasks).unwrap();
         let prompt = executor.build_prompt(&batch);
 
         assert!(
@@ -488,7 +510,7 @@ mod tests {
         let mut executor = make_executor(&temp);
         executor.validate().unwrap();
         let tasks = executor.parse_tasks().unwrap();
-        let batch = executor.next_batch(&tasks);
+        let batch = executor.next_batch(&tasks).unwrap();
         let prompt = executor.build_prompt(&batch);
 
         assert!(
@@ -512,7 +534,7 @@ mod tests {
         let mut executor = make_executor(&temp);
         executor.validate().unwrap();
         let tasks = executor.parse_tasks().unwrap();
-        let batch = executor.next_batch(&tasks);
+        let batch = executor.next_batch(&tasks).unwrap();
         let prompt = executor.build_prompt(&batch);
 
         assert!(
@@ -538,7 +560,7 @@ mod tests {
         let mut executor = make_executor(&temp);
         executor.validate().unwrap();
         let tasks = executor.parse_tasks().unwrap();
-        let batch = executor.next_batch(&tasks);
+        let batch = executor.next_batch(&tasks).unwrap();
         let prompt = executor.build_prompt(&batch);
 
         assert!(
@@ -585,7 +607,7 @@ mod tests {
         let mut executor = make_executor(&temp);
         executor.validate().unwrap();
         let tasks = executor.parse_tasks().unwrap();
-        let batch = executor.next_batch(&tasks);
+        let batch = executor.next_batch(&tasks).unwrap();
         executor.record_batch_sent(&batch);
         assert_eq!(executor.current_batch(), &["1", "2"]);
     }
@@ -624,6 +646,7 @@ mod tests {
         let mut executor = make_executor(&temp);
         executor.set_phase(ExecutionPhase::ExitingExpert {
             started_at: Instant::now(),
+            exit_retries: 0,
         });
         assert_eq!(
             executor.execution_badge().as_deref(),
@@ -725,7 +748,7 @@ mod tests {
         let mut executor = make_executor(&temp);
         executor.validate().unwrap();
         let tasks = executor.parse_tasks().unwrap();
-        let batch = executor.next_batch(&tasks);
+        let batch = executor.next_batch(&tasks).unwrap();
         executor.record_batch_sent(&batch);
 
         let batch_numbers = executor.current_batch().join(", ");
@@ -937,6 +960,118 @@ mod tests {
             executor.total_tasks(),
             3,
             "progress: total_tasks should remain consistent after reparse"
+        );
+    }
+
+    // --- Task 7.1: Executor integration with scheduler tests ---
+
+    #[test]
+    fn next_batch_dag_mode_respects_deps() {
+        let temp = TempDir::new().unwrap();
+        write_tasks_file(
+            &temp,
+            "\
+- [ ] 1. Setup database
+- [ ] 2. Create API [deps: 1]
+- [ ] 3. Build frontend [deps: 1, 2]
+",
+        );
+        let mut executor = make_executor(&temp);
+        executor.validate().unwrap();
+        let tasks = executor.parse_tasks().unwrap();
+        let batch = executor.next_batch(&tasks).unwrap();
+        assert_eq!(
+            batch.len(),
+            1,
+            "next_batch_dag_mode_respects_deps: only task 1 (no deps) should be runnable"
+        );
+        assert_eq!(batch[0].number, "1");
+    }
+
+    #[test]
+    fn next_batch_dag_mode_batch_size_limit() {
+        let temp = TempDir::new().unwrap();
+        write_tasks_file(
+            &temp,
+            "\
+- [ ] 1. Task A
+- [ ] 2. Task B
+- [ ] 3. Task C
+- [ ] 4. Task D
+- [ ] 5. Task E
+- [ ] 6. Task F
+",
+        );
+        let mut executor = make_executor(&temp);
+        executor.validate().unwrap();
+        let tasks = executor.parse_tasks().unwrap();
+        let batch = executor.next_batch(&tasks).unwrap();
+        assert_eq!(
+            batch.len(),
+            4,
+            "next_batch_dag_mode_batch_size_limit: should be capped at batch_size (4)"
+        );
+    }
+
+    #[test]
+    fn next_batch_dag_mode_blocked_returns_error() {
+        let temp = TempDir::new().unwrap();
+        write_tasks_file(
+            &temp,
+            "\
+- [ ] 1. Task A [deps: 2]
+- [ ] 2. Task B [deps: 1]
+",
+        );
+        let mut executor = make_executor(&temp);
+        executor.validate().unwrap();
+        let tasks = executor.parse_tasks().unwrap();
+        let result = executor.next_batch(&tasks);
+        assert!(
+            result.is_err(),
+            "next_batch_dag_mode_blocked_returns_error: circular deps should return Err"
+        );
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("Execution blocked"),
+            "next_batch_dag_mode_blocked_returns_error: error message should describe blocked state"
+        );
+        assert!(
+            msg.contains("circular dependency"),
+            "next_batch_dag_mode_blocked_returns_error: should mention cycle detection"
+        );
+    }
+
+    #[test]
+    fn next_batch_sequential_mode_unchanged() {
+        let temp = TempDir::new().unwrap();
+        write_tasks_file(
+            &temp,
+            "\
+- [ ] 1. Task A [deps: 2]
+- [ ] 2. Task B [deps: 1]
+- [ ] 3. Task C
+",
+        );
+        let mut config = FeatureExecutionConfig::default();
+        config.scheduler_mode = SchedulerMode::Sequential;
+        let mut executor = FeatureExecutor::new(
+            "test-feature".to_string(),
+            0,
+            &config,
+            &temp.path().to_path_buf(),
+            None,
+            None,
+            None,
+            "/tmp/project".to_string(),
+        );
+        executor.validate().unwrap();
+        let tasks = executor.parse_tasks().unwrap();
+        let batch = executor.next_batch(&tasks).unwrap();
+        assert_eq!(
+            batch.len(),
+            3,
+            "next_batch_sequential_mode: should return all uncompleted tasks regardless of deps"
         );
     }
 }
