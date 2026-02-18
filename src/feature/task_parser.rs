@@ -8,7 +8,6 @@ pub struct TaskEntry {
     pub completed: bool,
     #[allow(dead_code)]
     pub indent_level: usize,
-    #[allow(dead_code)]
     pub dependencies: Vec<String>,
 }
 

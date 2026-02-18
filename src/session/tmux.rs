@@ -247,15 +247,15 @@ impl TmuxSender for TmuxManager {
                 window_id
             ))?;
 
-        if output.status.success() {
-            let cmd = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if cmd.is_empty() {
-                Ok(None)
-            } else {
-                Ok(Some(cmd))
-            }
-        } else {
+        let stdout = check_tmux_output(
+            output,
+            &format!("get pane_current_command for window {}", window_id),
+        )?;
+        let cmd = stdout.trim().to_string();
+        if cmd.is_empty() {
             Ok(None)
+        } else {
+            Ok(Some(cmd))
         }
     }
 }

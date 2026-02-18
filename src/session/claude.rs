@@ -100,8 +100,12 @@ impl<T: TmuxSender> ClaudeManager<T> {
         match self.tmux.get_pane_current_command(expert_id).await? {
             Some(cmd) => {
                 let cmd_lower = cmd.to_lowercase();
+                let cmd_basename = std::path::Path::new(&cmd_lower)
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or(&cmd_lower);
                 let shell_names = ["bash", "zsh", "fish", "sh", "dash", "ksh"];
-                Ok(shell_names.iter().any(|s| cmd_lower.contains(s)))
+                Ok(shell_names.contains(&cmd_basename))
             }
             None => Ok(false),
         }
@@ -745,6 +749,16 @@ mod tests {
         assert!(
             !manager.is_shell_foreground(0).await.unwrap(),
             "is_shell_foreground: should return false for node"
+        );
+    }
+
+    #[tokio::test]
+    async fn is_shell_foreground_returns_false_for_ssh() {
+        let mock = MockTmuxSender::new().with_pane_command("ssh");
+        let manager = create_mock_manager(mock);
+        assert!(
+            !manager.is_shell_foreground(0).await.unwrap(),
+            "is_shell_foreground: should return false for ssh (not a shell)"
         );
     }
 
