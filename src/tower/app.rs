@@ -1117,6 +1117,57 @@ impl TowerApp {
         Ok(())
     }
 
+    pub async fn restore_worktree_paths(&mut self) -> Result<()> {
+        let session_hash = self.config.session_hash();
+
+        for i in 0..self.config.num_experts() {
+            let ctx = match self
+                .context_store
+                .load_expert_context(&session_hash, i)
+                .await
+            {
+                Ok(Some(ctx)) => ctx,
+                Ok(None) => continue,
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to load expert {} context for worktree restore: {}",
+                        i,
+                        e
+                    );
+                    continue;
+                }
+            };
+
+            if let Some(ref wt_path) = ctx.worktree_path {
+                if !std::path::Path::new(wt_path).exists() {
+                    tracing::warn!(
+                        "Expert {} worktree path no longer exists, skipping: {}",
+                        i,
+                        wt_path
+                    );
+                    continue;
+                }
+
+                if let Err(e) = self
+                    .expert_registry
+                    .update_expert_worktree(i, Some(wt_path.clone()))
+                {
+                    tracing::warn!("Failed to restore expert {} worktree in registry: {}", i, e);
+                }
+                if let Some(ref mut router) = self.message_router {
+                    if let Err(e) = router
+                        .expert_registry_mut()
+                        .update_expert_worktree(i, Some(wt_path.clone()))
+                    {
+                        tracing::warn!("Failed to restore expert {} worktree in router: {}", i, e);
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     async fn resolve_expert_working_dir(&self, expert_id: u32) -> String {
         if let Ok(Some(ctx)) = self
             .context_store
@@ -1876,13 +1927,27 @@ impl TowerApp {
                         Ok(Ok(result)) => {
                             // Propagate worktree path to both registries
                             let wt_path = Some(result.worktree_path.clone());
-                            let _ = self
+                            if let Err(e) = self
                                 .expert_registry
-                                .update_expert_worktree(result.expert_id, wt_path.clone());
+                                .update_expert_worktree(result.expert_id, wt_path.clone())
+                            {
+                                tracing::warn!(
+                                    "Failed to update expert {} worktree in registry: {}",
+                                    result.expert_id,
+                                    e
+                                );
+                            }
                             if let Some(ref mut router) = self.message_router {
-                                let _ = router
+                                if let Err(e) = router
                                     .expert_registry_mut()
-                                    .update_expert_worktree(result.expert_id, wt_path);
+                                    .update_expert_worktree(result.expert_id, wt_path)
+                                {
+                                    tracing::warn!(
+                                        "Failed to update expert {} worktree in router: {}",
+                                        result.expert_id,
+                                        e
+                                    );
+                                }
                             }
 
                             let msg = if result.claude_ready {
@@ -1926,6 +1991,7 @@ impl TowerApp {
         let mut terminal = UI::setup_terminal()?;
 
         self.initialize_session_roles().await?;
+        self.restore_worktree_paths().await?;
         self.update_focus();
         self.refresh_status().await?;
         self.refresh_reports().await?;
@@ -1952,12 +2018,15 @@ impl TowerApp {
             self.poll_reports().await?;
             let poll_reports_elapsed = poll_reports_start.elapsed();
 
+            // Process worktree launches before messages so that worktree paths
+            // are propagated to registries before message routing checks them.
+            self.poll_worktree_launch().await?;
+
             let poll_messages_start = Instant::now();
             self.poll_messages().await?;
             let poll_messages_elapsed = poll_messages_start.elapsed();
 
             self.poll_expert_panel().await?;
-            self.poll_worktree_launch().await?;
             self.poll_feature_executor().await?;
 
             let loop_elapsed = loop_start.elapsed();
@@ -3073,6 +3142,135 @@ mod tests {
             app.needs_redraw(),
             "needs_redraw: poll_worktree_launch should set flag on completion"
         );
+    }
+
+    #[tokio::test]
+    async fn poll_worktree_launch_propagates_worktree_to_both_registries() {
+        let mut app = create_test_app();
+
+        let handle = tokio::spawn(async {
+            Ok(WorktreeLaunchResult {
+                expert_id: 0,
+                expert_name: "Alyosha".to_string(),
+                branch_name: "feature-auth".to_string(),
+                worktree_path: "/tmp/wt/feature-auth".to_string(),
+                claude_ready: true,
+            })
+        });
+        wait_for_handle(&handle).await;
+
+        app.worktree_launch_state = WorktreeLaunchState::InProgress {
+            handle,
+            expert_name: "Alyosha".to_string(),
+            branch_name: "feature-auth".to_string(),
+        };
+
+        app.poll_worktree_launch().await.unwrap();
+
+        // Verify main expert_registry was updated
+        let expert = app.expert_registry.get_expert(0).unwrap();
+        assert_eq!(
+            expert.worktree_path,
+            Some("/tmp/wt/feature-auth".to_string()),
+            "poll_worktree_launch: should update worktree_path in main registry"
+        );
+
+        // Verify router's expert_registry was also updated
+        let router = app.message_router.as_ref().unwrap();
+        let router_expert = router.expert_registry().get_expert(0).unwrap();
+        assert_eq!(
+            router_expert.worktree_path,
+            Some("/tmp/wt/feature-auth".to_string()),
+            "poll_worktree_launch: should update worktree_path in router registry"
+        );
+    }
+
+    #[tokio::test]
+    async fn restore_worktree_paths_loads_persisted_context() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let config = Config::default().with_project_path(temp.path().to_path_buf());
+        let wm = WorktreeManager::new(config.project_path.clone());
+        let mut app = TowerApp::new(config.clone(), wm);
+
+        // Create a real worktree directory so the path check passes
+        let wt_dir = temp.path().join("wt_feature");
+        std::fs::create_dir_all(&wt_dir).unwrap();
+
+        // Persist an ExpertContext with a worktree_path
+        let mut ctx =
+            ExpertContext::new(0, "Alyosha".to_string(), config.session_hash().to_string());
+        ctx.set_worktree("feature".to_string(), wt_dir.to_str().unwrap().to_string());
+        app.context_store.save_expert_context(&ctx).await.unwrap();
+
+        // Run restore
+        app.restore_worktree_paths().await.unwrap();
+
+        // Verify main registry
+        let expert = app.expert_registry.get_expert(0).unwrap();
+        assert_eq!(
+            expert.worktree_path,
+            Some(wt_dir.to_str().unwrap().to_string()),
+            "restore_worktree_paths: should load worktree_path into main registry"
+        );
+
+        // Verify router registry
+        let router = app.message_router.as_ref().unwrap();
+        let router_expert = router.expert_registry().get_expert(0).unwrap();
+        assert_eq!(
+            router_expert.worktree_path,
+            Some(wt_dir.to_str().unwrap().to_string()),
+            "restore_worktree_paths: should load worktree_path into router registry"
+        );
+    }
+
+    #[tokio::test]
+    async fn restore_worktree_paths_skips_nonexistent_paths() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let config = Config::default().with_project_path(temp.path().to_path_buf());
+        let wm = WorktreeManager::new(config.project_path.clone());
+        let mut app = TowerApp::new(config.clone(), wm);
+
+        // Persist an ExpertContext with a path that does NOT exist on disk
+        let mut ctx =
+            ExpertContext::new(0, "Alyosha".to_string(), config.session_hash().to_string());
+        ctx.set_worktree(
+            "deleted-branch".to_string(),
+            "/nonexistent/worktree/path".to_string(),
+        );
+        app.context_store.save_expert_context(&ctx).await.unwrap();
+
+        app.restore_worktree_paths().await.unwrap();
+
+        let expert = app.expert_registry.get_expert(0).unwrap();
+        assert_eq!(
+            expert.worktree_path, None,
+            "restore_worktree_paths: should skip nonexistent worktree paths"
+        );
+    }
+
+    #[tokio::test]
+    async fn restore_worktree_paths_handles_no_context() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let config = Config::default().with_project_path(temp.path().to_path_buf());
+        let wm = WorktreeManager::new(config.project_path.clone());
+        let mut app = TowerApp::new(config, wm);
+
+        // No context files exist — should complete without error
+        let result = app.restore_worktree_paths().await;
+        assert!(
+            result.is_ok(),
+            "restore_worktree_paths: should handle missing context files gracefully"
+        );
+
+        // All experts should still have None worktree
+        for i in 0..4u32 {
+            let expert = app.expert_registry.get_expert(i).unwrap();
+            assert_eq!(
+                expert.worktree_path, None,
+                "restore_worktree_paths: expert {} should remain None without context",
+                i
+            );
+        }
     }
 
     #[tokio::test]
