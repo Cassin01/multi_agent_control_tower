@@ -105,6 +105,12 @@ impl ExpertContext {
         self.worktree_path = Some(path);
         self.touch();
     }
+
+    pub fn clear_worktree(&mut self) {
+        self.worktree_branch = None;
+        self.worktree_path = None;
+        self.touch();
+    }
 }
 
 #[cfg(test)]
@@ -280,6 +286,41 @@ updated_at: "2024-01-15T11:00:00Z"
         assert!(
             ctx.worktree_path.is_none(),
             "new: worktree_path should be None by default"
+        );
+    }
+
+    #[test]
+    fn expert_context_clear_worktree_resets_fields_to_none() {
+        let mut ctx = ExpertContext::new(0, "architect".to_string(), "abc123".to_string());
+        ctx.set_worktree(
+            "feature-branch".to_string(),
+            "/tmp/wt/feature-branch".to_string(),
+        );
+
+        ctx.clear_worktree();
+
+        assert!(
+            ctx.worktree_branch.is_none(),
+            "clear_worktree: worktree_branch should be None after clear"
+        );
+        assert!(
+            ctx.worktree_path.is_none(),
+            "clear_worktree: worktree_path should be None after clear"
+        );
+    }
+
+    #[test]
+    fn expert_context_clear_worktree_calls_touch() {
+        let mut ctx = ExpertContext::new(0, "architect".to_string(), "abc123".to_string());
+        ctx.set_worktree("branch".to_string(), "/tmp/wt".to_string());
+        let initial_updated = ctx.updated_at;
+
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        ctx.clear_worktree();
+
+        assert!(
+            ctx.updated_at > initial_updated,
+            "clear_worktree: should update updated_at via touch()"
         );
     }
 
