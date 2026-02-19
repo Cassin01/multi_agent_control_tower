@@ -258,11 +258,23 @@ impl<T: TmuxSender> MessageRouter<T> {
     fn worktree_matches(&self, sender_id: ExpertId, recipient_id: ExpertId) -> bool {
         let sender = match self.expert_registry.get_expert(sender_id) {
             Some(s) => s,
-            None => return false,
+            None => {
+                warn!(
+                    "worktree_matches: sender expert {} not found in registry",
+                    sender_id
+                );
+                return false;
+            }
         };
         let recipient = match self.expert_registry.get_expert(recipient_id) {
             Some(r) => r,
-            None => return false,
+            None => {
+                warn!(
+                    "worktree_matches: recipient expert {} not found in registry",
+                    recipient_id
+                );
+                return false;
+            }
         };
         sender.same_worktree(recipient)
     }
@@ -911,6 +923,15 @@ mod worktree_tests {
         assert!(
             !router.worktree_matches(999, 0),
             "worktree_matches: nonexistent sender should return false"
+        );
+    }
+
+    #[tokio::test]
+    async fn worktree_matches_nonexistent_recipient() {
+        let (router, _temp) = create_worktree_router().await;
+        assert!(
+            !router.worktree_matches(0, 999),
+            "worktree_matches: nonexistent recipient should return false"
         );
     }
 
