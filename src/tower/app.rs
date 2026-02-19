@@ -883,7 +883,12 @@ impl TowerApp {
                         && key.modifiers.contains(KeyModifiers::CONTROL)
                         && self.focus == FocusArea::TaskInput
                     {
-                        self.launch_expert_in_worktree().await?;
+                        let input = self.task_input.content().trim().to_string();
+                        if input.is_empty() {
+                            self.return_expert_from_worktree().await?;
+                        } else {
+                            self.launch_expert_in_worktree().await?;
+                        }
                     }
 
                     if key.code == KeyCode::Char('g')
@@ -1403,6 +1408,104 @@ impl TowerApp {
         } else {
             self.set_message(format!("{} reset complete", expert_name));
         }
+        Ok(())
+    }
+
+    pub async fn return_expert_from_worktree(&mut self) -> Result<()> {
+        let expert_id = match self.status_display.selected_expert_id() {
+            Some(id) => id,
+            None => {
+                self.set_message("No expert selected".to_string());
+                return Ok(());
+            }
+        };
+
+        let expert_name = self.config.get_expert_name(expert_id);
+        let session_hash = self.config.session_hash();
+
+        let in_worktree = match self
+            .context_store
+            .load_expert_context(&session_hash, expert_id)
+            .await
+        {
+            Ok(Some(ref ctx)) => ctx.worktree_path.as_ref().is_some_and(|p| !p.is_empty()),
+            _ => false,
+        };
+
+        if !in_worktree {
+            self.set_message(
+                "Enter a feature name in the task input before launching worktree".to_string(),
+            );
+            return Ok(());
+        }
+
+        let instruction_role = self
+            .session_roles
+            .get_role(expert_id)
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| self.config.get_expert_role(expert_id));
+
+        self.set_message(format!("Returning {} to project root...", expert_name));
+
+        self.claude.send_exit(expert_id).await?;
+        tokio::time::sleep(Duration::from_secs(3)).await;
+
+        if let Ok(Some(mut ctx)) = self
+            .context_store
+            .load_expert_context(&session_hash, expert_id)
+            .await
+        {
+            ctx.clear_worktree();
+            ctx.clear_session();
+            ctx.clear_knowledge();
+            self.context_store.save_expert_context(&ctx).await?;
+        } else {
+            self.context_store
+                .clear_expert_context(&session_hash, expert_id)
+                .await?;
+        }
+
+        let instruction_result = load_instruction_with_template(
+            &self.config.core_instructions_path,
+            &self.config.role_instructions_path,
+            &instruction_role,
+            expert_id,
+            &expert_name,
+            &self.config.status_file_path(expert_id),
+        )?;
+        let instruction_file = if !instruction_result.content.is_empty() {
+            Some(write_instruction_file(
+                &self.config.queue_path,
+                expert_id,
+                &instruction_result.content,
+            )?)
+        } else {
+            None
+        };
+        let agents_file = match &instruction_result.agents_json {
+            Some(json) => Some(write_agents_file(&self.config.queue_path, expert_id, json)?),
+            None => None,
+        };
+        let hooks_json = generate_hooks_settings(&self.config.status_file_path(expert_id));
+        let settings_file = Some(write_settings_file(
+            &self.config.queue_path,
+            expert_id,
+            &hooks_json,
+        )?);
+
+        let project_root = self.config.project_path.to_str().unwrap_or(".").to_string();
+
+        self.claude
+            .launch_claude(
+                expert_id,
+                &project_root,
+                instruction_file.as_deref(),
+                agents_file.as_deref(),
+                settings_file.as_deref(),
+            )
+            .await?;
+
+        self.set_message(format!("{} returned to project root", expert_name));
         Ok(())
     }
 
@@ -2759,6 +2862,38 @@ mod tests {
             app.message(),
             Some("Enter a feature name in the task input before launching worktree"),
             "launch_expert_in_worktree: should reject empty task input"
+        );
+    }
+
+    #[tokio::test]
+    async fn return_expert_no_expert_selected_shows_error() {
+        let mut app = create_test_app();
+
+        app.return_expert_from_worktree().await.unwrap();
+
+        assert_eq!(
+            app.message(),
+            Some("No expert selected"),
+            "return_expert_from_worktree: should show error when no expert selected"
+        );
+    }
+
+    #[tokio::test]
+    async fn return_expert_no_worktree_shows_error() {
+        let mut app = create_test_app();
+        app.status_display.set_experts(vec![ExpertEntry {
+            expert_id: 0,
+            expert_name: "architect".to_string(),
+            state: ExpertState::Idle,
+        }]);
+        app.status_display.next();
+
+        app.return_expert_from_worktree().await.unwrap();
+
+        assert_eq!(
+            app.message(),
+            Some("Enter a feature name in the task input before launching worktree"),
+            "return_expert_from_worktree: should show error when expert not in worktree"
         );
     }
 

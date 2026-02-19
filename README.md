@@ -160,10 +160,6 @@ macot will execute tasks from `.macot/specs/<feature>-tasks.md` in batches (and 
 
 Contributions are welcome. Contribution flow, issue templates, and PR checklist are documented in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
-```bash
-make ci
-```
-
 ## ☕ Support
 
 Support this project: https://buymeacoffee.com/Cassin01

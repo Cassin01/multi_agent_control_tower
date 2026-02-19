@@ -79,10 +79,7 @@ impl HelpModal {
             Self::key_line("\u{2191} / \u{2193}", "Select previous / next expert"),
             Self::key_line("Ctrl+O", "Change expert role"),
             Self::key_line("Ctrl+R", "Reset selected expert"),
-            Self::key_line(
-                "Ctrl+W",
-                "Launch expert in worktree (uses task input as branch name)",
-            ),
+            Self::key_line("Ctrl+W", "Launch expert in worktree / Return from worktree"),
             Self::key_line("Ctrl+G", "Implement tasks / Cancel implementation"),
             Self::key_line("Ctrl+X", "View report for selected expert"),
             Self::nested_subsection_title("Cursor Movement"),
