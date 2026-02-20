@@ -265,11 +265,23 @@ impl QueueManager {
                             messages.push(queued_msg);
                         }
                         Err(e) => {
-                            tracing::error!(
-                                "Failed to parse message file {}: {}",
-                                path.display(),
-                                e
-                            );
+                            if let Some(raw_id) = Self::detect_misplaced_message(&content) {
+                                tracing::error!(
+                                    "Misplaced raw Message detected in queue directory \
+                                     (id: {}, file: {}). This file appears to be a plain \
+                                     Message written directly to the queue instead of the \
+                                     outbox. Write messages to .macot/messages/outbox/ and \
+                                     let the control tower process them.",
+                                    raw_id,
+                                    path.display()
+                                );
+                            } else {
+                                tracing::error!(
+                                    "Failed to parse message file {}: {}",
+                                    path.display(),
+                                    e
+                                );
+                            }
                         }
                     },
                     Err(e) => {
@@ -409,6 +421,23 @@ impl QueueManager {
         }
 
         Ok(removed_messages)
+    }
+
+    /// Detect whether content is a raw `Message` (not wrapped in `QueuedMessage`).
+    ///
+    /// Returns `Some(message_id)` if the content parses as a `Message` with a
+    /// non-empty `message_id`, indicating it was likely written directly to the
+    /// queue directory instead of going through the outbox.
+    fn detect_misplaced_message(content: &str) -> Option<String> {
+        // Only consider it misplaced if it does NOT parse as QueuedMessage
+        // but DOES parse as a raw Message with a non-empty id.
+        if serde_yaml::from_str::<QueuedMessage>(content).is_ok() {
+            return None;
+        }
+        match serde_yaml::from_str::<Message>(content) {
+            Ok(msg) if !msg.message_id.is_empty() => Some(msg.message_id),
+            _ => None,
+        }
     }
 
     /// Get pending messages (not expired, not exceeded max attempts)
@@ -806,6 +835,120 @@ mod tests {
 
         // Outbox file should be removed
         assert!(!message_file.exists());
+    }
+
+    #[test]
+    fn detect_misplaced_message_identifies_raw_message() {
+        let content = MessageContent {
+            subject: "Test".to_string(),
+            body: "Body".to_string(),
+        };
+        let msg = Message::new(
+            0,
+            MessageRecipient::expert_id(1),
+            MessageType::Query,
+            content,
+        );
+        let yaml = serde_yaml::to_string(&msg).unwrap();
+
+        let result = QueueManager::detect_misplaced_message(&yaml);
+        assert!(
+            result.is_some(),
+            "detect_misplaced_message: should identify a raw Message YAML"
+        );
+        assert_eq!(
+            result.unwrap(),
+            msg.message_id,
+            "detect_misplaced_message: should return the message_id"
+        );
+    }
+
+    #[test]
+    fn detect_misplaced_message_returns_none_for_queued_message() {
+        let content = MessageContent {
+            subject: "Test".to_string(),
+            body: "Body".to_string(),
+        };
+        let msg = Message::new(
+            0,
+            MessageRecipient::expert_id(1),
+            MessageType::Query,
+            content,
+        );
+        let queued = QueuedMessage::new(msg);
+        let yaml = serde_yaml::to_string(&queued).unwrap();
+
+        let result = QueueManager::detect_misplaced_message(&yaml);
+        assert!(
+            result.is_none(),
+            "detect_misplaced_message: should return None for valid QueuedMessage"
+        );
+    }
+
+    #[test]
+    fn detect_misplaced_message_returns_none_for_garbage() {
+        let result = QueueManager::detect_misplaced_message("not valid yaml at all {{{");
+        assert!(
+            result.is_none(),
+            "detect_misplaced_message: should return None for unparseable content"
+        );
+    }
+
+    #[test]
+    fn detect_misplaced_message_returns_none_for_empty_id() {
+        // Build YAML that parses as Message but has empty message_id
+        let yaml = r#"
+message_id: ""
+from_expert_id: 0
+to:
+  expert_id: 1
+message_type: query
+priority: normal
+created_at: "2024-01-15T10:30:00Z"
+content:
+  subject: "Test"
+  body: "Body"
+"#;
+        let result = QueueManager::detect_misplaced_message(yaml);
+        assert!(
+            result.is_none(),
+            "detect_misplaced_message: should return None when message_id is empty"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_queue_skips_raw_message_in_queue_directory() {
+        let (manager, _temp) = create_test_manager().await;
+
+        // Write a raw Message directly into queue/ (simulating the mismatch)
+        let content = MessageContent {
+            subject: "Misplaced".to_string(),
+            body: "This was written directly to queue".to_string(),
+        };
+        let raw_msg = Message::new(
+            3,
+            MessageRecipient::expert_id(2),
+            MessageType::Notify,
+            content,
+        );
+        let yaml = serde_yaml::to_string(&raw_msg).unwrap();
+        let bad_file = manager
+            .queue_path()
+            .join("msg_expert3_to_expert2_20260220.yaml");
+        fs::write(&bad_file, &yaml).await.unwrap();
+
+        // Also enqueue a valid message via the proper path
+        let valid_msg = create_test_message();
+        manager.enqueue(&valid_msg).await.unwrap();
+
+        let messages = manager.read_queue().await.unwrap();
+        // Only the properly enqueued message should appear
+        assert_eq!(
+            messages.len(),
+            1,
+            "read_queue: should skip raw Message files in queue directory"
+        );
+        assert_eq!(messages[0].message.message_id, valid_msg.message_id);
     }
 
     #[tokio::test]

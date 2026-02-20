@@ -56,6 +56,16 @@ pub fn write_settings_file(queue_path: &Path, expert_id: u32, json: &str) -> Res
 
 pub fn generate_hooks_settings(status_file_path: &str) -> String {
     let quoted_path = shell_single_quote(status_file_path);
+    let pre_tool_use_command = concat!(
+        "INPUT=$(cat); ",
+        "TARGET=$(echo \"$INPUT\" | jq -r '(.tool_input.file_path // .tool_input.command // \"\")'); ",
+        "if echo \"$TARGET\" | grep -q 'messages/queue/'; then ",
+        "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",",
+        "\"permissionDecision\":\"deny\",",
+        "\"permissionDecisionReason\":\"ERROR: Writing directly to messages/queue/ is forbidden. ",
+        "Write to messages/outbox/ instead.\"}}'; ",
+        "fi"
+    );
     json!({
         "hooks": {
             "UserPromptSubmit": [{
@@ -68,6 +78,13 @@ pub fn generate_hooks_settings(status_file_path: &str) -> String {
                 "hooks": [{
                     "type": "command",
                     "command": format!("printf '%s' pending >| {}", quoted_path),
+                }]
+            }],
+            "PreToolUse": [{
+                "matcher": "Write|Edit|Bash",
+                "hooks": [{
+                    "type": "command",
+                    "command": pre_tool_use_command,
                 }]
             }]
         }
@@ -307,6 +324,61 @@ mod tests {
         assert!(
             parsed.get("hooks").is_some(),
             "generate_hooks_settings: should have a 'hooks' top-level key"
+        );
+    }
+
+    #[test]
+    fn generate_hooks_settings_contains_pre_tool_use_hook() {
+        let json = generate_hooks_settings("/tmp/status/expert0");
+        assert!(
+            json.contains("PreToolUse"),
+            "generate_hooks_settings: should contain PreToolUse hook"
+        );
+    }
+
+    #[test]
+    fn generate_hooks_settings_pre_tool_use_has_write_edit_bash_matcher() {
+        let json = generate_hooks_settings("/tmp/status/expert0");
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let pre_tool_use = &parsed["hooks"]["PreToolUse"];
+        assert!(
+            !pre_tool_use.is_null(),
+            "generate_hooks_settings: PreToolUse hook should exist"
+        );
+        let matcher = pre_tool_use[0]["matcher"].as_str().unwrap_or("");
+        assert!(
+            matcher.contains("Write") && matcher.contains("Edit") && matcher.contains("Bash"),
+            "generate_hooks_settings: PreToolUse matcher should include Write, Edit, and Bash"
+        );
+    }
+
+    #[test]
+    fn generate_hooks_settings_pre_tool_use_blocks_queue_writes() {
+        let json = generate_hooks_settings("/tmp/status/expert0");
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let command = parsed["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap_or("");
+        assert!(
+            command.contains("messages/queue/"),
+            "generate_hooks_settings: PreToolUse command should check for messages/queue/ path"
+        );
+        assert!(
+            command.contains("deny"),
+            "generate_hooks_settings: PreToolUse command should deny writes to queue"
+        );
+    }
+
+    #[test]
+    fn generate_hooks_settings_pre_tool_use_suggests_outbox() {
+        let json = generate_hooks_settings("/tmp/status/expert0");
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let command = parsed["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap_or("");
+        assert!(
+            command.contains("outbox"),
+            "generate_hooks_settings: PreToolUse deny reason should suggest outbox"
         );
     }
 

@@ -6,6 +6,12 @@ You can send messages to other experts through the messaging system. Messages ar
 
 Write a YAML file to `.macot/messages/outbox/` with the following format:
 
+> **WARNING**: NEVER write message files directly to `.macot/messages/queue/`.
+> Always write to `.macot/messages/outbox/`. The control tower automatically
+> processes outbox files, wraps them in the internal QueuedMessage format
+> (adding delivery tracking metadata), and moves them to the queue with the
+> correct filename. Writing directly to the queue causes silent delivery failures.
+
 ```yaml
 message_id: "msg-YYYYMMDD-HHMMSSmmm"  # Unique ID with timestamp
 from_expert_id: {{ expert_id }}                      # Your expert ID
