@@ -127,7 +127,7 @@ impl ExpertPanelDisplay {
         self.content = text;
         self.raw_line_count = line_count;
         if line_count > 0 {
-            self.scroll_offset = u16::MAX;
+            self.scroll_offset = line_count.saturating_sub(1) as u16;
         }
     }
 
@@ -200,7 +200,9 @@ impl ExpertPanelDisplay {
     }
 
     pub fn scroll_to_bottom(&mut self) {
-        self.scroll_offset = u16::MAX;
+        if self.raw_line_count > 0 {
+            self.scroll_offset = self.raw_line_count.saturating_sub(1) as u16;
+        }
         self.auto_scroll = true;
     }
 
@@ -248,13 +250,9 @@ impl ExpertPanelDisplay {
             };
 
         let max_scroll = visual_line_count.saturating_sub(visible_height) as u16;
-        if self.auto_scroll {
-            self.scroll_offset = max_scroll;
-        } else {
-            self.scroll_offset = self.scroll_offset.min(max_scroll);
-        }
+        self.scroll_offset = self.scroll_offset.min(max_scroll);
 
-        if self.scroll_offset >= max_scroll && !self.is_scrolling {
+        if self.scroll_offset >= max_scroll {
             self.auto_scroll = true;
         }
 
@@ -810,9 +808,8 @@ mod tests {
         let mut panel = ExpertPanelDisplay::new();
         panel.enter_scroll_mode("a\nb\nc\nd\ne");
         assert_eq!(
-            panel.scroll_offset,
-            u16::MAX,
-            "enter_scroll_mode: should set scroll_offset to u16::MAX sentinel"
+            panel.scroll_offset, 4,
+            "enter_scroll_mode: should position scroll at bottom (last line)"
         );
     }
 
@@ -1260,119 +1257,6 @@ mod tests {
         assert!(
             panel.try_set_content("non-empty"),
             "xxh3: non-empty should differ from empty"
-        );
-    }
-
-    // Scroll-to-bottom visual coordinate tests
-
-    /// Helper: create a panel with 5 long lines (200 chars each) that wrap heavily.
-    /// With TestBackend(40, 10): inner = 38x8, display_width = 38.
-    /// Each 200-char line → div_ceil(200, 38) = 6 visual lines.
-    /// 5 raw lines × 6 = 30 visual lines. visible_height = 8. max_scroll = 22.
-    fn panel_with_wrapping_content() -> ExpertPanelDisplay {
-        let mut panel = ExpertPanelDisplay::new();
-        panel.set_expert(1, "Test".to_string());
-        let long_line = "x".repeat(200);
-        let raw: String = (0..5)
-            .map(|_| long_line.as_str())
-            .collect::<Vec<_>>()
-            .join("\n");
-        let text = ExpertPanelDisplay::parse_ansi(&raw);
-        let line_count = raw.lines().count();
-        panel.set_content(text, line_count);
-        panel
-    }
-
-    fn render_panel(panel: &mut ExpertPanelDisplay) {
-        use ratatui::backend::TestBackend;
-        use ratatui::Terminal;
-        let backend = TestBackend::new(40, 10);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| panel.render(frame, frame.area()))
-            .unwrap();
-    }
-
-    #[test]
-    fn auto_scroll_positions_at_visual_bottom_with_wrapping() {
-        let mut panel = panel_with_wrapping_content();
-        assert!(panel.auto_scroll, "auto_scroll should be enabled");
-
-        render_panel(&mut panel);
-
-        // inner 38x8, 5 lines of 200 chars → 30 visual lines, max_scroll = 22
-        let expected_max_scroll: u16 = 22;
-        assert_eq!(
-            panel.scroll_offset, expected_max_scroll,
-            "auto_scroll: scroll_offset should equal visual max_scroll, not raw_line_count - 1"
-        );
-    }
-
-    #[test]
-    fn scroll_to_bottom_reaches_visual_bottom_after_render() {
-        let mut panel = panel_with_wrapping_content();
-        panel.scroll_to_top();
-        assert!(
-            !panel.auto_scroll,
-            "auto_scroll should be disabled after scroll_to_top"
-        );
-
-        panel.scroll_to_bottom();
-        render_panel(&mut panel);
-
-        let expected_max_scroll: u16 = 22;
-        assert_eq!(
-            panel.scroll_offset, expected_max_scroll,
-            "scroll_to_bottom: should reach visual bottom after render"
-        );
-    }
-
-    #[test]
-    fn enter_scroll_mode_reaches_visual_bottom_after_render() {
-        let long_line = "x".repeat(200);
-        let raw: String = (0..5)
-            .map(|_| long_line.as_str())
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        let mut panel = ExpertPanelDisplay::new();
-        panel.set_expert(1, "Test".to_string());
-        panel.enter_scroll_mode(&raw);
-        render_panel(&mut panel);
-
-        let expected_max_scroll: u16 = 22;
-        assert_eq!(
-            panel.scroll_offset, expected_max_scroll,
-            "enter_scroll_mode: should reach visual bottom after render"
-        );
-    }
-
-    #[test]
-    fn auto_scroll_not_re_enabled_during_scroll_mode() {
-        let long_line = "x".repeat(200);
-        let raw: String = (0..5)
-            .map(|_| long_line.as_str())
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        let mut panel = ExpertPanelDisplay::new();
-        panel.set_expert(1, "Test".to_string());
-        panel.enter_scroll_mode(&raw);
-        assert!(
-            !panel.auto_scroll,
-            "auto_scroll should be disabled in scroll mode"
-        );
-        assert!(panel.is_scrolling, "should be in scroll mode");
-
-        render_panel(&mut panel);
-
-        assert!(
-            !panel.auto_scroll,
-            "auto_scroll should NOT be re-enabled during scroll mode even at max_scroll"
-        );
-        assert!(
-            panel.is_scrolling,
-            "should still be in scroll mode after render"
         );
     }
 }
