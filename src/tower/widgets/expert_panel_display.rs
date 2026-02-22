@@ -220,21 +220,16 @@ impl ExpertPanelDisplay {
 
         let visible_height = inner_height as usize;
         let display_width = inner_width as usize;
+
+        // Build paragraph without block for accurate line_count measurement.
+        // line_count() passes width directly to WordWrapper, and rendering
+        // uses block.inner(area).width == inner_width, so both see the same width.
+        let paragraph = Paragraph::new(self.content.clone()).wrap(Wrap { trim: false });
+
         let visual_line_count =
             if display_width != self.cached_display_width || self.cached_display_width == 0 {
-                let count = if display_width > 0 {
-                    self.content
-                        .lines
-                        .iter()
-                        .map(|line| {
-                            let w = line.width();
-                            if w == 0 {
-                                1
-                            } else {
-                                w.div_ceil(display_width)
-                            }
-                        })
-                        .sum()
+                let count = if inner_width > 0 {
+                    paragraph.line_count(inner_width)
                 } else {
                     self.raw_line_count
                 };
@@ -276,10 +271,7 @@ impl ExpertPanelDisplay {
             .borders(Borders::ALL)
             .border_style(Style::default().fg(border_color));
 
-        let paragraph = Paragraph::new(self.content.clone())
-            .block(block)
-            .wrap(Wrap { trim: false })
-            .scroll((self.scroll_offset, 0));
+        let paragraph = paragraph.block(block).scroll((self.scroll_offset, 0));
 
         frame.render_widget(paragraph, area);
     }
@@ -1403,5 +1395,34 @@ mod tests {
             "auto_scroll should NOT be re-enabled during scroll mode even when at bottom"
         );
         assert!(panel.is_scrolling, "should remain in scroll mode");
+    }
+
+    // Word-wrap regression test: verifies visual line count uses ratatui's
+    // WordWrapper (word boundaries) rather than div_ceil (character-level).
+
+    #[test]
+    fn word_wrap_visual_line_count_matches_ratatui() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let mut panel = ExpertPanelDisplay::new();
+        // "aaaa bbbbbbbb cccc" = 18 chars
+        // At inner_width=10: div_ceil(18,10)=2, but word wrap gives 3 lines:
+        //   line 1: "aaaa "      (5 chars, "bbbbbbbb" won't fit)
+        //   line 2: "bbbbbbbb "  (9 chars, "cccc" won't fit)
+        //   line 3: "cccc"       (4 chars)
+        panel.set_content(Text::raw("aaaa bbbbbbbb cccc"), 1);
+
+        // area.width=12 → inner_width=12-2=10
+        let backend = TestBackend::new(12, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| panel.render(frame, frame.area()))
+            .unwrap();
+
+        assert_eq!(
+            panel.cached_visual_line_count, 3,
+            "word-wrap: 'aaaa bbbbbbbb cccc' at width 10 should be 3 visual lines, not 2"
+        );
     }
 }
