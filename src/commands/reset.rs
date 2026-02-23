@@ -57,10 +57,12 @@ async fn reset_expert(
 ) -> Result<()> {
     let (tmux, metadata) = common::resolve_existing_session(session).await?;
     let session_name = tmux.session_name().to_string();
+    let project_path = metadata.project_path.unwrap_or_else(|| ".".to_string());
+    let num_experts = metadata.num_experts.unwrap_or(4);
 
     let config = Config::default()
-        .with_project_path(PathBuf::from(&metadata.project_path))
-        .with_num_experts(metadata.num_experts);
+        .with_project_path(PathBuf::from(&project_path))
+        .with_num_experts(num_experts);
 
     let expert_id = config.resolve_expert_id(&expert)?;
     let expert_name = config.get_expert_name(expert_id);
@@ -154,7 +156,7 @@ async fn reset_expert(
     claude
         .launch_claude(
             expert_id,
-            &metadata.project_path,
+            &project_path,
             instruction_file.as_deref(),
             agents_file.as_deref(),
             settings_file.as_deref(),

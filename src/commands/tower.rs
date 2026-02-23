@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::path::PathBuf;
 
@@ -33,13 +33,17 @@ pub async fn execute(args: Args) -> Result<()> {
     }
 
     let metadata = tmux.load_session_metadata().await?;
-    let project_path_buf = PathBuf::from(&metadata.project_path);
+    let project_path = metadata
+        .project_path
+        .context("Failed to get project path from session")?;
+    let project_path_buf = PathBuf::from(&project_path);
+    let num_experts = metadata.num_experts.unwrap_or(4);
 
     let worktree_manager = WorktreeManager::resolve(project_path_buf.clone()).await?;
 
     let config = Config::load(args.config)?
         .with_project_path(project_path_buf)
-        .with_num_experts(metadata.num_experts);
+        .with_num_experts(num_experts);
 
     let mut app = TowerApp::new(config, worktree_manager);
     app.run().await?;

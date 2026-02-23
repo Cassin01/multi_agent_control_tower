@@ -95,4 +95,22 @@ mod tests {
         select_prev(&mut state, 3);
         assert_eq!(state.selected(), Some(1));
     }
+
+    #[test]
+    fn select_next_single_element_stays_at_zero() {
+        let mut state = ListState::default();
+        select_next(&mut state, 1);
+        assert_eq!(state.selected(), Some(0));
+        select_next(&mut state, 1);
+        assert_eq!(state.selected(), Some(0));
+    }
+
+    #[test]
+    fn select_prev_single_element_stays_at_zero() {
+        let mut state = ListState::default();
+        select_prev(&mut state, 1);
+        assert_eq!(state.selected(), Some(0));
+        select_prev(&mut state, 1);
+        assert_eq!(state.selected(), Some(0));
+    }
 }

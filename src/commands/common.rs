@@ -165,7 +165,7 @@ pub async fn resolve_existing_session(
     let tmux = TmuxManager::new(session_name.clone());
 
     if !tmux.session_exists().await {
-        bail!("Session {session_name} does not exist");
+        bail!("Session {session_name} does not exist. Is it still running? Check with 'macot status'.");
     }
 
     let metadata = tmux.load_session_metadata().await?;

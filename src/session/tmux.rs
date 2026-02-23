@@ -490,19 +490,18 @@ impl TmuxManager {
     }
 
     /// Load session metadata from tmux environment variables.
+    ///
+    /// Fields like `project_path`, `num_experts`, and `created_at` are returned as `Option`
+    /// so each caller can apply its own contextually-appropriate default.
     pub async fn load_session_metadata(&self) -> Result<SessionMetadata> {
-        let project_path = self
-            .get_env("MACOT_PROJECT_PATH")
-            .await?
-            .unwrap_or_else(|| ".".to_string());
+        let project_path = self.get_env("MACOT_PROJECT_PATH").await?;
 
         let num_experts = self
             .get_env("MACOT_NUM_EXPERTS")
             .await?
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(4);
+            .and_then(|s| s.parse().ok());
 
-        let created_at = self.get_env("MACOT_CREATED_AT").await?.unwrap_or_default();
+        let created_at = self.get_env("MACOT_CREATED_AT").await?;
 
         let queue_path = self
             .get_env("MACOT_QUEUE_PATH")
@@ -519,11 +518,14 @@ impl TmuxManager {
 }
 
 /// Metadata stored as tmux environment variables for a running session.
+///
+/// `project_path`, `num_experts`, and `created_at` are `Option` because the tmux
+/// env vars may not be set; each caller applies its own contextual default.
 #[derive(Debug, Clone)]
 pub struct SessionMetadata {
-    pub project_path: String,
-    pub num_experts: u32,
-    pub created_at: String,
+    pub project_path: Option<String>,
+    pub num_experts: Option<u32>,
+    pub created_at: Option<String>,
     pub queue_path: String,
 }
 

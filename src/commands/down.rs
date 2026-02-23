@@ -24,11 +24,12 @@ pub struct Args {
 pub async fn execute(args: Args) -> Result<()> {
     let (tmux, metadata) = common::resolve_existing_session(args.session_name).await?;
     let session_name = tmux.session_name().to_string();
+    let num_experts = metadata.num_experts.unwrap_or(4);
+    let project_path = metadata.project_path.unwrap_or_else(|| ".".to_string());
 
     println!("Stopping session: {session_name}");
 
     if !args.force {
-        let num_experts = metadata.num_experts;
         println!("Sending exit commands to {num_experts} agents...");
 
         let claude = ClaudeManager::new(session_name.clone());
@@ -57,8 +58,7 @@ pub async fn execute(args: Args) -> Result<()> {
 
         let session_hash = session_name.strip_prefix("macot-").unwrap_or(&session_name);
 
-        let config =
-            Config::default().with_project_path(std::path::PathBuf::from(&metadata.project_path));
+        let config = Config::default().with_project_path(std::path::PathBuf::from(&project_path));
         let context_store = ContextStore::new(config.queue_path.clone());
 
         if let Err(e) = context_store.cleanup_session(session_hash).await {
