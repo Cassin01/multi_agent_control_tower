@@ -230,7 +230,7 @@ impl<T: TmuxSender> MessageRouter<T> {
             );
             return Ok(DeliveryResult::failed(
                 message.message_id.clone(),
-                format!("Expert {} is not idle", expert_id),
+                format!("Expert {expert_id} is not idle"),
             ));
         }
 
@@ -247,7 +247,7 @@ impl<T: TmuxSender> MessageRouter<T> {
                 ))
             }
             Err(e) => {
-                let error = format!("Tmux delivery failed: {}", e);
+                let error = format!("Tmux delivery failed: {e}");
                 warn!("{}", error);
                 Ok(DeliveryResult::failed(message.message_id.clone(), error))
             }
@@ -405,10 +405,7 @@ impl<T: TmuxSender> MessageRouter<T> {
             .send_keys_with_enter(window_id, &formatted_message)
             .await
             .map_err(|e| {
-                RouterError::Tmux(format!(
-                    "Failed to send message to window {}: {}",
-                    window_id, e
-                ))
+                RouterError::Tmux(format!("Failed to send message to window {window_id}: {e}"))
             })?;
 
         debug!(
@@ -468,7 +465,7 @@ impl<T: TmuxSender> MessageRouter<T> {
             message.message_id,
             message.created_at.format("%Y-%m-%d %H:%M:%S UTC"),
             if let Some(reply_to) = &message.reply_to {
-                format!("Reply to: {}", reply_to)
+                format!("Reply to: {reply_to}")
             } else {
                 String::new()
             }

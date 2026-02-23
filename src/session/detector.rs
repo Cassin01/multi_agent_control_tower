@@ -16,7 +16,7 @@ impl ExpertStateDetector {
     }
 
     pub fn detect_state(&self, expert_id: u32) -> ExpertState {
-        let path = self.status_dir.join(format!("expert{}", expert_id));
+        let path = self.status_dir.join(format!("expert{expert_id}"));
 
         let content = match std::fs::read_to_string(&path) {
             Ok(c) => c,
@@ -51,7 +51,7 @@ impl ExpertStateDetector {
     }
 
     pub fn set_marker(&self, expert_id: u32, content: &str) -> Result<()> {
-        let path = self.status_dir.join(format!("expert{}", expert_id));
+        let path = self.status_dir.join(format!("expert{expert_id}"));
         std::fs::write(&path, content)?;
         Ok(())
     }

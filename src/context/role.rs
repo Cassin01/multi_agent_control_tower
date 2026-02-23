@@ -81,7 +81,7 @@ impl AvailableRoles {
             for entry in entries.flatten() {
                 let file_path = entry.path();
 
-                if file_path.extension().map(|e| e == "md").unwrap_or(false) {
+                if file_path.extension().is_some_and(|e| e == "md") {
                     let file_name = file_path.file_stem().and_then(|s| s.to_str());
 
                     if let Some(name) = file_name {

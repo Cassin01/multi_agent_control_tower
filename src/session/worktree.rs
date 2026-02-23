@@ -5,7 +5,7 @@ use tokio::task::JoinHandle;
 
 fn path_to_str(path: &Path) -> Result<&str> {
     path.to_str()
-        .ok_or_else(|| anyhow::anyhow!("Path contains non-UTF8 characters: {:?}", path))
+        .ok_or_else(|| anyhow::anyhow!("Path contains non-UTF8 characters: {}", path.display()))
 }
 
 pub struct WorktreeLaunchResult {
@@ -48,7 +48,7 @@ async fn resolve_git_root(project_path: &Path) -> Result<PathBuf> {
     // Its parent is the working tree root
     Ok(common_dir
         .parent()
-        .map(|p| p.to_path_buf())
+        .map(Path::to_path_buf)
         .unwrap_or_else(|| project_path.to_path_buf()))
 }
 
@@ -113,7 +113,7 @@ impl WorktreeManager {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("git worktree add failed: {}", stderr);
+            anyhow::bail!("git worktree add failed: {stderr}");
         }
 
         Ok(wt_path)
@@ -157,7 +157,7 @@ impl WorktreeManager {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("git worktree remove failed: {}", stderr);
+            anyhow::bail!("git worktree remove failed: {stderr}");
         }
 
         Ok(())

@@ -101,7 +101,7 @@ pub fn load_instruction_with_template(
 /// Returns (content, used_general_fallback)
 fn load_role_instruction(role_instructions_path: &Path, role_name: &str) -> (String, bool) {
     // 1. Try user custom instruction
-    let user_path = role_instructions_path.join(format!("{}.md", role_name));
+    let user_path = role_instructions_path.join(format!("{role_name}.md"));
     if user_path.exists() {
         if let Ok(content) = std::fs::read_to_string(&user_path) {
             return (content, false);

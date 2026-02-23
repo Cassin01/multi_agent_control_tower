@@ -29,24 +29,15 @@ pub async fn execute(args: Args) -> Result<()> {
     let tmux = TmuxManager::new(session_name.clone());
 
     if !tmux.session_exists().await {
-        bail!(
-            "Session {} does not exist. Run 'macot start' first.",
-            session_name
-        );
+        bail!("Session {session_name} does not exist. Run 'macot start' first.");
     }
 
-    let project_path = tmux
-        .get_env("MACOT_PROJECT_PATH")
-        .await?
+    let metadata = tmux.load_session_metadata().await?;
+    let project_path = metadata
+        .project_path
         .context("Failed to get project path from session")?;
-
-    let num_experts = tmux
-        .get_env("MACOT_NUM_EXPERTS")
-        .await?
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(4);
-
     let project_path_buf = PathBuf::from(&project_path);
+    let num_experts = metadata.num_experts.unwrap_or(4);
 
     let worktree_manager = WorktreeManager::resolve(project_path_buf.clone()).await?;
 

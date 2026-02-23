@@ -122,8 +122,8 @@ impl TmuxSender for TmuxManager {
             ])
             .output()
             .await
-            .context(format!("Failed to send keys to window {}", window_id))?;
-        check_tmux_status(output, &format!("send-keys to window {}", window_id))
+            .context(format!("Failed to send keys to window {window_id}"))?;
+        check_tmux_status(output, &format!("send-keys to window {window_id}"))
     }
 
     fn pre_enter_delay(&self) -> std::time::Duration {
@@ -155,8 +155,8 @@ impl TmuxSender for TmuxManager {
             ])
             .output()
             .await
-            .context(format!("Failed to paste buffer to window {}", window_id))?;
-        check_tmux_status(output, &format!("paste-buffer to window {}", window_id))
+            .context(format!("Failed to paste buffer to window {window_id}"))?;
+        check_tmux_status(output, &format!("paste-buffer to window {window_id}"))
     }
 
     async fn capture_pane(&self, window_id: u32) -> Result<String> {
@@ -169,8 +169,8 @@ impl TmuxSender for TmuxManager {
             ])
             .output()
             .await
-            .context(format!("Failed to capture window {}", window_id))?;
-        check_tmux_output(output, &format!("capture-pane {}", window_id))
+            .context(format!("Failed to capture window {window_id}"))?;
+        check_tmux_output(output, &format!("capture-pane {window_id}"))
     }
 
     async fn capture_pane_with_escapes(&self, window_id: u32) -> Result<String> {
@@ -184,11 +184,8 @@ impl TmuxSender for TmuxManager {
             ])
             .output()
             .await
-            .context(format!(
-                "Failed to capture window {} with escapes",
-                window_id
-            ))?;
-        check_tmux_output(output, &format!("capture-pane-with-escapes {}", window_id))
+            .context(format!("Failed to capture window {window_id} with escapes"))?;
+        check_tmux_output(output, &format!("capture-pane-with-escapes {window_id}"))
     }
 
     async fn capture_full_history(&self, window_id: u32) -> Result<String> {
@@ -208,10 +205,9 @@ impl TmuxSender for TmuxManager {
             .output()
             .await
             .context(format!(
-                "Failed to capture full history of window {}",
-                window_id
+                "Failed to capture full history of window {window_id}"
             ))?;
-        check_tmux_output(output, &format!("capture-full-history {}", window_id))
+        check_tmux_output(output, &format!("capture-full-history {window_id}"))
     }
 
     async fn resize_pane(&self, window_id: u32, width: u16, height: u16) -> Result<()> {
@@ -227,8 +223,8 @@ impl TmuxSender for TmuxManager {
             ])
             .output()
             .await
-            .context(format!("Failed to resize window {}", window_id))?;
-        check_tmux_status(output, &format!("resize-pane {}", window_id))
+            .context(format!("Failed to resize window {window_id}"))?;
+        check_tmux_status(output, &format!("resize-pane {window_id}"))
     }
 
     async fn get_pane_current_command(&self, window_id: u32) -> Result<Option<String>> {
@@ -243,13 +239,12 @@ impl TmuxSender for TmuxManager {
             .output()
             .await
             .context(format!(
-                "Failed to get pane_current_command for window {}",
-                window_id
+                "Failed to get pane_current_command for window {window_id}"
             ))?;
 
         let stdout = check_tmux_output(
             output,
-            &format!("get pane_current_command for window {}", window_id),
+            &format!("get pane_current_command for window {window_id}"),
         )?;
         let cmd = stdout.trim().to_string();
         if cmd.is_empty() {
@@ -330,7 +325,7 @@ impl TmuxManager {
                 .args(["new-window", "-t", &self.session_name, "-c", working_dir])
                 .output()
                 .await
-                .context(format!("Failed to create window {}", i))?;
+                .context(format!("Failed to create window {i}"))?;
         }
 
         Ok(())
@@ -341,7 +336,7 @@ impl TmuxManager {
             .args(["setenv", "-t", &self.session_name, key, value])
             .output()
             .await
-            .context(format!("Failed to set env {}", key))?;
+            .context(format!("Failed to set env {key}"))?;
         Ok(())
     }
 
@@ -350,11 +345,11 @@ impl TmuxManager {
             .args(["showenv", "-t", &self.session_name, key])
             .output()
             .await
-            .context(format!("Failed to get env {}", key))?;
+            .context(format!("Failed to get env {key}"))?;
 
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
-            if let Some(value) = stdout.strip_prefix(&format!("{}=", key)) {
+            if let Some(value) = stdout.strip_prefix(&format!("{key}=")) {
                 return Ok(Some(value.trim().to_string()));
             }
         }
@@ -382,7 +377,7 @@ impl TmuxManager {
             ])
             .output()
             .await
-            .context(format!("Failed to set pane title for window {}", window_id))?;
+            .context(format!("Failed to set pane title for window {window_id}"))?;
         Ok(())
     }
 
@@ -399,8 +394,7 @@ impl TmuxManager {
             .output()
             .await
             .context(format!(
-                "Failed to get pane_current_path for window {}",
-                window_id
+                "Failed to get pane_current_path for window {window_id}"
             ))?;
 
         if output.status.success() {
@@ -494,6 +488,45 @@ impl TmuxManager {
             .await?;
         Ok(())
     }
+
+    /// Load session metadata from tmux environment variables.
+    ///
+    /// Fields like `project_path`, `num_experts`, and `created_at` are returned as `Option`
+    /// so each caller can apply its own contextually-appropriate default.
+    pub async fn load_session_metadata(&self) -> Result<SessionMetadata> {
+        let project_path = self.get_env("MACOT_PROJECT_PATH").await?;
+
+        let num_experts = self
+            .get_env("MACOT_NUM_EXPERTS")
+            .await?
+            .and_then(|s| s.parse().ok());
+
+        let created_at = self.get_env("MACOT_CREATED_AT").await?;
+
+        let queue_path = self
+            .get_env("MACOT_QUEUE_PATH")
+            .await?
+            .unwrap_or_else(|| "/tmp/macot".to_string());
+
+        Ok(SessionMetadata {
+            project_path,
+            num_experts,
+            created_at,
+            queue_path,
+        })
+    }
+}
+
+/// Metadata stored as tmux environment variables for a running session.
+///
+/// `project_path`, `num_experts`, and `created_at` are `Option` because the tmux
+/// env vars may not be set; each caller applies its own contextual default.
+#[derive(Debug, Clone)]
+pub struct SessionMetadata {
+    pub project_path: Option<String>,
+    pub num_experts: Option<u32>,
+    pub created_at: Option<String>,
+    pub queue_path: String,
 }
 
 #[cfg(test)]

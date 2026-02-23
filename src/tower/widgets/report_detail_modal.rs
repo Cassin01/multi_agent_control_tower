@@ -72,7 +72,7 @@ impl ReportDetailModal {
             Some(duration) => {
                 let secs = duration.num_seconds();
                 if secs < 60 {
-                    format!("{}s", secs)
+                    format!("{secs}s")
                 } else if secs < 3600 {
                     format!("{}m {}s", secs / 60, secs % 60)
                 } else {
@@ -141,7 +141,7 @@ impl ReportDetailModal {
             )));
         } else {
             for line in report.summary.lines() {
-                lines.push(Line::from(format!("  {}", line)));
+                lines.push(Line::from(format!("  {line}")));
             }
         }
 
@@ -157,8 +157,8 @@ impl ReportDetailModal {
             for (i, finding) in report.details.findings.iter().enumerate() {
                 let severity_style = Self::severity_style(&finding.severity);
                 let location = match (&finding.file, finding.line) {
-                    (Some(file), Some(line)) => format!(" ({}:{})", file, line),
-                    (Some(file), None) => format!(" ({})", file),
+                    (Some(file), Some(line)) => format!(" ({file}:{line})"),
+                    (Some(file), None) => format!(" ({file})"),
                     _ => String::new(),
                 };
 
@@ -198,7 +198,7 @@ impl ReportDetailModal {
 
             for file in &report.details.files_modified {
                 lines.push(Line::from(Span::styled(
-                    format!("  📝 {}", file),
+                    format!("  📝 {file}"),
                     Style::default().fg(Color::Yellow),
                 )));
             }
@@ -215,7 +215,7 @@ impl ReportDetailModal {
 
             for file in &report.details.files_created {
                 lines.push(Line::from(Span::styled(
-                    format!("  ✨ {}", file),
+                    format!("  ✨ {file}"),
                     Style::default().fg(Color::Green),
                 )));
             }
@@ -230,7 +230,7 @@ impl ReportDetailModal {
 
             for error in &report.errors {
                 lines.push(Line::from(Span::styled(
-                    format!("  ✗ {}", error),
+                    format!("  ✗ {error}"),
                     Style::default().fg(Color::Red),
                 )));
             }

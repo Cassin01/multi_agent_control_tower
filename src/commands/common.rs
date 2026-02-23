@@ -9,7 +9,7 @@ use crate::instructions::{
     write_instruction_file, write_settings_file,
 };
 use crate::queue::QueueManager;
-use crate::session::{ClaudeManager, ExpertStateDetector, TmuxManager};
+use crate::session::{ClaudeManager, ExpertStateDetector, SessionMetadata, TmuxManager};
 use crate::utils::compute_path_hash;
 
 /// Try to find a running session that matches the current directory's hash.
@@ -17,7 +17,7 @@ use crate::utils::compute_path_hash;
 async fn resolve_session_by_cwd() -> Result<Option<String>> {
     let cwd = std::env::current_dir()?;
     let hash = compute_path_hash(&cwd);
-    let expected_suffix = format!("-{}", hash);
+    let expected_suffix = format!("-{hash}");
 
     let sessions = TmuxManager::list_all_macot_sessions().await?;
     let matched: Vec<_> = sessions
@@ -44,7 +44,7 @@ pub async fn resolve_single_session(no_sessions_msg: &str) -> Result<String> {
     let sessions = TmuxManager::list_all_macot_sessions().await?;
 
     match sessions.len() {
-        0 => bail!("{}", no_sessions_msg),
+        0 => bail!("{no_sessions_msg}"),
         1 => Ok(sessions[0].session_name.clone()),
         _ => {
             eprintln!("Multiple sessions running. Please specify one with --session:");
@@ -149,4 +149,25 @@ pub fn prepare_expert_files(
     )?);
 
     Ok((instruction_file, agents_file, settings_file))
+}
+
+/// Resolve and validate an existing session, returning its TmuxManager and metadata.
+///
+/// Handles the common pattern across commands: resolve session name, check existence, load metadata.
+pub async fn resolve_existing_session(
+    session_name: Option<String>,
+) -> Result<(TmuxManager, SessionMetadata)> {
+    let session_name = match session_name {
+        Some(name) => name,
+        None => resolve_single_session_default().await?,
+    };
+
+    let tmux = TmuxManager::new(session_name.clone());
+
+    if !tmux.session_exists().await {
+        bail!("Session {session_name} does not exist. Is it still running? Check with 'macot status'.");
+    }
+
+    let metadata = tmux.load_session_metadata().await?;
+    Ok((tmux, metadata))
 }
