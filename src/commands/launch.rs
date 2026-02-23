@@ -44,9 +44,9 @@ pub async fn execute(args: Args) -> Result<()> {
         if args.num_experts.is_none() {
             match metadata.num_experts {
                 Some(n) => config = config.with_num_experts(n),
-                None => tracing::warn!(
-                    "Session metadata missing num_experts; using config default"
-                ),
+                None => {
+                    tracing::warn!("Session metadata missing num_experts; using config default")
+                }
             }
         }
         println!("Number of experts: {}", config.num_experts());
