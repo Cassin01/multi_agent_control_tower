@@ -238,7 +238,7 @@ Launch the control tower UI.
 **UI Features:**
 - Expert selection menu (numbered list)
 - Task input field (multi-line supported)
-- Status display per expert (idle/busy/offline)
+- Status display per expert (idle/busy)
 - Report viewer for completed tasks
 
 ### `macot status [session_name]`
@@ -257,7 +257,7 @@ Experts:
   [0] architect  - idle
   [1] planner    - busy
   [2] general    - idle
-  [3] debugger   - offline
+  [3] debugger   - idle
 ```
 
 ---

@@ -216,7 +216,6 @@ impl StatusDisplay {
             match entry.state {
                 ExpertState::Idle => summary.idle += 1,
                 ExpertState::Busy => summary.busy += 1,
-                ExpertState::Offline => summary.offline += 1,
             }
         }
 
@@ -236,7 +235,6 @@ pub struct StatusSummary {
     pub total: usize,
     pub idle: usize,
     pub busy: usize,
-    pub offline: usize,
 }
 
 #[cfg(test)]
@@ -263,7 +261,7 @@ mod tests {
         display.set_experts(vec![
             create_test_entry(0, "architect", ExpertState::Idle),
             create_test_entry(1, "frontend", ExpertState::Busy),
-            create_test_entry(2, "backend", ExpertState::Offline),
+            create_test_entry(2, "backend", ExpertState::Idle),
         ]);
 
         display.next();
@@ -301,14 +299,12 @@ mod tests {
             create_test_entry(0, "architect", ExpertState::Idle),
             create_test_entry(1, "frontend", ExpertState::Idle),
             create_test_entry(2, "backend", ExpertState::Busy),
-            create_test_entry(3, "tester", ExpertState::Offline),
         ]);
 
         let summary = display.get_status_summary();
-        assert_eq!(summary.total, 4);
+        assert_eq!(summary.total, 3);
         assert_eq!(summary.idle, 2);
         assert_eq!(summary.busy, 1);
-        assert_eq!(summary.offline, 1);
     }
 
     #[test]

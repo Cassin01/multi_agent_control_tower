@@ -54,7 +54,7 @@ impl ExpertRegistry {
     /// Register a new expert in the registry
     ///
     /// Returns the assigned expert ID. Expert names must be unique.
-    /// The expert is initially registered in Offline state.
+    /// The expert is initially registered in Idle state.
     pub fn register_expert(
         &mut self,
         mut expert_info: ExpertInfo,
@@ -417,16 +417,7 @@ mod tests {
         let expert = create_test_expert("test", Role::Developer);
         let expert_id = registry.register_expert(expert).unwrap();
 
-        // Initially offline
-        assert_eq!(
-            registry.get_expert(expert_id).unwrap().state,
-            ExpertState::Offline
-        );
-
-        // Update to idle
-        registry
-            .update_expert_state(expert_id, ExpertState::Idle)
-            .unwrap();
+        // Initially idle
         assert_eq!(
             registry.get_expert(expert_id).unwrap().state,
             ExpertState::Idle
@@ -514,16 +505,10 @@ mod tests {
         let id2 = registry.register_expert(expert2).unwrap();
         let id3 = registry.register_expert(expert3).unwrap();
 
-        // Initially all offline
-        assert!(registry.get_idle_experts().is_empty());
+        // Initially all idle
+        assert_eq!(registry.get_idle_experts().len(), 3);
 
-        // Set some to idle
-        registry
-            .update_expert_state(id1, ExpertState::Idle)
-            .unwrap();
-        registry
-            .update_expert_state(id2, ExpertState::Idle)
-            .unwrap();
+        // Set one to busy
         registry
             .update_expert_state(id3, ExpertState::Busy)
             .unwrap();
@@ -596,13 +581,7 @@ mod tests {
         let expert = create_test_expert("test", Role::Developer);
         let expert_id = registry.register_expert(expert).unwrap();
 
-        // Initially offline (not idle)
-        assert_eq!(registry.is_expert_idle(expert_id), Some(false));
-
-        // Set to idle
-        registry
-            .update_expert_state(expert_id, ExpertState::Idle)
-            .unwrap();
+        // Initially idle
         assert_eq!(registry.is_expert_idle(expert_id), Some(true));
 
         // Set to busy
@@ -927,11 +906,7 @@ mod property_tests {
 
     // Generators for property-based testing
     fn arbitrary_expert_state() -> impl Strategy<Value = ExpertState> {
-        prop_oneof![
-            Just(ExpertState::Idle),
-            Just(ExpertState::Busy),
-            Just(ExpertState::Offline),
-        ]
+        prop_oneof![Just(ExpertState::Idle), Just(ExpertState::Busy),]
     }
 
     fn arbitrary_role() -> impl Strategy<Value = Role> {
@@ -995,7 +970,7 @@ mod property_tests {
                             assert!(registry.is_expert_idle(expert_id).unwrap());
                             assert!(registry.get_idle_experts().contains(&expert_id));
                         },
-                        ExpertState::Busy | ExpertState::Offline => {
+                        ExpertState::Busy => {
                             assert!(!registry.is_expert_idle(expert_id).unwrap());
                             assert!(!registry.get_idle_experts().contains(&expert_id));
                         }
