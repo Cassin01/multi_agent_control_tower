@@ -7,10 +7,9 @@ use super::message::ExpertId;
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ExpertState {
+    #[default]
     Idle,
     Busy,
-    #[default]
-    Offline,
 }
 
 impl ExpertState {
@@ -18,7 +17,6 @@ impl ExpertState {
         match self {
             ExpertState::Idle => "○",
             ExpertState::Busy => "●",
-            ExpertState::Offline => "✗",
         }
     }
 
@@ -26,7 +24,6 @@ impl ExpertState {
         match self {
             ExpertState::Idle => Color::Gray,
             ExpertState::Busy => Color::Green,
-            ExpertState::Offline => Color::Red,
         }
     }
 
@@ -34,7 +31,6 @@ impl ExpertState {
         match self {
             ExpertState::Idle => "Waiting for input",
             ExpertState::Busy => "Working",
-            ExpertState::Offline => "Offline",
         }
     }
 }
@@ -130,11 +126,6 @@ impl ExpertInfo {
     }
 
     #[allow(dead_code)]
-    pub fn is_offline(&self) -> bool {
-        matches!(self.state, ExpertState::Offline)
-    }
-
-    #[allow(dead_code)]
     pub fn matches_name(&self, name: &str) -> bool {
         self.name.eq_ignore_ascii_case(name)
     }
@@ -177,8 +168,7 @@ mod tests {
         assert_eq!(expert.role, Role::Analyst);
         assert_eq!(expert.tmux_session, "session-1");
         assert_eq!(expert.tmux_window, "0");
-        assert_eq!(expert.state, ExpertState::Offline);
-        assert!(expert.is_offline());
+        assert_eq!(expert.state, ExpertState::Idle);
     }
 
     #[test]
@@ -191,22 +181,19 @@ mod tests {
             "0".to_string(),
         );
 
-        // Start offline
-        assert!(expert.is_offline());
-        assert!(!expert.is_idle());
-        assert!(!expert.is_busy());
-
-        // Set to idle
-        expert.set_state(ExpertState::Idle);
+        // Start idle
         assert!(expert.is_idle());
-        assert!(!expert.is_offline());
         assert!(!expert.is_busy());
 
         // Set to busy
         expert.set_state(ExpertState::Busy);
         assert!(expert.is_busy());
         assert!(!expert.is_idle());
-        assert!(!expert.is_offline());
+
+        // Set back to idle
+        expert.set_state(ExpertState::Idle);
+        assert!(expert.is_idle());
+        assert!(!expert.is_busy());
     }
 
     #[test]
@@ -295,7 +282,7 @@ mod tests {
         assert!(yaml.contains("id: 1"));
         assert!(yaml.contains("name: backend-dev"));
         assert!(yaml.contains("role: developer"));
-        assert!(yaml.contains("state: offline"));
+        assert!(yaml.contains("state: idle"));
     }
 
     #[test]
@@ -562,13 +549,13 @@ last_activity: "2024-01-15T10:30:00Z"
     }
 
     #[test]
-    fn expert_state_default_is_offline() {
-        assert_eq!(ExpertState::default(), ExpertState::Offline);
+    fn expert_state_default_is_idle() {
+        assert_eq!(ExpertState::default(), ExpertState::Idle);
     }
 
     #[test]
     fn expert_state_symbols_are_unique() {
-        let states = [ExpertState::Idle, ExpertState::Busy, ExpertState::Offline];
+        let states = [ExpertState::Idle, ExpertState::Busy];
         let symbols: Vec<_> = states.iter().map(|s| s.symbol()).collect();
         let unique: std::collections::HashSet<_> = symbols.iter().collect();
         assert_eq!(
@@ -582,20 +569,17 @@ last_activity: "2024-01-15T10:30:00Z"
     fn expert_state_symbol_values() {
         assert_eq!(ExpertState::Idle.symbol(), "○");
         assert_eq!(ExpertState::Busy.symbol(), "●");
-        assert_eq!(ExpertState::Offline.symbol(), "✗");
     }
 
     #[test]
     fn expert_state_color_values() {
         assert_eq!(ExpertState::Idle.color(), Color::Gray);
         assert_eq!(ExpertState::Busy.color(), Color::Green);
-        assert_eq!(ExpertState::Offline.color(), Color::Red);
     }
 
     #[test]
     fn expert_state_description_values() {
         assert_eq!(ExpertState::Idle.description(), "Waiting for input");
         assert_eq!(ExpertState::Busy.description(), "Working");
-        assert_eq!(ExpertState::Offline.description(), "Offline");
     }
 }

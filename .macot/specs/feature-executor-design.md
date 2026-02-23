@@ -444,7 +444,7 @@ feature_execution:
 |----------|----------|
 | tasks.md not found | Toast error, no execution started |
 | Task file parse error | Toast error with details, no execution started |
-| Expert goes offline during execution | Pause execution, show warning, resume when expert returns |
+| Expert becomes unresponsive during execution | Pause execution, show warning, resume when expert returns |
 | tmux send_keys failure | Retry once, then transition to Failed state |
 | Task file unreadable mid-execution | Transition to Failed state with error message |
 | No uncompleted tasks in file | Immediately transition to Completed |

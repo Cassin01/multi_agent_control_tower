@@ -1,10 +1,7 @@
 use anyhow::Result;
 use std::path::PathBuf;
-use std::time::Duration;
 
 use crate::models::ExpertState;
-
-const STALE_THRESHOLD: Duration = Duration::from_secs(3 * 24 * 60 * 60); // 3 days
 
 pub struct ExpertStateDetector {
     status_dir: PathBuf,
@@ -26,18 +23,7 @@ impl ExpertStateDetector {
         let trimmed = content.trim();
 
         match trimmed {
-            "pending" => {
-                let mtime = match std::fs::metadata(&path).and_then(|m| m.modified()) {
-                    Ok(t) => t,
-                    Err(_) => return ExpertState::Busy,
-                };
-                let age = mtime.elapsed().unwrap_or(Duration::MAX);
-                if age > STALE_THRESHOLD {
-                    ExpertState::Offline
-                } else {
-                    ExpertState::Idle
-                }
-            }
+            "pending" => ExpertState::Idle,
             "processing" => ExpertState::Busy,
             _ => ExpertState::Busy, // unknown content → safe default
         }
@@ -106,30 +92,6 @@ mod tests {
             detector.detect_state(99),
             ExpertState::Busy,
             "detect_state: missing file should return Busy as safe default"
-        );
-    }
-
-    #[test]
-    fn stale_pending_returns_offline() {
-        let (detector, _tmp) = setup();
-        let path = _tmp.path().join("expert0");
-        std::fs::write(&path, "pending").unwrap();
-
-        // Set mtime to 4 days ago
-        let old_time = filetime::FileTime::from_unix_time(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs() as i64
-                - 4 * 24 * 60 * 60,
-            0,
-        );
-        filetime::set_file_mtime(&path, old_time).unwrap();
-
-        assert_eq!(
-            detector.detect_state(0),
-            ExpertState::Offline,
-            "detect_state: stale pending (>3 days) should return Offline"
         );
     }
 

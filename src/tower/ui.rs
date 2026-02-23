@@ -191,10 +191,6 @@ impl UI {
                 format!("● {} ", summary.busy),
                 Style::default().fg(Color::Green),
             ),
-            Span::styled(
-                format!("✗ {} ", summary.offline),
-                Style::default().fg(Color::Red),
-            ),
         ];
 
         let left_width: usize = title.iter().map(Span::width).sum();

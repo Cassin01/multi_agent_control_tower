@@ -379,7 +379,7 @@ impl TowerApp {
                     .iter()
                     .find(|(id, _)| *id == i as u32)
                     .map(|(_, s)| s.clone())
-                    .unwrap_or(ExpertState::Offline);
+                    .unwrap_or(ExpertState::Idle);
                 ExpertEntry {
                     expert_id: i as u32,
                     expert_name: e.name.clone(),
@@ -3704,7 +3704,7 @@ mod property_tests {
         ) {
             let (_config, app) = create_app_with_experts(num_experts);
 
-            // All experts should start in Offline state
+            // All experts should start in Idle state
             // Get all expert IDs from the registry
             let all_experts = app.expert_registry.get_all_experts();
             assert_eq!(
@@ -3717,11 +3717,11 @@ mod property_tests {
             for expert in all_experts {
                 let is_idle = app.expert_registry.is_expert_idle(expert.id);
 
-                // Initially experts are offline (not idle)
+                // Initially experts are idle
                 assert_eq!(
                     is_idle,
-                    Some(false),
-                    "Expert '{}' (id={}) should not be idle initially",
+                    Some(true),
+                    "Expert '{}' (id={}) should be idle initially",
                     expert.name,
                     expert.id
                 );

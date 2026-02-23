@@ -671,9 +671,18 @@ mod tests {
 
     #[tokio::test]
     async fn find_recipient_by_role_returns_none_when_no_idle_experts() {
-        let (router, _temp) = create_test_router().await;
+        let (mut router, _temp) = create_test_router().await;
 
-        // Both experts are offline by default
+        // Set all experts to busy
+        router
+            .expert_registry_mut()
+            .update_expert_state(1, ExpertState::Busy)
+            .unwrap();
+        router
+            .expert_registry_mut()
+            .update_expert_state(2, ExpertState::Busy)
+            .unwrap();
+
         let recipient = MessageRecipient::role("developer".to_string());
         let result = router.find_recipient(&recipient, 1).await.unwrap();
         assert_eq!(result, None);
@@ -683,14 +692,7 @@ mod tests {
     async fn is_expert_idle_returns_correct_status() {
         let (mut router, _temp) = create_test_router().await;
 
-        // Initially offline (not idle)
-        assert!(!router.is_expert_idle(1).await.unwrap());
-
-        // Set to idle
-        router
-            .expert_registry_mut()
-            .update_expert_state(1, ExpertState::Idle)
-            .unwrap();
+        // Initially idle
         assert!(router.is_expert_idle(1).await.unwrap());
 
         // Set to busy
@@ -1132,11 +1134,7 @@ mod property_tests {
     }
 
     fn arbitrary_expert_state() -> impl Strategy<Value = ExpertState> {
-        prop_oneof![
-            Just(ExpertState::Idle),
-            Just(ExpertState::Busy),
-            Just(ExpertState::Offline),
-        ]
+        prop_oneof![Just(ExpertState::Idle), Just(ExpertState::Busy),]
     }
 
     fn arbitrary_expert_info() -> impl Strategy<Value = ExpertInfo> {
@@ -1332,10 +1330,9 @@ mod property_tests {
 
                 // Set random states for experts
                 for (i, &expert_id) in expert_ids.iter().enumerate() {
-                    let state = match i % 3 {
+                    let state = match i % 2 {
                         0 => ExpertState::Idle,
-                        1 => ExpertState::Busy,
-                        _ => ExpertState::Offline,
+                        _ => ExpertState::Busy,
                     };
                     router.expert_registry_mut().update_expert_state(expert_id, state).unwrap();
                 }
@@ -1479,7 +1476,7 @@ mod property_tests {
                                 }
                             }
                         },
-                        ExpertState::Busy | ExpertState::Offline => {
+                        ExpertState::Busy => {
                             // When not idle, delivery should be blocked
                             assert!(!delivery_result.success);
                             if let Some(error) = &delivery_result.error {
@@ -2117,13 +2114,19 @@ mod integration_tests {
             content,
         );
 
+        // Set recipient to busy first
+        router
+            .expert_registry_mut()
+            .update_expert_state(recipient_id, ExpertState::Busy)
+            .unwrap();
+
         router.queue_manager_mut().enqueue(&message).await.unwrap();
 
-        // First attempt: recipient is offline (default state)
+        // First attempt: recipient is busy
         let stats1 = router.process_queue().await.unwrap();
         assert_eq!(
             stats1.messages_delivered, 0,
-            "Should not deliver to offline expert"
+            "Should not deliver to busy expert"
         );
 
         // Message should still be in queue
@@ -2136,7 +2139,7 @@ mod integration_tests {
             .update_expert_state(recipient_id, ExpertState::Idle)
             .unwrap();
 
-        // Second attempt: recipient is idle (delivery will fail due to tmux in test)
+        // Recipient is idle (delivery will fail due to tmux in test)
         // But the state check should pass
         let is_idle = router.expert_registry().is_expert_idle(recipient_id);
         assert_eq!(is_idle, Some(true), "Recipient should be idle");
@@ -2147,7 +2150,7 @@ mod integration_tests {
             .update_expert_state(recipient_id, ExpertState::Busy)
             .unwrap();
 
-        // Third attempt: recipient is busy
+        // Recipient is busy again
         let is_idle_now = router.expert_registry().is_expert_idle(recipient_id);
         assert_eq!(is_idle_now, Some(false), "Recipient should be busy");
     }
@@ -2304,10 +2307,10 @@ mod integration_tests {
 
         let mut router = MessageRouter::new(queue_manager, expert_registry, MockTmuxSender);
 
-        // Set only backend_expert2 to idle
+        // Set backend1 to busy, leave backend2 idle (default)
         router
             .expert_registry_mut()
-            .update_expert_state(backend2_id, ExpertState::Idle)
+            .update_expert_state(backend1_id, ExpertState::Busy)
             .unwrap();
 
         // Send message to "backend" role

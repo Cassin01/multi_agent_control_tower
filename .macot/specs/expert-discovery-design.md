@@ -98,7 +98,7 @@ The subagent prompt instructs the agent to:
 2. Parse it as JSON
 3. Filter entries to those sharing the same `worktree_path` as the calling agent (injected via `{{ worktree_path }}`, where null means main repo)
 4. For each matching expert, read `{{ status_dir }}/expert{id}` to get real-time status
-5. Map file contents to status: `"pending"` -> Idle, `"processing"` -> Busy, missing/stale -> Offline
+5. Map file contents to status: `"pending"` -> Idle, `"processing"` -> Busy, missing/unknown -> Busy
 6. Return a formatted table of results
 
 ### 3.3 Extended Agent Renderer
@@ -123,7 +123,7 @@ The output JSON gains an additional key:
 {
   "messaging": { "description": "...", "prompt": "..." },
   "expert-discovery": {
-    "description": "Query information about other experts in your worktree: their IDs, names, roles, and current status (idle/busy/offline).",
+    "description": "Query information about other experts in your worktree: their IDs, names, roles, and current status (idle/busy).",
     "prompt": "<rendered expert-discovery template>"
   }
 }
@@ -217,9 +217,9 @@ Plain text: `"pending"` or `"processing"`. Written by agent hooks, read by both 
 |---|---|
 | `"pending"` | idle |
 | `"processing"` | busy |
-| File missing or unreadable | offline |
+| File missing or unreadable | busy |
 
-Note: The stale detection (>5 min idle -> offline) is complex and requires timestamp checking. For the subagent, a simplified version is acceptable: if the file says `"pending"`, report `idle`. The control tower handles stale detection separately for its own UI.
+Note: If the status file is missing or unreadable, the expert is assumed to be busy as a safe default. If the file says `"pending"`, report `idle`.
 
 ## 5. Error Handling
 
@@ -227,7 +227,7 @@ Note: The stale detection (>5 min idle -> offline) is complex and requires times
 |---|---|
 | Manifest file does not exist | Subagent reports "No expert manifest found. The control tower may not have generated it yet." |
 | Manifest file is malformed JSON | Subagent reports parse error and suggests re-launching the control tower |
-| Status file unreadable for an expert | Report that expert as "offline" |
+| Status file unreadable for an expert | Report that expert as "busy" |
 | Manifest path or status dir not injected | `render_agents_json` returns the discovery agent without those paths; agent template uses default `.macot/` relative paths as fallback |
 | `generate_expert_manifest` called with empty registry | Returns valid empty JSON array `[]` |
 
