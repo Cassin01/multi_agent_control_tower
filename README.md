@@ -18,6 +18,7 @@ Coordinate multiple role-based coding agents on one codebase with a Rust-native 
 [Quick Start](#-quick-start) •
 [Installation](#-installation) •
 [Configuration](#-configuration) •
+[Builtin Roles](#-builtin-roles) •
 [Commands](#-commands) •
 [FAQ](#-faq) •
 [Contributing](#-contributing)
@@ -29,7 +30,7 @@ Coordinate multiple role-based coding agents on one codebase with a Rust-native 
 ## ✨ Features
 
 - **⚡ Parallel orchestration**: run multiple experts concurrently in isolated tmux panes.
-- **🧠 Role-based execution**: assign experts like `architect`, `planner`, `general`, and `debugger`.
+- **🧠 Role-based execution**: assign experts as `architect`, `planner`, `backend`, `frontend`, `debugger`, or `general`.
 - **🤖 Automated feature execution**: run task batches from spec files automatically.
 - **📨 Async inter-expert messaging**: deliver queued messages to available experts.
 - **🖥️ Control Tower TUI**: dispatch tasks, monitor status, and review reports in one screen.
@@ -123,6 +124,21 @@ macot tower --config ./config/macot.yaml
 ```
 
 See full reference: [`doc/configuration.md`](doc/configuration.md)
+
+## 🎭 Builtin Roles
+
+Roles are assigned to experts in your YAML config. Each role injects a tailored system prompt that shapes the expert's behavior.
+
+| Role | Description |
+|------|-------------|
+| 🏛️ `architect` | System design, code structure, and technical decision-making. Produces design documents (`*-design.md`) for downstream experts. |
+| 📝 `planner` | Task decomposition and implementation planning. Breaks requirements into structured, incremental task lists (`*-tasks.md`). |
+| ⚙️ `backend` | Server-side development, APIs, databases, and data management. |
+| 🎨 `frontend` | User interface development, UX, and client-side implementation. |
+| 🔍 `debugger` | Investigation, root cause analysis, and diagnostic reporting for failures. Does not implement fixes — delegates to other experts. |
+| 🧩 `general` | General-purpose problem-solving. Default fallback when no specific role is assigned. |
+
+Custom roles can be added by placing a `<role-name>.md` file in the instructions directory (default: `~/.config/macot/instructions/`, overridable via `paths.instructions_dir`).
 
 ## 📋 Commands
 
