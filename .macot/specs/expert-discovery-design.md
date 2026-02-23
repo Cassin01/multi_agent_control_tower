@@ -51,10 +51,10 @@ pub struct ExpertManifestEntry {
     pub worktree_path: Option<String>,
 }
 
-/// Generate manifest JSON from config and session roles
+/// Generate manifest JSON from config, session expert roles, and registry
 pub fn generate_expert_manifest(
     config: &Config,
-    session_roles: &SessionRoles,
+    session_roles: &SessionExpertRoles,
     registry: &ExpertRegistry,
 ) -> Result<String>
 
@@ -64,6 +64,8 @@ pub fn write_expert_manifest(
     content: &str,
 ) -> Result<PathBuf>
 ```
+
+**Why three inputs?** `Config` provides expert names and static configuration. `SessionExpertRoles` provides the current role assignment (which may differ from the config default after a `change_expert_role` call). `ExpertRegistry` provides the `worktree_path` field from `ExpertInfo` (`src/models/expert.rs`), which is the only runtime source for worktree assignments — `Config` does not store this.
 
 The manifest is a JSON array:
 
@@ -89,12 +91,12 @@ The manifest is a JSON array:
 - **File**: `instructions/templates/agents/expert-discovery.md.tmpl`
 - **Purpose**: Subagent prompt instructing Claude how to read and present expert information
 
-Template variables: `{{ expert_id }}`, `{{ expert_name }}`, `{{ manifest_path }}`, `{{ status_dir }}`
+Template variables: `{{ expert_id }}`, `{{ expert_name }}`, `{{ worktree_path }}`, `{{ manifest_path }}`, `{{ status_dir }}`
 
 The subagent prompt instructs the agent to:
 1. Read the manifest file at `{{ manifest_path }}`
 2. Parse it as JSON
-3. Filter entries to those sharing the same `worktree_path` as the calling agent
+3. Filter entries to those sharing the same `worktree_path` as the calling agent (injected via `{{ worktree_path }}`, where null means main repo)
 4. For each matching expert, read `{{ status_dir }}/expert{id}` to get real-time status
 5. Map file contents to status: `"pending"` -> Idle, `"processing"` -> Busy, missing/stale -> Offline
 6. Return a formatted table of results
@@ -109,8 +111,9 @@ pub fn render_agents_json(
     core_path: &Path,
     expert_id: u32,
     expert_name: &str,
-    manifest_path: &str,     // NEW
-    status_dir: &str,        // NEW
+    worktree_path: Option<&str>,  // NEW
+    manifest_path: &str,          // NEW
+    status_dir: &str,             // NEW
 ) -> Result<Option<String>>
 ```
 
@@ -134,6 +137,7 @@ The output JSON gains an additional key:
 The manifest is regenerated in:
 - `TowerApp::new()` — initial generation at startup
 - `TowerApp::change_expert_role()` — when a role is updated
+- `TowerApp::reset_expert()` — when an expert is reset to its initial state
 - `TowerApp::launch_expert_in_worktree()` — when worktree assignment changes
 - `TowerApp::return_expert_from_worktree()` — when worktree assignment is cleared
 
@@ -169,10 +173,25 @@ pub fn load_instruction_with_template(
     expert_id: u32,
     expert_name: &str,
     status_file_path: &str,
-    manifest_path: &str,     // NEW
-    status_dir: &str,        // NEW
+    worktree_path: Option<&str>,  // NEW
+    manifest_path: &str,          // NEW
+    status_dir: &str,             // NEW
 ) -> Result<InstructionResult>
 ```
+
+> **Design note**: With 9 parameters, `load_instruction_with_template` approaches a readability threshold. A follow-up refactor could bundle `expert_id`, `expert_name`, `worktree_path`, `manifest_path`, and `status_dir` into an `AgentContext` struct.
+
+All production call sites requiring signature updates:
+
+1. `prepare_expert_files` — `src/commands/common.rs`
+2. `reset_expert` (CLI command) — `src/commands/reset.rs`
+3. `change_expert_role` — `src/tower/app.rs`
+4. `reset_expert` (TowerApp method) — `src/tower/app.rs`
+5. `return_expert_from_worktree` — `src/tower/app.rs`
+6. `launch_expert_in_worktree` — `src/tower/app.rs`
+7. `start_feature_execution` handler — `src/tower/app.rs`
+
+Test call sites: 6 in `src/instructions/template.rs`, 3 in `src/instructions/agents.rs`.
 
 ## 4. Data Models
 
@@ -250,6 +269,7 @@ Note: The stale detection (>5 min idle -> offline) is complex and requires times
 | `render_agents_json_discovery_absent_without_template` | Property 4 (absent when no template) |
 | `render_agents_json_discovery_renders_manifest_path` | Property 7 |
 | `render_agents_json_discovery_renders_status_dir` | Property 7 |
+| `render_agents_json_discovery_renders_worktree_path` | Property 1 |
 
 ### Unit Tests (template.rs)
 
@@ -257,6 +277,7 @@ Note: The stale detection (>5 min idle -> offline) is complex and requires times
 |---|---|
 | `load_instruction_passes_manifest_path_to_agents` | Property 7 |
 | `load_instruction_passes_status_dir_to_agents` | Property 7 |
+| `load_instruction_passes_worktree_path_to_agents` | Property 1 |
 
 ### Content Tests
 
@@ -266,6 +287,7 @@ Note: The stale detection (>5 min idle -> offline) is complex and requires times
 | `discovery_template_contains_status_dir_variable` | Property 7 |
 | `discovery_template_contains_worktree_filter_instruction` | Property 1 |
 | `discovery_template_is_read_only` | Property 6 |
+| `discovery_template_contains_worktree_path_variable` | Property 1 |
 
 ### Integration Tests
 
