@@ -39,10 +39,17 @@ pub async fn execute(args: Args) -> Result<()> {
     let tmux = TmuxManager::from_config(&config);
 
     if tmux.session_exists().await {
+        println!("Attaching to existing session: {}", config.session_name());
         let metadata = tmux.load_session_metadata().await?;
-        if let Some(n) = metadata.num_experts {
-            config = config.with_num_experts(n);
+        if args.num_experts.is_none() {
+            match metadata.num_experts {
+                Some(n) => config = config.with_num_experts(n),
+                None => tracing::warn!(
+                    "Session metadata missing num_experts; using config default"
+                ),
+            }
         }
+        println!("Number of experts: {}", config.num_experts());
         let worktree_manager = WorktreeManager::resolve(project_path).await?;
         let mut app = TowerApp::new(config, worktree_manager);
         app.run().await?;
