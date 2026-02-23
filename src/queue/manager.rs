@@ -124,11 +124,11 @@ impl QueueManager {
     #[allow(dead_code)]
     fn report_file(&self, expert_id: u32) -> PathBuf {
         self.reports_path()
-            .join(format!("expert{}_report.yaml", expert_id))
+            .join(format!("expert{expert_id}_report.yaml"))
     }
 
     fn message_file(&self, message_id: &str) -> PathBuf {
-        self.queue_path().join(format!("{}.yaml", message_id))
+        self.queue_path().join(format!("{message_id}.yaml"))
     }
 
     pub async fn init(&self) -> Result<()> {

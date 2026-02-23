@@ -2,56 +2,46 @@ use anyhow::{Context, Result};
 use serde_json::json;
 use std::path::{Path, PathBuf};
 
+/// Write content to an expert-specific file, creating parent directories as needed.
+fn write_expert_file(path: &Path, content: &str) -> Result<PathBuf> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
+    }
+    std::fs::write(path, content)
+        .with_context(|| format!("Failed to write file: {}", path.display()))?;
+    Ok(path.to_path_buf())
+}
+
 #[allow(dead_code)]
 pub fn instruction_file_path(queue_path: &Path, expert_id: u32) -> PathBuf {
     queue_path
         .join("system_prompt")
-        .join(format!("expert{}.md", expert_id))
+        .join(format!("expert{expert_id}.md"))
 }
 
 pub fn write_instruction_file(queue_path: &Path, expert_id: u32, content: &str) -> Result<PathBuf> {
-    let path = instruction_file_path(queue_path, expert_id);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("Failed to create instruction directory: {:?}", parent))?;
-    }
-    std::fs::write(&path, content)
-        .with_context(|| format!("Failed to write instruction file: {:?}", path))?;
-    Ok(path)
+    write_expert_file(&instruction_file_path(queue_path, expert_id), content)
 }
 
 pub fn agents_file_path(queue_path: &Path, expert_id: u32) -> PathBuf {
     queue_path
         .join("system_prompt")
-        .join(format!("expert{}_agents.json", expert_id))
+        .join(format!("expert{expert_id}_agents.json"))
 }
 
 pub fn write_agents_file(queue_path: &Path, expert_id: u32, json: &str) -> Result<PathBuf> {
-    let path = agents_file_path(queue_path, expert_id);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("Failed to create agents directory: {:?}", parent))?;
-    }
-    std::fs::write(&path, json)
-        .with_context(|| format!("Failed to write agents file: {:?}", path))?;
-    Ok(path)
+    write_expert_file(&agents_file_path(queue_path, expert_id), json)
 }
 
 pub fn settings_file_path(queue_path: &Path, expert_id: u32) -> PathBuf {
     queue_path
         .join("system_prompt")
-        .join(format!("expert{}_settings.json", expert_id))
+        .join(format!("expert{expert_id}_settings.json"))
 }
 
 pub fn write_settings_file(queue_path: &Path, expert_id: u32, json: &str) -> Result<PathBuf> {
-    let path = settings_file_path(queue_path, expert_id);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("Failed to create settings directory: {:?}", parent))?;
-    }
-    std::fs::write(&path, json)
-        .with_context(|| format!("Failed to write settings file: {:?}", path))?;
-    Ok(path)
+    write_expert_file(&settings_file_path(queue_path, expert_id), json)
 }
 
 pub fn generate_hooks_settings(status_file_path: &str) -> String {
@@ -101,7 +91,7 @@ pub fn cleanup_instruction_file(queue_path: &Path, expert_id: u32) -> Result<()>
     let path = instruction_file_path(queue_path, expert_id);
     if path.exists() {
         std::fs::remove_file(&path)
-            .with_context(|| format!("Failed to remove instruction file: {:?}", path))?;
+            .with_context(|| format!("Failed to remove instruction file: {}", path.display()))?;
     }
     Ok(())
 }

@@ -83,12 +83,9 @@ pub async fn execute(args: Args) -> Result<()> {
 
     for (expert_id, name, ready) in results {
         if ready {
-            println!("  [{}] {} - Ready", expert_id, name);
+            println!("  [{expert_id}] {name} - Ready");
         } else {
-            println!(
-                "  [{}] {} - Timeout (may still be starting)",
-                expert_id, name
-            );
+            println!("  [{expert_id}] {name} - Timeout (may still be starting)");
         }
     }
 

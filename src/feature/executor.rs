@@ -1,3 +1,4 @@
+use std::fmt::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -77,7 +78,7 @@ impl FeatureExecutor {
             phase: ExecutionPhase::Idle,
             current_batch: Vec::new(),
             batch_completion_wait_start: None,
-            tasks_file: specs_dir.join(format!("{}-tasks.md", feature_name)),
+            tasks_file: specs_dir.join(format!("{feature_name}-tasks.md")),
             design_file: None,
             total_tasks: 0,
             completed_tasks: 0,
@@ -131,37 +132,39 @@ impl FeatureExecutor {
 
         if self.design_file.is_some() {
             let design_rel = format!(".macot/specs/{}-design.md", self.feature_name);
-            prompt.push_str(&format!(
+            let _ = write!(
+                prompt,
                 "Below are the design specifications and task list for {}.\n\n",
                 self.feature_name
-            ));
-            prompt.push_str(&format!("@{}\n", design_rel));
+            );
+            let _ = writeln!(prompt, "@{design_rel}");
         } else {
-            prompt.push_str(&format!(
+            let _ = write!(
+                prompt,
                 "Below is the task list for {}.\n\n",
                 self.feature_name
-            ));
+            );
         }
 
         let tasks_rel = format!(".macot/specs/{}-tasks.md", self.feature_name);
-        prompt.push_str(&format!("@{}\n\n", tasks_rel));
+        let _ = write!(prompt, "@{tasks_rel}\n\n");
         prompt.push_str("Implement the tasks in order.\n");
-        prompt.push_str(&format!(
-            "Execute Tasks {{{}}}. After completing each task, Mark them as finished in the task file.\n",
-            numbers_str
-        ));
+        let _ = writeln!(
+            prompt,
+            "Execute Tasks {{{numbers_str}}}. After completing each task, Mark them as finished in the task file."
+        );
 
         let status_path = format!(
             "{}/.macot/status/expert{}",
             self.working_dir, self.expert_id
         );
-        prompt.push_str(&format!(
+        let _ = write!(
+            prompt,
             "After completing all tasks, set your status to pending by running:\n\
              ```bash\n\
-             bash -c 'printf \"%s\" \"pending\" >| \"{}\"'\n\
-             ```\n",
-            status_path
-        ));
+             bash -c 'printf \"%s\" \"pending\" >| \"{status_path}\"'\n\
+             ```\n"
+        );
 
         prompt
     }
@@ -279,13 +282,14 @@ impl FeatureExecutor {
 
 fn format_blocked_message(diag: &BlockedDiagnostic) -> String {
     let count = diag.blocked_tasks.len();
-    let mut msg = format!("Execution blocked: {} tasks cannot proceed.\n", count);
+    let mut msg = format!("Execution blocked: {count} tasks cannot proceed.\n");
     for bt in &diag.blocked_tasks {
         let deps = bt.missing_deps.join(", ");
-        msg.push_str(&format!(
-            "  Task {}: waiting on [{}] (incomplete)\n",
-            bt.number, deps
-        ));
+        let _ = writeln!(
+            msg,
+            "  Task {}: waiting on [{deps}] (incomplete)",
+            bt.number
+        );
     }
     if diag.has_cycle {
         msg.push_str("Possible circular dependency detected.\n");

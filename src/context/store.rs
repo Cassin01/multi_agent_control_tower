@@ -25,7 +25,7 @@ impl ContextStore {
     fn expert_path(&self, session_hash: &str, expert_id: u32) -> PathBuf {
         self.session_path(session_hash)
             .join("experts")
-            .join(format!("expert{}", expert_id))
+            .join(format!("expert{expert_id}"))
     }
 
     fn shared_path(&self, session_hash: &str) -> PathBuf {
@@ -46,7 +46,7 @@ impl ContextStore {
     }
 
     #[allow(dead_code)]
-    pub async fn session_exists(&self, session_hash: &str) -> bool {
+    pub fn session_exists(&self, session_hash: &str) -> bool {
         self.session_path(session_hash).exists()
     }
 
@@ -199,11 +199,11 @@ mod tests {
     async fn context_store_session_exists_returns_correct_value() {
         let (store, _temp) = create_test_store().await;
 
-        assert!(!store.session_exists("abc123").await);
+        assert!(!store.session_exists("abc123"));
 
         store.init_session("abc123", 2).await.unwrap();
 
-        assert!(store.session_exists("abc123").await);
+        assert!(store.session_exists("abc123"));
     }
 
     #[tokio::test]
@@ -287,11 +287,11 @@ mod tests {
         let ctx = ExpertContext::new(0, "architect".to_string(), "abc123".to_string());
         store.save_expert_context(&ctx).await.unwrap();
 
-        assert!(store.session_exists("abc123").await);
+        assert!(store.session_exists("abc123"));
 
         store.cleanup_session("abc123").await.unwrap();
 
-        assert!(!store.session_exists("abc123").await);
+        assert!(!store.session_exists("abc123"));
     }
 
     #[tokio::test]

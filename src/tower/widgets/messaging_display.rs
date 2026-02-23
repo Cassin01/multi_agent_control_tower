@@ -149,39 +149,13 @@ impl MessagingDisplay {
     /// Navigate to next message
     #[allow(dead_code)]
     pub fn next(&mut self) {
-        if self.filtered_indices.is_empty() {
-            return;
-        }
-        let i = match self.state.selected() {
-            Some(i) => {
-                if i >= self.filtered_indices.len() - 1 {
-                    0
-                } else {
-                    i + 1
-                }
-            }
-            None => 0,
-        };
-        self.state.select(Some(i));
+        super::select_next(&mut self.state, self.filtered_indices.len());
     }
 
     /// Navigate to previous message
     #[allow(dead_code)]
     pub fn prev(&mut self) {
-        if self.filtered_indices.is_empty() {
-            return;
-        }
-        let i = match self.state.selected() {
-            Some(i) => {
-                if i == 0 {
-                    self.filtered_indices.len() - 1
-                } else {
-                    i - 1
-                }
-            }
-            None => 0,
-        };
-        self.state.select(Some(i));
+        super::select_prev(&mut self.state, self.filtered_indices.len());
     }
 
     /// Get the currently selected message
@@ -218,7 +192,7 @@ impl MessagingDisplay {
     #[allow(dead_code)]
     fn recipient_display(recipient: &crate::models::MessageRecipient) -> String {
         match recipient {
-            crate::models::MessageRecipient::ExpertId { expert_id } => format!("→{}", expert_id),
+            crate::models::MessageRecipient::ExpertId { expert_id } => format!("→{expert_id}"),
             crate::models::MessageRecipient::ExpertName { expert_name } => {
                 format!("→{}", truncate_str(expert_name, 8))
             }
@@ -280,7 +254,7 @@ impl MessagingDisplay {
                     Span::styled(subject, Style::default()),
                     Span::raw(" "),
                     Span::styled(
-                        format!("{:>4}", time_ago),
+                        format!("{time_ago:>4}"),
                         Style::default().fg(Color::DarkGray),
                     ),
                     Span::raw(" "),

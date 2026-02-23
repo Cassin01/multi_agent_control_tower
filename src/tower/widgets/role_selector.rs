@@ -65,37 +65,11 @@ impl RoleSelector {
     }
 
     pub fn next(&mut self) {
-        if self.available_roles.is_empty() {
-            return;
-        }
-        let i = match self.state.selected() {
-            Some(i) => {
-                if i >= self.available_roles.len() - 1 {
-                    0
-                } else {
-                    i + 1
-                }
-            }
-            None => 0,
-        };
-        self.state.select(Some(i));
+        super::select_next(&mut self.state, self.available_roles.len());
     }
 
     pub fn prev(&mut self) {
-        if self.available_roles.is_empty() {
-            return;
-        }
-        let i = match self.state.selected() {
-            Some(i) => {
-                if i == 0 {
-                    self.available_roles.len() - 1
-                } else {
-                    i - 1
-                }
-            }
-            None => 0,
-        };
-        self.state.select(Some(i));
+        super::select_prev(&mut self.state, self.available_roles.len());
     }
 
     pub fn render(&mut self, frame: &mut Frame, area: Rect) {
@@ -154,7 +128,7 @@ impl RoleSelector {
                         format!("[{}] ", idx + 1),
                         Style::default().fg(Color::DarkGray),
                     ),
-                    Span::styled(format!("{} ", marker), style),
+                    Span::styled(format!("{marker} "), style),
                     Span::styled(format!("{:<12}", role.display_name), style),
                     Span::styled(
                         format!(" - {}", truncate_str(&role.description, 25)),

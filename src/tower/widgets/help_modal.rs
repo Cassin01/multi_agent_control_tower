@@ -130,7 +130,7 @@ impl HelpModal {
 
     fn subsection_title(title: &'static str) -> Line<'static> {
         Line::from(Span::styled(
-            format!("━━━ {} ━━━", title),
+            format!("━━━ {title} ━━━"),
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
@@ -141,7 +141,7 @@ impl HelpModal {
         Line::from(vec![
             Span::raw("  "),
             Span::styled(
-                format!("── {} ──", title),
+                format!("── {title} ──"),
                 Style::default().fg(Color::DarkGray),
             ),
         ])
@@ -150,7 +150,7 @@ impl HelpModal {
     fn key_line(key: &'static str, description: &'static str) -> Line<'static> {
         Line::from(vec![
             Span::raw("  "),
-            Span::styled(format!("{:20}", key), Style::default().fg(Color::Yellow)),
+            Span::styled(format!("{key:20}"), Style::default().fg(Color::Yellow)),
             Span::raw(description),
         ])
     }

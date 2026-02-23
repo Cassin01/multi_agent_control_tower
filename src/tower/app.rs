@@ -3,6 +3,7 @@ use crossterm::event::{
     self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
 };
 use ratatui::layout::Rect;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crate::config::Config;
@@ -54,7 +55,7 @@ pub struct LayoutAreas {
 fn keycode_to_tmux_key(code: KeyCode, modifiers: KeyModifiers) -> Option<String> {
     if modifiers.contains(KeyModifiers::CONTROL) {
         if let KeyCode::Char(c) = code {
-            return Some(format!("C-{}", c));
+            return Some(format!("C-{c}"));
         }
     }
 
@@ -158,7 +159,7 @@ impl TowerApp {
             match AvailableRoles::from_instructions_path(&config.role_instructions_path) {
                 Ok(roles) => roles,
                 Err(e) => {
-                    eprintln!("Warning: Failed to load available roles: {}", e);
+                    eprintln!("Warning: Failed to load available roles: {e}");
                     AvailableRoles::default()
                 }
             };
@@ -754,7 +755,7 @@ impl TowerApp {
 
                     if key.modifiers.contains(KeyModifiers::CONTROL) {
                         match key.code {
-                            KeyCode::Char('c') | KeyCode::Char('q') => {
+                            KeyCode::Char('c' | 'q') => {
                                 self.quit();
                                 return Ok(());
                             }
@@ -828,7 +829,7 @@ impl TowerApp {
                                     expert_id,
                                     e
                                 );
-                                self.set_message(format!("Error sending keys to expert: {}", e));
+                                self.set_message(format!("Error sending keys to expert: {e}"));
                             }
                         }
                         return Ok(());
@@ -1015,7 +1016,7 @@ impl TowerApp {
             if let Some(expert_id) = self.expert_panel_display.expert_id() {
                 if let Err(e) = self.claude.send_keys(expert_id, &tmux_key).await {
                     tracing::warn!("Failed to send keys to expert {}: {}", expert_id, e);
-                    self.set_message(format!("Error sending keys to expert: {}", e));
+                    self.set_message(format!("Error sending keys to expert: {e}"));
                 }
             }
         }
@@ -1041,13 +1042,13 @@ impl TowerApp {
             .config
             .get_expert(expert_id)
             .map(|e| e.name.clone())
-            .unwrap_or_else(|| format!("expert{}", expert_id));
+            .unwrap_or_else(|| format!("expert{expert_id}"));
 
         let description = self.task_input.content().to_string();
 
         let decision = Decision::new(
             expert_id,
-            format!("Task Assignment to {}", expert_name),
+            format!("Task Assignment to {expert_name}"),
             format!(
                 "Assigned: {}",
                 description.chars().take(100).collect::<String>()
@@ -1073,7 +1074,7 @@ impl TowerApp {
             .await?;
 
         self.task_input.clear();
-        self.set_message(format!("Task assigned to {}", expert_name));
+        self.set_message(format!("Task assigned to {expert_name}"));
 
         Ok(())
     }
@@ -1085,10 +1086,7 @@ impl TowerApp {
             Ok(Some(r)) => r,
             Ok(None) => SessionExpertRoles::new(session_hash.clone()),
             Err(e) => {
-                eprintln!(
-                    "Warning: Failed to load session roles, recreating with defaults: {}",
-                    e
-                );
+                eprintln!("Warning: Failed to load session roles, recreating with defaults: {e}");
                 SessionExpertRoles::new(session_hash.clone())
             }
         };
@@ -1192,8 +1190,7 @@ impl TowerApp {
         if let Some(entry) = self.status_display.selected() {
             if entry.state == ExpertState::Busy {
                 self.set_message(format!(
-                    "Warning: Expert {} is currently active. Role change may interrupt work.",
-                    expert_id
+                    "Warning: Expert {expert_id} is currently active. Role change may interrupt work."
                 ));
             }
         }
@@ -1277,7 +1274,7 @@ impl TowerApp {
                 instruction_result.requested_role
             ));
         } else {
-            self.set_message(format!("Expert {} role changed to {}", expert_id, new_role));
+            self.set_message(format!("Expert {expert_id} role changed to {new_role}"));
         }
 
         Ok(())
@@ -1303,7 +1300,7 @@ impl TowerApp {
     fn open_expert_report(&mut self) {
         if let Some(expert_id) = self.status_display.selected_expert_id() {
             if !self.report_display.open_detail_for_expert(expert_id) {
-                self.set_message(format!("No report found for expert {}", expert_id));
+                self.set_message(format!("No report found for expert {expert_id}"));
             }
         }
     }
@@ -1311,7 +1308,7 @@ impl TowerApp {
     async fn confirm_role_selection(&mut self) -> Result<()> {
         if let (Some(expert_id), Some(new_role)) = (
             self.role_selector.expert_id(),
-            self.role_selector.selected_role().map(|s| s.to_string()),
+            self.role_selector.selected_role().map(ToString::to_string),
         ) {
             self.role_selector.hide();
             self.change_expert_role(expert_id, &new_role).await?;
@@ -1333,12 +1330,11 @@ impl TowerApp {
         let instruction_role = self
             .session_roles
             .get_role(expert_id)
-            .map(|s| s.to_string())
+            .map(ToString::to_string)
             .unwrap_or_else(|| self.config.get_expert_role(expert_id));
 
         self.set_message(format!(
-            "Resetting {} (role: {})...",
-            expert_name, instruction_role
+            "Resetting {expert_name} (role: {instruction_role})..."
         ));
 
         let working_dir = self.resolve_expert_working_dir(expert_id).await;
@@ -1406,7 +1402,7 @@ impl TowerApp {
                 expert_name, instruction_result.requested_role
             ));
         } else {
-            self.set_message(format!("{} reset complete", expert_name));
+            self.set_message(format!("{expert_name} reset complete"));
         }
         Ok(())
     }
@@ -1442,10 +1438,10 @@ impl TowerApp {
         let instruction_role = self
             .session_roles
             .get_role(expert_id)
-            .map(|s| s.to_string())
+            .map(ToString::to_string)
             .unwrap_or_else(|| self.config.get_expert_role(expert_id));
 
-        self.set_message(format!("Returning {} to project root...", expert_name));
+        self.set_message(format!("Returning {expert_name} to project root..."));
 
         self.claude.send_exit(expert_id).await?;
         tokio::time::sleep(Duration::from_secs(3)).await;
@@ -1505,7 +1501,7 @@ impl TowerApp {
             )
             .await?;
 
-        self.set_message(format!("{} returned to project root", expert_name));
+        self.set_message(format!("{expert_name} returned to project root"));
         Ok(())
     }
 
@@ -1537,9 +1533,9 @@ impl TowerApp {
         let worktree_already_exists = self.worktree_manager.worktree_exists(&branch_name);
 
         if worktree_already_exists {
-            self.set_message(format!("Reusing worktree '{}'...", branch_name));
+            self.set_message(format!("Reusing worktree '{branch_name}'..."));
         } else {
-            self.set_message(format!("Creating worktree '{}'...", branch_name));
+            self.set_message(format!("Creating worktree '{branch_name}'..."));
         }
 
         let claude = self.claude.clone();
@@ -1550,7 +1546,7 @@ impl TowerApp {
         let instruction_role = self
             .session_roles
             .get_role(expert_id)
-            .map(|s| s.to_string())
+            .map(ToString::to_string)
             .unwrap_or_else(|| config.get_expert_role(expert_id));
         let core_path = config.core_instructions_path.clone();
         let role_path = config.role_instructions_path.clone();
@@ -1576,8 +1572,8 @@ impl TowerApp {
                 .to_str()
                 .ok_or_else(|| {
                     anyhow::anyhow!(
-                        "Worktree path contains non-UTF8 characters: {:?}",
-                        worktree_path
+                        "Worktree path contains non-UTF8 characters: {}",
+                        worktree_path.display()
                     )
                 })?
                 .to_string();
@@ -1693,7 +1689,7 @@ impl TowerApp {
         let instruction_role = self
             .session_roles
             .get_role(expert_id)
-            .map(|s| s.to_string())
+            .map(ToString::to_string)
             .unwrap_or_else(|| self.config.get_expert_role(expert_id));
 
         let instruction_result = load_instruction_with_template(
@@ -1746,10 +1742,10 @@ impl TowerApp {
                 });
                 self.feature_executor = Some(executor);
                 self.task_input.clear();
-                self.set_message(format!("Feature execution started: {}", feature_name));
+                self.set_message(format!("Feature execution started: {feature_name}"));
             }
             Err(e) => {
-                self.set_message(format!("Feature execution error: {}", e));
+                self.set_message(format!("Feature execution error: {e}"));
             }
         }
 
@@ -1830,9 +1826,9 @@ impl TowerApp {
                         .launch_claude(
                             expert_id,
                             executor.working_dir(),
-                            executor.instruction_file().map(|p| p.as_path()),
-                            executor.agents_file().map(|p| p.as_path()),
-                            executor.settings_file().map(|p| p.as_path()),
+                            executor.instruction_file().map(PathBuf::as_path),
+                            executor.agents_file().map(PathBuf::as_path),
+                            executor.settings_file().map(PathBuf::as_path),
                         )
                         .await?;
                     executor.set_phase(ExecutionPhase::RelaunchingExpert {
@@ -1879,8 +1875,7 @@ impl TowerApp {
                         Err(e) => {
                             if started_at.elapsed() >= timeout {
                                 executor.set_phase(ExecutionPhase::Failed(format!(
-                                    "Failed to detect Claude ready: {}",
-                                    e
+                                    "Failed to detect Claude ready: {e}"
                                 )));
                             }
                         }
@@ -1926,8 +1921,7 @@ impl TowerApp {
                     },
                     Err(e) => {
                         executor.set_phase(ExecutionPhase::Failed(format!(
-                            "Failed to parse task file: {}",
-                            e
+                            "Failed to parse task file: {e}"
                         )));
                     }
                 }
@@ -1981,8 +1975,7 @@ impl TowerApp {
                         }
                         Err(e) => {
                             executor.set_phase(ExecutionPhase::Failed(format!(
-                                "Failed to re-read task file: {}",
-                                e
+                                "Failed to re-read task file: {e}"
                             )));
                         }
                     }
@@ -2005,7 +1998,7 @@ impl TowerApp {
                 // Don't put executor back — execution is done
             }
             ExecutionPhase::Failed(msg) => {
-                self.set_message(format!("Feature execution failed: {}", msg));
+                self.set_message(format!("Feature execution failed: {msg}"));
                 // Don't put executor back — execution failed
             }
             _ => {
@@ -2067,10 +2060,10 @@ impl TowerApp {
                             self.set_message(msg);
                         }
                         Ok(Err(e)) => {
-                            self.set_message(format!("Worktree launch failed: {}", e));
+                            self.set_message(format!("Worktree launch failed: {e}"));
                         }
                         Err(e) => {
-                            self.set_message(format!("Worktree launch panicked: {}", e));
+                            self.set_message(format!("Worktree launch panicked: {e}"));
                         }
                     }
                     self.worktree_launch_state = WorktreeLaunchState::Idle;

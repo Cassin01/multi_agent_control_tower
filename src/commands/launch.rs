@@ -62,13 +62,13 @@ pub async fn execute(args: Args) -> Result<()> {
                 match common::prepare_expert_files(&config, expert_id) {
                     Ok(files) => files,
                     Err(e) => {
-                        eprintln!("Failed to prepare files for expert {}: {}", expert_id, e);
+                        eprintln!("Failed to prepare files for expert {expert_id}: {e}");
                         continue;
                     }
                 };
 
             if let Err(e) = tmux.set_pane_title(expert_id, &expert_name).await {
-                eprintln!("Failed to set pane title for expert {}: {}", expert_id, e);
+                eprintln!("Failed to set pane title for expert {expert_id}: {e}");
             }
 
             if let Err(e) = claude
@@ -81,7 +81,7 @@ pub async fn execute(args: Args) -> Result<()> {
                 )
                 .await
             {
-                eprintln!("Failed to launch Claude for expert {}: {}", expert_id, e);
+                eprintln!("Failed to launch Claude for expert {expert_id}: {e}");
                 continue;
             }
 

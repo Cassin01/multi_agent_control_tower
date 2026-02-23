@@ -92,7 +92,7 @@ impl StatusDisplay {
                 let display = if rel_str.is_empty() {
                     "./".to_string()
                 } else {
-                    format!("./{}", rel_str)
+                    format!("./{rel_str}")
                 };
                 truncate_str_head(&display, WORKING_DIR_MAX_CHARS)
             }
@@ -123,37 +123,11 @@ impl StatusDisplay {
     }
 
     pub fn next(&mut self) {
-        if self.experts.is_empty() {
-            return;
-        }
-        let i = match self.state.selected() {
-            Some(i) => {
-                if i >= self.experts.len() - 1 {
-                    0
-                } else {
-                    i + 1
-                }
-            }
-            None => 0,
-        };
-        self.state.select(Some(i));
+        super::select_next(&mut self.state, self.experts.len());
     }
 
     pub fn prev(&mut self) {
-        if self.experts.is_empty() {
-            return;
-        }
-        let i = match self.state.selected() {
-            Some(i) => {
-                if i == 0 {
-                    self.experts.len() - 1
-                } else {
-                    i - 1
-                }
-            }
-            None => 0,
-        };
-        self.state.select(Some(i));
+        super::select_prev(&mut self.state, self.experts.len());
     }
 
     pub fn selected(&self) -> Option<&ExpertEntry> {
@@ -214,7 +188,7 @@ impl StatusDisplay {
         let border_style = Style::default().fg(ratatui::style::Color::DarkGray);
 
         let title = match &self.execution_badge {
-            Some(badge) => format!("Experts [{}]", badge),
+            Some(badge) => format!("Experts [{badge}]"),
             None => "Experts".to_string(),
         };
 

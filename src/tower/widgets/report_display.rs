@@ -99,38 +99,12 @@ impl ReportDisplay {
 
     #[allow(dead_code)]
     pub fn next(&mut self) {
-        if self.reports.is_empty() {
-            return;
-        }
-        let i = match self.state.selected() {
-            Some(i) => {
-                if i >= self.reports.len() - 1 {
-                    0
-                } else {
-                    i + 1
-                }
-            }
-            None => 0,
-        };
-        self.state.select(Some(i));
+        super::select_next(&mut self.state, self.reports.len());
     }
 
     #[allow(dead_code)]
     pub fn prev(&mut self) {
-        if self.reports.is_empty() {
-            return;
-        }
-        let i = match self.state.selected() {
-            Some(i) => {
-                if i == 0 {
-                    self.reports.len() - 1
-                } else {
-                    i - 1
-                }
-            }
-            None => 0,
-        };
-        self.state.select(Some(i));
+        super::select_prev(&mut self.state, self.reports.len());
     }
 
     #[allow(dead_code)]

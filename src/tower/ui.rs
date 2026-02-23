@@ -197,8 +197,8 @@ impl UI {
             ),
         ];
 
-        let left_width: usize = title.iter().map(|s| s.width()).sum();
-        let right_width: usize = right_spans.iter().map(|s| s.width()).sum();
+        let left_width: usize = title.iter().map(Span::width).sum();
+        let right_width: usize = right_spans.iter().map(Span::width).sum();
         let available = (area.width as usize).saturating_sub(2);
         let padding = available.saturating_sub(left_width + right_width);
 
@@ -229,7 +229,7 @@ impl UI {
         let message = if message.is_empty() {
             String::new()
         } else {
-            format!("{} | ", message)
+            format!("{message} | ")
         };
         let message_style = if message.contains("Error") || message.contains("empty") {
             Style::default().fg(Color::Red)

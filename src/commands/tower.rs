@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use clap::Args as ClapArgs;
 use std::path::PathBuf;
 
@@ -29,30 +29,17 @@ pub async fn execute(args: Args) -> Result<()> {
     let tmux = TmuxManager::new(session_name.clone());
 
     if !tmux.session_exists().await {
-        bail!(
-            "Session {} does not exist. Run 'macot start' first.",
-            session_name
-        );
+        bail!("Session {session_name} does not exist. Run 'macot start' first.");
     }
 
-    let project_path = tmux
-        .get_env("MACOT_PROJECT_PATH")
-        .await?
-        .context("Failed to get project path from session")?;
-
-    let num_experts = tmux
-        .get_env("MACOT_NUM_EXPERTS")
-        .await?
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(4);
-
-    let project_path_buf = PathBuf::from(&project_path);
+    let metadata = tmux.load_session_metadata().await?;
+    let project_path_buf = PathBuf::from(&metadata.project_path);
 
     let worktree_manager = WorktreeManager::resolve(project_path_buf.clone()).await?;
 
     let config = Config::load(args.config)?
         .with_project_path(project_path_buf)
-        .with_num_experts(num_experts);
+        .with_num_experts(metadata.num_experts);
 
     let mut app = TowerApp::new(config, worktree_manager);
     app.run().await?;

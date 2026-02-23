@@ -204,7 +204,7 @@ impl ExpertPanelDisplay {
 
     pub fn render(&mut self, frame: &mut Frame, area: Rect) {
         let title = match (&self.expert_name, self.expert_id) {
-            (Some(name), Some(id)) => format!("{} (Expert{})", name, id),
+            (Some(name), Some(id)) => format!("{name} (Expert{id})"),
             _ => " Expert Panel (no expert selected) ".to_string(),
         };
 
@@ -263,7 +263,7 @@ impl ExpertPanelDisplay {
 
         let block = Block::default()
             .title(Span::styled(
-                format!("{}{}{} ", title, history_indicator, scroll_indicator),
+                format!("{title}{history_indicator}{scroll_indicator} "),
                 Style::default()
                     .fg(border_color)
                     .add_modifier(Modifier::BOLD),

@@ -188,8 +188,7 @@ impl ExpertRegistry {
             .filter(|&expert_id| {
                 self.experts
                     .get(&expert_id)
-                    .map(|expert| expert.is_idle())
-                    .unwrap_or(false)
+                    .is_some_and(|expert| expert.is_idle())
             })
             .collect()
     }
@@ -203,8 +202,7 @@ impl ExpertRegistry {
             .filter(|&expert_id| {
                 self.experts
                     .get(&expert_id)
-                    .map(|expert| expert.is_idle())
-                    .unwrap_or(false)
+                    .is_some_and(|expert| expert.is_idle())
             })
             .collect()
     }
@@ -291,10 +289,9 @@ impl ExpertRegistry {
         self.find_by_role_str(role_str)
             .into_iter()
             .filter(|&expert_id| {
-                self.experts
-                    .get(&expert_id)
-                    .map(|expert| expert.is_idle() && expert.worktree_path == *worktree_path)
-                    .unwrap_or(false)
+                self.experts.get(&expert_id).is_some_and(|expert| {
+                    expert.is_idle() && expert.worktree_path == *worktree_path
+                })
             })
             .collect()
     }

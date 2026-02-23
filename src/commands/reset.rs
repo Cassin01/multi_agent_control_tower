@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
 use std::path::PathBuf;
 
@@ -9,7 +9,7 @@ use crate::instructions::{
     generate_hooks_settings, load_instruction_with_template, write_agents_file,
     write_instruction_file, write_settings_file,
 };
-use crate::session::{ClaudeManager, ExpertStateDetector, TmuxManager};
+use crate::session::{ClaudeManager, ExpertStateDetector};
 
 #[derive(ClapArgs)]
 pub struct Args {
@@ -55,36 +55,17 @@ async fn reset_expert(
     keep_history: bool,
     full: bool,
 ) -> Result<()> {
-    let session_name = match session {
-        Some(name) => name,
-        None => common::resolve_single_session_default().await?,
-    };
-
-    let tmux = TmuxManager::new(session_name.clone());
-
-    if !tmux.session_exists().await {
-        bail!("Session {} does not exist", session_name);
-    }
-
-    let project_path = tmux
-        .get_env("MACOT_PROJECT_PATH")
-        .await?
-        .unwrap_or_else(|| ".".to_string());
-
-    let num_experts = tmux
-        .get_env("MACOT_NUM_EXPERTS")
-        .await?
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(4);
+    let (tmux, metadata) = common::resolve_existing_session(session).await?;
+    let session_name = tmux.session_name().to_string();
 
     let config = Config::default()
-        .with_project_path(PathBuf::from(&project_path))
-        .with_num_experts(num_experts);
+        .with_project_path(PathBuf::from(&metadata.project_path))
+        .with_num_experts(metadata.num_experts);
 
     let expert_id = config.resolve_expert_id(&expert)?;
     let expert_name = config.get_expert_name(expert_id);
 
-    println!("Resetting expert {} ({})...", expert_id, expert_name);
+    println!("Resetting expert {expert_id} ({expert_name})...");
 
     let session_hash = session_name.strip_prefix("macot-").unwrap_or(&session_name);
     let context_store = ContextStore::new(config.queue_path.clone());
@@ -94,11 +75,11 @@ async fn reset_expert(
     let instruction_role = match context_store.load_session_roles(session_hash).await {
         Ok(Some(roles)) => roles
             .get_role(expert_id)
-            .map(|s| s.to_string())
+            .map(ToString::to_string)
             .unwrap_or_else(|| config.get_expert_role(expert_id)),
         Ok(None) => config.get_expert_role(expert_id), // No session roles file
         Err(e) => {
-            eprintln!("Warning: Failed to load session roles: {}", e);
+            eprintln!("Warning: Failed to load session roles: {e}");
             config.get_expert_role(expert_id)
         }
     };
@@ -118,7 +99,7 @@ async fn reset_expert(
             .clear_expert_context(session_hash, expert_id)
             .await?;
     } else {
-        println!("  Clearing context (keep_history={})...", keep_history);
+        println!("  Clearing context (keep_history={keep_history})...");
 
         if !keep_history {
             context_store
@@ -133,7 +114,7 @@ async fn reset_expert(
         }
     }
 
-    println!("  Loading instructions (role: {})...", instruction_role);
+    println!("  Loading instructions (role: {instruction_role})...");
     let instruction_result = load_instruction_with_template(
         &config.core_instructions_path,
         &config.role_instructions_path,
@@ -173,13 +154,13 @@ async fn reset_expert(
     claude
         .launch_claude(
             expert_id,
-            &project_path,
+            &metadata.project_path,
             instruction_file.as_deref(),
             agents_file.as_deref(),
             settings_file.as_deref(),
         )
         .await?;
 
-    println!("Expert {} reset complete.", expert_id);
+    println!("Expert {expert_id} reset complete.");
     Ok(())
 }

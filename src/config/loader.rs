@@ -140,9 +140,9 @@ impl Config {
 
         if path.exists() {
             let content = std::fs::read_to_string(&path)
-                .with_context(|| format!("Failed to read config file: {:?}", path))?;
+                .with_context(|| format!("Failed to read config file: {}", path.display()))?;
             let config: Config = serde_yaml::from_str(&content)
-                .with_context(|| format!("Failed to parse config file: {:?}", path))?;
+                .with_context(|| format!("Failed to parse config file: {}", path.display()))?;
             Ok(config)
         } else {
             Ok(Config::default())
@@ -184,7 +184,7 @@ impl Config {
         while self.experts.len() < num_experts as usize {
             let idx = self.experts.len();
             self.experts.push(ExpertConfig {
-                name: format!("expert{}", idx),
+                name: format!("expert{idx}"),
                 role: "general".to_string(),
             });
         }
@@ -231,14 +231,14 @@ impl Config {
             return Ok(id);
         }
 
-        bail!("Unknown expert: {}", expert)
+        bail!("Unknown expert: {expert}")
     }
 
     /// Get expert name with fallback to default naming
     pub fn get_expert_name(&self, id: u32) -> String {
         self.get_expert(id)
             .map(|e| e.name.clone())
-            .unwrap_or_else(|| format!("expert{}", id))
+            .unwrap_or_else(|| format!("expert{id}"))
     }
 
     /// Returns the absolute path to the status marker file for a given expert.
@@ -246,7 +246,7 @@ impl Config {
     pub fn status_file_path(&self, expert_id: u32) -> String {
         self.queue_path
             .join("status")
-            .join(format!("expert{}", expert_id))
+            .join(format!("expert{expert_id}"))
             .to_string_lossy()
             .into_owned()
     }
@@ -261,7 +261,7 @@ impl Config {
                     e.role.clone()
                 }
             })
-            .unwrap_or_else(|| format!("expert{}", id))
+            .unwrap_or_else(|| format!("expert{id}"))
     }
 }
 
