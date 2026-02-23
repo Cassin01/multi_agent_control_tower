@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use crate::commands::common;
 use crate::config::Config;
-use crate::session::WorktreeManager;
+use crate::session::{TmuxManager, WorktreeManager};
 use crate::tower::TowerApp;
 
 #[derive(ClapArgs)]
@@ -34,6 +34,19 @@ pub async fn execute(args: Args) -> Result<()> {
 
     if let Some(n) = args.num_experts {
         config = config.with_num_experts(n);
+    }
+
+    let tmux = TmuxManager::from_config(&config);
+
+    if tmux.session_exists().await {
+        let metadata = tmux.load_session_metadata().await?;
+        if let Some(n) = metadata.num_experts {
+            config = config.with_num_experts(n);
+        }
+        let worktree_manager = WorktreeManager::resolve(project_path).await?;
+        let mut app = TowerApp::new(config, worktree_manager);
+        app.run().await?;
+        return Ok(());
     }
 
     println!("Creating session: {}", config.session_name());
