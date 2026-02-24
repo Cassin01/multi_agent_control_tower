@@ -307,8 +307,8 @@ impl TowerApp {
         &mut self.status_display
     }
 
-    pub fn task_input(&self) -> &TaskInput {
-        &self.task_input
+    pub fn task_input(&mut self) -> &mut TaskInput {
+        &mut self.task_input
     }
 
     pub fn config(&self) -> &Config {
