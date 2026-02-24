@@ -50,6 +50,7 @@ pub fn render_template(
 /// 1. User custom: role_instructions_path/{role}.md
 /// 2. Embedded default for the requested role
 /// 3. "general" instructions (with toast notification)
+#[allow(clippy::too_many_arguments)]
 pub fn load_instruction_with_template(
     core_path: &Path,
     role_instructions_path: &Path,
@@ -57,6 +58,9 @@ pub fn load_instruction_with_template(
     expert_id: u32,
     expert_name: &str,
     status_file_path: &str,
+    worktree_path: Option<&str>,
+    manifest_path: &str,
+    status_dir: &str,
 ) -> Result<InstructionResult> {
     let mut content = String::new();
 
@@ -87,7 +91,14 @@ pub fn load_instruction_with_template(
     content.push_str(&role_content);
 
     // Render agent templates (for --agents CLI flag)
-    let agents_json = super::agents::render_agents_json(core_path, expert_id, expert_name)?;
+    let agents_json = super::agents::render_agents_json(
+        core_path,
+        expert_id,
+        expert_name,
+        worktree_path,
+        manifest_path,
+        status_dir,
+    )?;
 
     Ok(InstructionResult {
         content,
@@ -185,6 +196,9 @@ mod tests {
             0,
             "test",
             "/tmp/status/expert0",
+            None,
+            "/tmp/manifest.json",
+            "/tmp/status",
         )
         .unwrap();
 
@@ -211,6 +225,9 @@ mod tests {
             0,
             "test",
             "/tmp/status/expert0",
+            None,
+            "/tmp/manifest.json",
+            "/tmp/status",
         )
         .unwrap();
 
@@ -231,6 +248,9 @@ mod tests {
             0,
             "test",
             "/tmp/status/expert0",
+            None,
+            "/tmp/manifest.json",
+            "/tmp/status",
         )
         .unwrap();
 
@@ -253,6 +273,9 @@ mod tests {
             0,
             "test",
             "/tmp/status/expert0",
+            None,
+            "/tmp/manifest.json",
+            "/tmp/status",
         )
         .unwrap();
 
@@ -299,6 +322,9 @@ mod tests {
             3,
             "TestExpert",
             "/tmp/status/expert3",
+            None,
+            "/tmp/manifest.json",
+            "/tmp/status",
         )
         .unwrap();
 
@@ -329,12 +355,123 @@ mod tests {
             0,
             "test",
             "/tmp/status/expert0",
+            None,
+            "/tmp/manifest.json",
+            "/tmp/status",
         )
         .unwrap();
 
         assert!(
             result.agents_json.is_none(),
             "instruction_result: agents_json should be None when no agent templates exist"
+        );
+    }
+
+    #[test]
+    fn load_instruction_passes_manifest_path_to_agents() {
+        let core_dir = TempDir::new().unwrap();
+        let role_dir = TempDir::new().unwrap();
+
+        let agents_dir = core_dir.path().join("templates").join("agents");
+        std::fs::create_dir_all(&agents_dir).unwrap();
+        std::fs::write(
+            agents_dir.join("expert-discovery.md.tmpl"),
+            "manifest={{ manifest_path }}",
+        )
+        .unwrap();
+
+        let result = load_instruction_with_template(
+            core_dir.path(),
+            role_dir.path(),
+            "architect",
+            0,
+            "test",
+            "/tmp/status/expert0",
+            None,
+            "/custom/manifest.json",
+            "/tmp/status",
+        )
+        .unwrap();
+
+        let json: serde_json::Value =
+            serde_json::from_str(result.agents_json.as_ref().unwrap()).unwrap();
+        let prompt = json["expert-discovery"]["prompt"].as_str().unwrap();
+        assert!(
+            prompt.contains("/custom/manifest.json"),
+            "load_instruction: should pass manifest_path to agents renderer, got: {}",
+            prompt
+        );
+    }
+
+    #[test]
+    fn load_instruction_passes_status_dir_to_agents() {
+        let core_dir = TempDir::new().unwrap();
+        let role_dir = TempDir::new().unwrap();
+
+        let agents_dir = core_dir.path().join("templates").join("agents");
+        std::fs::create_dir_all(&agents_dir).unwrap();
+        std::fs::write(
+            agents_dir.join("expert-discovery.md.tmpl"),
+            "status={{ status_dir }}",
+        )
+        .unwrap();
+
+        let result = load_instruction_with_template(
+            core_dir.path(),
+            role_dir.path(),
+            "architect",
+            0,
+            "test",
+            "/tmp/status/expert0",
+            None,
+            "/tmp/manifest.json",
+            "/custom/status/dir",
+        )
+        .unwrap();
+
+        let json: serde_json::Value =
+            serde_json::from_str(result.agents_json.as_ref().unwrap()).unwrap();
+        let prompt = json["expert-discovery"]["prompt"].as_str().unwrap();
+        assert!(
+            prompt.contains("/custom/status/dir"),
+            "load_instruction: should pass status_dir to agents renderer, got: {}",
+            prompt
+        );
+    }
+
+    #[test]
+    fn load_instruction_passes_worktree_path_to_agents() {
+        let core_dir = TempDir::new().unwrap();
+        let role_dir = TempDir::new().unwrap();
+
+        let agents_dir = core_dir.path().join("templates").join("agents");
+        std::fs::create_dir_all(&agents_dir).unwrap();
+        std::fs::write(
+            agents_dir.join("expert-discovery.md.tmpl"),
+            "wt={{ worktree_path }}",
+        )
+        .unwrap();
+
+        let result = load_instruction_with_template(
+            core_dir.path(),
+            role_dir.path(),
+            "architect",
+            0,
+            "test",
+            "/tmp/status/expert0",
+            Some("/wt/my-feature"),
+            "/tmp/manifest.json",
+            "/tmp/status",
+        )
+        .unwrap();
+
+        let json: serde_json::Value =
+            serde_json::from_str(result.agents_json.as_ref().unwrap()).unwrap();
+        let prompt = json["expert-discovery"]["prompt"].as_str().unwrap();
+        assert!(
+            prompt.contains("/wt/my-feature"),
+            "load_instruction: should pass worktree_path to agents renderer, got: {}",
+            prompt
         );
     }
 }
