@@ -10,6 +10,7 @@ pub struct TaskInput {
     content: String,
     cursor_position: usize,
     focused: bool,
+    scroll_offset: usize,
 }
 
 impl TaskInput {
@@ -18,6 +19,7 @@ impl TaskInput {
             content: String::new(),
             cursor_position: 0,
             focused: false,
+            scroll_offset: 0,
         }
     }
 
@@ -52,6 +54,7 @@ impl TaskInput {
     pub fn clear(&mut self) {
         self.content.clear();
         self.cursor_position = 0;
+        self.scroll_offset = 0;
     }
 
     pub fn insert_char(&mut self, c: char) {
@@ -216,11 +219,62 @@ impl TaskInput {
         self.cursor_position
     }
 
+    /// Returns (line_index, column) of the current cursor position.
+    /// Both are 0-based. Operates on character indices for Unicode safety.
+    fn cursor_line_col(&self) -> (usize, usize) {
+        let mut line = 0;
+        let mut col = 0;
+        for (i, ch) in self.content.chars().enumerate() {
+            if i == self.cursor_position {
+                return (line, col);
+            }
+            if ch == '\n' {
+                line += 1;
+                col = 0;
+            } else {
+                col += 1;
+            }
+        }
+        (line, col)
+    }
+
+    /// Adjusts scroll_offset so cursor_line is within [scroll_offset, scroll_offset + visible_height).
+    /// No-op when visible_height == 0. EOB is inline with the last display line except
+    /// when the placeholder is shown (empty content), where it occupies its own line.
+    fn ensure_cursor_visible(&mut self, visible_height: usize) {
+        if visible_height == 0 {
+            return;
+        }
+        let eob_is_own_line = self.content.is_empty();
+        let total_lines = self.line_count() + if eob_is_own_line { 1 } else { 0 };
+        let max_offset = total_lines.saturating_sub(visible_height);
+        self.scroll_offset = self.scroll_offset.min(max_offset);
+
+        let (cursor_line, _) = self.cursor_line_col();
+        if cursor_line < self.scroll_offset {
+            self.scroll_offset = cursor_line;
+        } else if cursor_line >= self.scroll_offset + visible_height {
+            self.scroll_offset = cursor_line - visible_height + 1;
+        }
+    }
+
+    /// Returns the total number of logical lines in the buffer.
+    /// An empty buffer has 1 line. A trailing newline adds an extra empty line.
+    fn line_count(&self) -> usize {
+        if self.content.is_empty() {
+            return 1;
+        }
+        self.content.chars().filter(|&c| c == '\n').count() + 1
+    }
+
     pub fn is_empty(&self) -> bool {
         self.content.trim().is_empty()
     }
 
-    pub fn render(&self, frame: &mut Frame, area: Rect, title: &str) {
+    pub fn render(&mut self, frame: &mut Frame, area: Rect, title: &str) {
+        let visible_height = area.height.saturating_sub(2) as usize;
+        self.ensure_cursor_visible(visible_height);
+
         let border_style = if self.focused {
             Style::default().fg(Color::Cyan)
         } else {
@@ -233,7 +287,7 @@ impl TaskInput {
             Style::default().fg(Color::Gray)
         };
 
-        let display_text = if self.content.is_empty() && !self.focused {
+        let mut display_text = if self.content.is_empty() && !self.focused {
             vec![Line::from(Span::styled(
                 "Enter task description...",
                 Style::default().fg(Color::DarkGray),
@@ -280,6 +334,17 @@ impl TaskInput {
                 .collect()
         };
 
+        // Append EOB indicator: always inline with the last display line,
+        // except when placeholder is shown (empty + unfocused) where it's separate.
+        let eob_span = Span::styled("[EOB]", Style::default().fg(Color::DarkGray));
+        if self.content.is_empty() && !self.focused {
+            display_text.push(Line::from(eob_span));
+        } else if let Some(last_line) = display_text.last_mut() {
+            let mut spans: Vec<Span<'_>> = last_line.spans.drain(..).collect();
+            spans.push(eob_span);
+            *last_line = Line::from(spans);
+        }
+
         let paragraph = Paragraph::new(display_text)
             .block(
                 Block::default()
@@ -287,7 +352,8 @@ impl TaskInput {
                     .border_style(border_style)
                     .title(title),
             )
-            .wrap(Wrap { trim: false });
+            .wrap(Wrap { trim: false })
+            .scroll((self.scroll_offset as u16, 0));
 
         frame.render_widget(paragraph, area);
     }
@@ -308,6 +374,149 @@ mod tests {
         let input = TaskInput::new();
         assert!(input.is_empty());
         assert_eq!(input.content(), "");
+    }
+
+    // --- scroll_offset tests ---
+
+    #[test]
+    fn scroll_offset_zero_after_new() {
+        let input = TaskInput::new();
+        assert_eq!(
+            input.scroll_offset, 0,
+            "scroll_offset: should be 0 after new()"
+        );
+    }
+
+    #[test]
+    fn scroll_offset_zero_after_clear() {
+        let mut input = TaskInput::new();
+        input.set_content("line1\nline2\nline3\nline4\nline5".to_string());
+        input.scroll_offset = 3;
+        input.clear();
+        assert_eq!(
+            input.scroll_offset, 0,
+            "scroll_offset: should reset to 0 after clear()"
+        );
+    }
+
+    // --- cursor_line_col tests ---
+
+    #[test]
+    fn cursor_line_col_empty_buffer() {
+        let input = TaskInput::new();
+        assert_eq!(
+            input.cursor_line_col(),
+            (0, 0),
+            "cursor_line_col: empty buffer should return (0, 0)"
+        );
+    }
+
+    #[test]
+    fn cursor_line_col_single_line_end() {
+        let mut input = TaskInput::new();
+        input.set_content("hello".to_string());
+        assert_eq!(
+            input.cursor_line_col(),
+            (0, 5),
+            "cursor_line_col: cursor at end of 'hello' should return (0, 5)"
+        );
+    }
+
+    #[test]
+    fn cursor_line_col_multiline_end() {
+        let mut input = TaskInput::new();
+        input.set_content("abc\ndef".to_string());
+        assert_eq!(
+            input.cursor_line_col(),
+            (1, 3),
+            "cursor_line_col: cursor at end of 'abc\\ndef' should return (1, 3)"
+        );
+    }
+
+    #[test]
+    fn cursor_line_col_start_of_second_line() {
+        let mut input = TaskInput::new();
+        input.set_content("abc\ndef".to_string());
+        input.move_cursor_start();
+        // Move to position 4 (start of "def")
+        for _ in 0..4 {
+            input.move_cursor_right();
+        }
+        assert_eq!(
+            input.cursor_line_col(),
+            (1, 0),
+            "cursor_line_col: cursor at start of second line should return (1, 0)"
+        );
+    }
+
+    #[test]
+    fn cursor_line_col_japanese_multiline() {
+        let mut input = TaskInput::new();
+        input.set_content("あいう\nえお".to_string());
+        assert_eq!(
+            input.cursor_line_col(),
+            (1, 2),
+            "cursor_line_col: Japanese multiline at end should return (1, 2)"
+        );
+    }
+
+    #[test]
+    fn cursor_line_col_trailing_newline() {
+        let mut input = TaskInput::new();
+        input.set_content("abc\n".to_string());
+        assert_eq!(
+            input.cursor_line_col(),
+            (1, 0),
+            "cursor_line_col: trailing newline cursor at end should return (1, 0)"
+        );
+    }
+
+    // --- line_count tests ---
+
+    #[test]
+    fn line_count_empty_buffer() {
+        let input = TaskInput::new();
+        assert_eq!(
+            input.line_count(),
+            1,
+            "line_count: empty buffer should return 1"
+        );
+    }
+
+    #[test]
+    fn line_count_single_line() {
+        let mut input = TaskInput::new();
+        input.set_content("hello".to_string());
+        assert_eq!(input.line_count(), 1, "line_count: 'hello' should return 1");
+    }
+
+    #[test]
+    fn line_count_two_lines() {
+        let mut input = TaskInput::new();
+        input.set_content("a\nb".to_string());
+        assert_eq!(input.line_count(), 2, "line_count: 'a\\nb' should return 2");
+    }
+
+    #[test]
+    fn line_count_trailing_newline() {
+        let mut input = TaskInput::new();
+        input.set_content("a\nb\n".to_string());
+        assert_eq!(
+            input.line_count(),
+            3,
+            "line_count: 'a\\nb\\n' (trailing newline) should return 3"
+        );
+    }
+
+    #[test]
+    fn line_count_japanese() {
+        let mut input = TaskInput::new();
+        input.set_content("あいう\nえお".to_string());
+        assert_eq!(
+            input.line_count(),
+            2,
+            "line_count: Japanese two-line content should return 2"
+        );
     }
 
     #[test]
@@ -956,6 +1165,319 @@ mod tests {
             input.content(),
             "",
             "unix_line_discard: empty content should stay empty"
+        );
+    }
+
+    // --- ensure_cursor_visible tests ---
+
+    #[test]
+    fn ensure_cursor_visible_scroll_follows_cursor_down() {
+        let mut input = TaskInput::new();
+        // 10 lines of content, visible_height = 3
+        input.set_content("0\n1\n2\n3\n4\n5\n6\n7\n8\n9".to_string());
+        // cursor at end = line 9
+        input.ensure_cursor_visible(3);
+        let (cursor_line, _) = input.cursor_line_col();
+        assert!(
+            input.scroll_offset <= cursor_line && cursor_line < input.scroll_offset + 3,
+            "ensure_cursor_visible: cursor line {} should be within viewport [{}, {})",
+            cursor_line,
+            input.scroll_offset,
+            input.scroll_offset + 3
+        );
+        assert_eq!(
+            input.scroll_offset, 7,
+            "ensure_cursor_visible: scroll_offset should be cursor_line - visible_height + 1"
+        );
+    }
+
+    #[test]
+    fn ensure_cursor_visible_scroll_follows_cursor_up() {
+        let mut input = TaskInput::new();
+        input.set_content("0\n1\n2\n3\n4\n5\n6\n7\n8\n9".to_string());
+        input.scroll_offset = 7;
+        input.move_cursor_start(); // cursor to line 0
+        input.ensure_cursor_visible(3);
+        assert_eq!(
+            input.scroll_offset, 0,
+            "ensure_cursor_visible: scroll should follow cursor up to 0"
+        );
+    }
+
+    #[test]
+    fn ensure_cursor_visible_no_change_when_cursor_in_viewport() {
+        let mut input = TaskInput::new();
+        input.set_content("0\n1\n2\n3\n4".to_string());
+        input.scroll_offset = 1;
+        // Move cursor to line 2 (within viewport [1, 4))
+        input.move_cursor_start();
+        for _ in 0..4 {
+            input.move_cursor_right(); // "0\n1\n" -> pos 4, line 2 col 0
+        }
+        let original_offset = input.scroll_offset;
+        input.ensure_cursor_visible(3);
+        assert_eq!(
+            input.scroll_offset, original_offset,
+            "ensure_cursor_visible: scroll_offset should not change when cursor is within viewport"
+        );
+    }
+
+    #[test]
+    fn ensure_cursor_visible_clear_resets() {
+        let mut input = TaskInput::new();
+        input.set_content("0\n1\n2\n3\n4".to_string());
+        input.ensure_cursor_visible(3);
+        assert!(input.scroll_offset > 0);
+        input.clear();
+        input.ensure_cursor_visible(3);
+        assert_eq!(
+            input.scroll_offset, 0,
+            "ensure_cursor_visible: after clear(), scroll_offset should be 0"
+        );
+    }
+
+    #[test]
+    fn ensure_cursor_visible_compact_layout() {
+        let mut input = TaskInput::new();
+        input.set_content("0\n1\n2\n3\n4\n5\n6\n7\n8\n9".to_string());
+        input.ensure_cursor_visible(3);
+        let (cursor_line, _) = input.cursor_line_col();
+        assert!(
+            input.scroll_offset <= cursor_line && cursor_line < input.scroll_offset + 3,
+            "ensure_cursor_visible: compact layout (visible_height=3) cursor should be visible"
+        );
+    }
+
+    #[test]
+    fn ensure_cursor_visible_expanded_layout() {
+        let mut input = TaskInput::new();
+        input.set_content("0\n1\n2\n3\n4\n5\n6\n7\n8\n9".to_string());
+        input.ensure_cursor_visible(6);
+        let (cursor_line, _) = input.cursor_line_col();
+        assert!(
+            input.scroll_offset <= cursor_line && cursor_line < input.scroll_offset + 6,
+            "ensure_cursor_visible: expanded layout (visible_height=6) cursor should be visible"
+        );
+    }
+
+    #[test]
+    fn ensure_cursor_visible_zero_height_noop() {
+        let mut input = TaskInput::new();
+        input.set_content("0\n1\n2".to_string());
+        input.scroll_offset = 2;
+        input.ensure_cursor_visible(0);
+        assert_eq!(
+            input.scroll_offset, 2,
+            "ensure_cursor_visible: visible_height=0 should be a no-op"
+        );
+    }
+
+    #[test]
+    fn ensure_cursor_visible_clamps_overflow_after_deletion() {
+        let mut input = TaskInput::new();
+        input.set_content("0\n1\n2\n3\n4\n5\n6\n7\n8\n9".to_string());
+        input.scroll_offset = 8;
+        // Simulate content deletion: replace with short content
+        input.clear();
+        input.set_content("a\nb".to_string());
+        input.ensure_cursor_visible(3);
+        // "a\nb" is non-empty, so EOB is inline: total_lines = 2 + 0 = 2, max_offset = 0
+        assert_eq!(
+            input.scroll_offset, 0,
+            "ensure_cursor_visible: scroll_offset should be clamped after content deletion"
+        );
+    }
+
+    // --- EOB indicator and render integration tests ---
+
+    fn render_to_lines(input: &mut TaskInput, width: u16, height: u16) -> Vec<String> {
+        use ratatui::{backend::TestBackend, Terminal};
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                let area = Rect::new(0, 0, width, height);
+                input.render(frame, area, "Test");
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let mut lines = Vec::new();
+        for y in 0..height {
+            let mut line = String::new();
+            for x in 0..width {
+                let cell = &buffer[(x, y)];
+                line.push_str(cell.symbol());
+            }
+            lines.push(line.trim_end().to_string());
+        }
+        lines
+    }
+
+    #[test]
+    fn render_eob_present_in_output() {
+        let mut input = TaskInput::new();
+        input.set_content("hello".to_string());
+        input.set_focused(true);
+        // height=5 gives inner_height=3, enough for "hello", cursor, "[EOB]"
+        let lines = render_to_lines(&mut input, 30, 5);
+        let has_eob = lines.iter().any(|l| l.contains("[EOB]"));
+        assert!(has_eob, "render: output should contain [EOB] indicator");
+    }
+
+    #[test]
+    fn render_eob_inline_with_last_content_line() {
+        let mut input = TaskInput::new();
+        input.set_content("line1\nline2".to_string());
+        input.set_focused(true);
+        // No trailing newline: [EOB] should be inline with "line2"
+        let lines = render_to_lines(&mut input, 30, 6);
+        let eob_idx = lines.iter().position(|l| l.contains("[EOB]"));
+        let line2_idx = lines.iter().position(|l| l.contains("line2"));
+        assert!(
+            eob_idx.is_some() && line2_idx.is_some(),
+            "render: both line2 and [EOB] should be present"
+        );
+        assert_eq!(
+            eob_idx.unwrap(),
+            line2_idx.unwrap(),
+            "render: [EOB] should be on the same line as last content line (no trailing newline)"
+        );
+    }
+
+    #[test]
+    fn render_eob_scrollable_with_cursor_at_last_line() {
+        let mut input = TaskInput::new();
+        // 2 content lines, no trailing newline: [EOB] is inline with line2
+        input.set_content("line1\nline2".to_string());
+        input.set_focused(true);
+        // height=5 gives inner_height=3: line1, line2+cursor+[EOB] (inline)
+        let lines = render_to_lines(&mut input, 30, 5);
+        let has_eob = lines.iter().any(|l| l.contains("[EOB]"));
+        assert!(
+            has_eob,
+            "render: [EOB] should be visible when cursor is on last content line and viewport has room"
+        );
+    }
+
+    #[test]
+    fn render_eob_inline_with_trailing_newline() {
+        let mut input = TaskInput::new();
+        input.set_content("line1\nline2\n".to_string());
+        input.set_focused(true);
+        // Trailing newline: cursor is on empty line 3, [EOB] inline with cursor
+        let lines = render_to_lines(&mut input, 30, 7);
+        let eob_idx = lines.iter().position(|l| l.contains("[EOB]"));
+        let line2_idx = lines.iter().position(|l| l.contains("line2"));
+        assert!(
+            eob_idx.is_some() && line2_idx.is_some(),
+            "render: both line2 and [EOB] should be present"
+        );
+        assert!(
+            eob_idx.unwrap() > line2_idx.unwrap(),
+            "render: [EOB] should be on the line after line2 (inline with cursor on empty line)"
+        );
+        // [EOB] is inline with cursor, not on a 4th line
+        let eob_line = &lines[eob_idx.unwrap()];
+        assert!(
+            eob_line.contains("│") && eob_line.contains("[EOB]"),
+            "render: cursor and [EOB] should be on the same line"
+        );
+    }
+
+    #[test]
+    fn unicode_scroll_integration_10_line_japanese() {
+        let mut input = TaskInput::new();
+        // 10 lines of Japanese content
+        let lines_content = [
+            "あいうえお",
+            "かきくけこ",
+            "さしすせそ",
+            "たちつてと",
+            "なにぬねの",
+            "はひふへほ",
+            "まみむめも",
+            "やゆよ",
+            "らりるれろ",
+            "わをん",
+        ];
+        let content = lines_content.join("\n");
+        input.set_content(content);
+        input.move_cursor_start();
+
+        let visible_height: usize = 3;
+
+        // Walk cursor down through every line and verify invariants
+        for expected_line in 0..10 {
+            let (cursor_line, _col) = input.cursor_line_col();
+            assert_eq!(
+                cursor_line, expected_line,
+                "unicode_scroll: cursor should be on line {} but is on line {}",
+                expected_line, cursor_line
+            );
+
+            input.ensure_cursor_visible(visible_height);
+
+            assert!(
+                input.scroll_offset <= cursor_line
+                    && cursor_line < input.scroll_offset + visible_height,
+                "unicode_scroll: line {} — cursor_line {} not in viewport [{}, {})",
+                expected_line,
+                cursor_line,
+                input.scroll_offset,
+                input.scroll_offset + visible_height,
+            );
+
+            // Move to the next line (move to end of current line, then one right to cross newline)
+            if expected_line < 9 {
+                input.move_cursor_down();
+                input.move_cursor_line_start();
+            }
+        }
+
+        // Now walk cursor back up to line 0
+        for expected_line in (0..10).rev() {
+            let (cursor_line, _col) = input.cursor_line_col();
+            assert_eq!(
+                cursor_line, expected_line,
+                "unicode_scroll (up): cursor should be on line {} but is on line {}",
+                expected_line, cursor_line
+            );
+
+            input.ensure_cursor_visible(visible_height);
+
+            assert!(
+                input.scroll_offset <= cursor_line
+                    && cursor_line < input.scroll_offset + visible_height,
+                "unicode_scroll (up): line {} — cursor_line {} not in viewport [{}, {})",
+                expected_line,
+                cursor_line,
+                input.scroll_offset,
+                input.scroll_offset + visible_height,
+            );
+
+            if expected_line > 0 {
+                input.move_cursor_up();
+                input.move_cursor_line_start();
+            }
+        }
+
+        assert_eq!(
+            input.scroll_offset, 0,
+            "unicode_scroll: after returning to line 0, scroll_offset should be 0"
+        );
+    }
+
+    #[test]
+    fn render_scroll_offset_adjusted_after_render() {
+        let mut input = TaskInput::new();
+        input.set_content("0\n1\n2\n3\n4\n5\n6\n7\n8\n9".to_string());
+        input.set_focused(true);
+        assert_eq!(input.scroll_offset, 0, "scroll_offset should start at 0");
+        // Render with small height; cursor is at line 9
+        let _ = render_to_lines(&mut input, 30, 5);
+        assert!(
+            input.scroll_offset > 0,
+            "render: scroll_offset should be adjusted after render() when cursor is below viewport"
         );
     }
 }
