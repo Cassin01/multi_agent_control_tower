@@ -86,6 +86,9 @@ async fn reset_expert(
         }
     };
 
+    // Escape from any active mode (e.g., bash) before sending /exit
+    claude.send_keys(expert_id, "Escape").await?;
+
     println!("  Sending /exit to Claude...");
     claude.send_exit(expert_id).await?;
     tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;

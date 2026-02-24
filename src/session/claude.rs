@@ -461,8 +461,8 @@ mod tests {
 
         let keys = mock.sent_keys();
         assert!(
-            keys.iter().any(|(_, k)| k == "C-u"),
-            "send_keys_with_enter: should send C-u to clear line"
+            keys.iter().any(|(_, k)| k == "C-l"),
+            "send_keys_with_enter: should send C-l to clear line"
         );
         assert!(
             keys.iter().any(|(_, k)| k == "my-command"),

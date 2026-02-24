@@ -211,7 +211,6 @@ impl TaskInput {
         self.cursor_position = line_start;
     }
 
-    #[allow(dead_code)]
     pub fn cursor_position(&self) -> usize {
         self.cursor_position
     }
