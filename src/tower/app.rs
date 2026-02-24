@@ -85,6 +85,17 @@ fn is_shift_tab_for_task_input(code: KeyCode, modifiers: KeyModifiers) -> bool {
         || (matches!(code, KeyCode::Tab) && modifiers.contains(KeyModifiers::SHIFT))
 }
 
+fn is_exclamation_at_input_start(
+    code: KeyCode,
+    modifiers: KeyModifiers,
+    cursor_pos: usize,
+) -> bool {
+    matches!(code, KeyCode::Char('!'))
+        && !modifiers.contains(KeyModifiers::CONTROL)
+        && !modifiers.contains(KeyModifiers::ALT)
+        && cursor_pos == 0
+}
+
 struct ExpertPanelUpdateResult {
     expert_id: u32,
     content: String,
@@ -843,6 +854,22 @@ impl TowerApp {
                                     expert_id,
                                     e
                                 );
+                                self.set_message(format!("Error sending keys to expert: {e}"));
+                            }
+                        }
+                        return Ok(());
+                    }
+
+                    if self.focus == FocusArea::TaskInput
+                        && is_exclamation_at_input_start(
+                            key.code,
+                            key.modifiers,
+                            self.task_input.cursor_position(),
+                        )
+                    {
+                        if let Some(expert_id) = self.status_display.selected_expert_id() {
+                            if let Err(e) = self.claude.send_keys(expert_id, "!").await {
+                                tracing::warn!("Failed to send ! to expert {}: {}", expert_id, e);
                                 self.set_message(format!("Error sending keys to expert: {e}"));
                             }
                         }
@@ -2389,6 +2416,46 @@ mod tests {
         assert!(
             !is_shift_tab_for_task_input(KeyCode::Tab, KeyModifiers::NONE),
             "is_shift_tab_for_task_input: plain Tab should not be recognized as Shift+Tab"
+        );
+    }
+
+    #[test]
+    fn is_exclamation_at_input_start_returns_true_at_pos_zero() {
+        assert!(
+            is_exclamation_at_input_start(KeyCode::Char('!'), KeyModifiers::NONE, 0),
+            "is_exclamation_at_input_start: '!' at position 0 should return true"
+        );
+    }
+
+    #[test]
+    fn is_exclamation_at_input_start_returns_false_at_nonzero_pos() {
+        assert!(
+            !is_exclamation_at_input_start(KeyCode::Char('!'), KeyModifiers::NONE, 1),
+            "is_exclamation_at_input_start: '!' at position 1 should return false"
+        );
+    }
+
+    #[test]
+    fn is_exclamation_at_input_start_returns_false_with_ctrl() {
+        assert!(
+            !is_exclamation_at_input_start(KeyCode::Char('!'), KeyModifiers::CONTROL, 0),
+            "is_exclamation_at_input_start: Ctrl+! should return false"
+        );
+    }
+
+    #[test]
+    fn is_exclamation_at_input_start_returns_false_with_alt() {
+        assert!(
+            !is_exclamation_at_input_start(KeyCode::Char('!'), KeyModifiers::ALT, 0),
+            "is_exclamation_at_input_start: Alt+! should return false"
+        );
+    }
+
+    #[test]
+    fn is_exclamation_at_input_start_returns_false_for_other_char() {
+        assert!(
+            !is_exclamation_at_input_start(KeyCode::Char('a'), KeyModifiers::NONE, 0),
+            "is_exclamation_at_input_start: 'a' at position 0 should return false"
         );
     }
 
