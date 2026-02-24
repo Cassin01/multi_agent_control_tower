@@ -1,6 +1,7 @@
 pub mod agents;
 pub mod defaults;
 pub mod file_writer;
+pub mod manifest;
 mod schema;
 mod template;
 

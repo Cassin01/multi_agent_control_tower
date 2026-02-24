@@ -10,6 +10,7 @@ use crate::config::Config;
 use crate::context::{AvailableRoles, ContextStore, Decision, ExpertContext, SessionExpertRoles};
 use crate::experts::ExpertRegistry;
 use crate::feature::executor::{ExecutionPhase, FeatureExecutor};
+use crate::instructions::manifest::{generate_expert_manifest, write_expert_manifest};
 use crate::instructions::{
     generate_hooks_settings, load_instruction_with_template, write_agents_file,
     write_instruction_file, write_settings_file,
@@ -197,7 +198,7 @@ impl TowerApp {
             tmux_manager.clone(),
         );
 
-        Self {
+        let app = Self {
             tmux: tmux_manager,
             claude: claude_manager,
             queue: queue_manager,
@@ -241,7 +242,13 @@ impl TowerApp {
             needs_redraw: true,
 
             config,
+        };
+
+        if let Err(e) = app.refresh_expert_manifest() {
+            tracing::warn!("Failed to generate initial expert manifest: {}", e);
         }
+
+        app
     }
 
     pub fn is_running(&self) -> bool {
@@ -271,6 +278,13 @@ impl TowerApp {
 
     pub fn message(&self) -> Option<&str> {
         self.message.as_deref()
+    }
+
+    fn refresh_expert_manifest(&self) -> Result<()> {
+        let content =
+            generate_expert_manifest(&self.config, &self.session_roles, &self.expert_registry)?;
+        write_expert_manifest(&self.config.queue_path, &content)?;
+        Ok(())
     }
 
     #[allow(dead_code)]
@@ -1225,10 +1239,23 @@ impl TowerApp {
             }
         }
 
+        if let Err(e) = self.refresh_expert_manifest() {
+            tracing::warn!("Failed to refresh expert manifest after role change: {}", e);
+        }
+
         self.claude.send_exit(expert_id).await?;
         tokio::time::sleep(Duration::from_secs(3)).await;
 
         let expert_name = self.config.get_expert_name(expert_id);
+        let manifest_path = self.config.queue_path.join("experts_manifest.json");
+        let manifest_path_str = manifest_path.to_string_lossy();
+        let status_dir = self.config.queue_path.join("status");
+        let status_dir_str = status_dir.to_string_lossy();
+        let worktree_path = self
+            .expert_registry
+            .get_expert(expert_id)
+            .and_then(|info| info.worktree_path.as_deref().map(|s| s.to_string()));
+
         let instruction_result = load_instruction_with_template(
             &self.config.core_instructions_path,
             &self.config.role_instructions_path,
@@ -1236,6 +1263,9 @@ impl TowerApp {
             expert_id,
             &expert_name,
             &self.config.status_file_path(expert_id),
+            worktree_path.as_deref(),
+            &manifest_path_str,
+            &status_dir_str,
         )?;
         let instruction_file = if !instruction_result.content.is_empty() {
             Some(write_instruction_file(
@@ -1358,6 +1388,19 @@ impl TowerApp {
                 .await?;
         }
 
+        if let Err(e) = self.refresh_expert_manifest() {
+            tracing::warn!("Failed to refresh expert manifest after reset: {}", e);
+        }
+
+        let manifest_path = self.config.queue_path.join("experts_manifest.json");
+        let manifest_path_str = manifest_path.to_string_lossy();
+        let status_dir = self.config.queue_path.join("status");
+        let status_dir_str = status_dir.to_string_lossy();
+        let worktree_path = self
+            .expert_registry
+            .get_expert(expert_id)
+            .and_then(|info| info.worktree_path.as_deref().map(|s| s.to_string()));
+
         let instruction_result = load_instruction_with_template(
             &self.config.core_instructions_path,
             &self.config.role_instructions_path,
@@ -1365,6 +1408,9 @@ impl TowerApp {
             expert_id,
             &expert_name,
             &self.config.status_file_path(expert_id),
+            worktree_path.as_deref(),
+            &manifest_path_str,
+            &status_dir_str,
         )?;
         let instruction_file = if !instruction_result.content.is_empty() {
             Some(write_instruction_file(
@@ -1461,6 +1507,18 @@ impl TowerApp {
                 .await?;
         }
 
+        if let Err(e) = self.refresh_expert_manifest() {
+            tracing::warn!(
+                "Failed to refresh expert manifest after worktree return: {}",
+                e
+            );
+        }
+
+        let manifest_path = self.config.queue_path.join("experts_manifest.json");
+        let manifest_path_str = manifest_path.to_string_lossy();
+        let status_dir = self.config.queue_path.join("status");
+        let status_dir_str = status_dir.to_string_lossy();
+
         let instruction_result = load_instruction_with_template(
             &self.config.core_instructions_path,
             &self.config.role_instructions_path,
@@ -1468,6 +1526,9 @@ impl TowerApp {
             expert_id,
             &expert_name,
             &self.config.status_file_path(expert_id),
+            None,
+            &manifest_path_str,
+            &status_dir_str,
         )?;
         let instruction_file = if !instruction_result.content.is_empty() {
             Some(write_instruction_file(
@@ -1588,6 +1649,11 @@ impl TowerApp {
             expert_ctx.set_worktree(branch_clone.clone(), wt_path_str.clone());
             context_store.save_expert_context(&expert_ctx).await?;
 
+            let manifest_path = queue_path.join("experts_manifest.json");
+            let manifest_path_str = manifest_path.to_string_lossy();
+            let status_dir = queue_path.join("status");
+            let status_dir_str = status_dir.to_string_lossy();
+
             let instruction_result = load_instruction_with_template(
                 &core_path,
                 &role_path,
@@ -1595,6 +1661,9 @@ impl TowerApp {
                 expert_id,
                 &expert_name_clone,
                 &status_file_path,
+                Some(&wt_path_str),
+                &manifest_path_str,
+                &status_dir_str,
             )?;
             let instruction_file = if !instruction_result.content.is_empty() {
                 Some(write_instruction_file(
@@ -1692,6 +1761,15 @@ impl TowerApp {
             .map(ToString::to_string)
             .unwrap_or_else(|| self.config.get_expert_role(expert_id));
 
+        let manifest_path = self.config.queue_path.join("experts_manifest.json");
+        let manifest_path_str = manifest_path.to_string_lossy();
+        let status_dir = self.config.queue_path.join("status");
+        let status_dir_str = status_dir.to_string_lossy();
+        let worktree_path = self
+            .expert_registry
+            .get_expert(expert_id)
+            .and_then(|info| info.worktree_path.as_deref().map(|s| s.to_string()));
+
         let instruction_result = load_instruction_with_template(
             &self.config.core_instructions_path,
             &self.config.role_instructions_path,
@@ -1699,6 +1777,9 @@ impl TowerApp {
             expert_id,
             &expert_name,
             &self.config.status_file_path(expert_id),
+            worktree_path.as_deref(),
+            &manifest_path_str,
+            &status_dir_str,
         )?;
         let instruction_file = if !instruction_result.content.is_empty() {
             Some(write_instruction_file(
@@ -2044,6 +2125,13 @@ impl TowerApp {
                                         e
                                     );
                                 }
+                            }
+
+                            if let Err(e) = self.refresh_expert_manifest() {
+                                tracing::warn!(
+                                    "Failed to refresh expert manifest after worktree launch: {}",
+                                    e
+                                );
                             }
 
                             let msg = if result.claude_ready {
@@ -3604,6 +3692,119 @@ mod tests {
             crate::feature::scheduler::SchedulerMode::Dag,
             "default_config_uses_dag: feature_execution.scheduler_mode should default to Dag"
         );
+    }
+
+    // --- Task 9.2: Tests for manifest refresh integration ---
+
+    fn create_test_app_with_tempdir() -> (TowerApp, tempfile::TempDir) {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let macot_dir = tmp.path().join(".macot");
+        std::fs::create_dir_all(&macot_dir).unwrap();
+        let config = Config::default().with_project_path(tmp.path().to_path_buf());
+        let wm = WorktreeManager::new(config.project_path.clone());
+        let app = TowerApp::new(config, wm);
+        (app, tmp)
+    }
+
+    #[test]
+    fn manifest_generated_at_startup() {
+        let (app, tmp) = create_test_app_with_tempdir();
+        let manifest_path = tmp.path().join(".macot").join("experts_manifest.json");
+
+        assert!(
+            manifest_path.exists(),
+            "manifest_generated_at_startup: manifest file should be created on TowerApp::new()"
+        );
+
+        let content = std::fs::read_to_string(&manifest_path).unwrap();
+        let entries: Vec<crate::instructions::manifest::ExpertManifestEntry> =
+            serde_json::from_str(&content).unwrap();
+
+        assert_eq!(
+            entries.len(),
+            app.config.num_experts() as usize,
+            "manifest_generated_at_startup: manifest should include all experts from config"
+        );
+    }
+
+    #[test]
+    fn manifest_refresh_updates_file() {
+        let (app, tmp) = create_test_app_with_tempdir();
+        let manifest_path = tmp.path().join(".macot").join("experts_manifest.json");
+
+        let content_before = std::fs::read_to_string(&manifest_path).unwrap();
+        app.refresh_expert_manifest().unwrap();
+        let content_after = std::fs::read_to_string(&manifest_path).unwrap();
+
+        assert_eq!(
+            content_before, content_after,
+            "manifest_refresh: calling refresh without changes should produce identical content"
+        );
+    }
+
+    #[test]
+    fn manifest_refresh_reflects_role_change() {
+        let (mut app, tmp) = create_test_app_with_tempdir();
+        let manifest_path = tmp.path().join(".macot").join("experts_manifest.json");
+
+        app.session_roles.set_role(0, "frontend".to_string());
+        app.refresh_expert_manifest().unwrap();
+
+        let content = std::fs::read_to_string(&manifest_path).unwrap();
+        let entries: Vec<crate::instructions::manifest::ExpertManifestEntry> =
+            serde_json::from_str(&content).unwrap();
+
+        assert_eq!(
+            entries[0].role, "frontend",
+            "manifest_refresh_reflects_role_change: manifest should reflect updated session role"
+        );
+    }
+
+    #[test]
+    fn manifest_refresh_reflects_worktree_assignment() {
+        let (mut app, tmp) = create_test_app_with_tempdir();
+        let manifest_path = tmp.path().join(".macot").join("experts_manifest.json");
+
+        app.expert_registry
+            .update_expert_worktree(0, Some("/wt/feature-x".to_string()))
+            .unwrap();
+        app.refresh_expert_manifest().unwrap();
+
+        let content = std::fs::read_to_string(&manifest_path).unwrap();
+        let entries: Vec<crate::instructions::manifest::ExpertManifestEntry> =
+            serde_json::from_str(&content).unwrap();
+
+        assert_eq!(
+            entries[0].worktree_path,
+            Some("/wt/feature-x".to_string()),
+            "manifest_refresh_reflects_worktree: manifest should reflect worktree assignment"
+        );
+    }
+
+    #[test]
+    fn manifest_includes_all_experts_after_refresh() {
+        let (app, tmp) = create_test_app_with_tempdir();
+        let manifest_path = tmp.path().join(".macot").join("experts_manifest.json");
+
+        app.refresh_expert_manifest().unwrap();
+
+        let content = std::fs::read_to_string(&manifest_path).unwrap();
+        let entries: Vec<crate::instructions::manifest::ExpertManifestEntry> =
+            serde_json::from_str(&content).unwrap();
+
+        let num_experts = app.config.num_experts() as usize;
+        assert_eq!(
+            entries.len(),
+            num_experts,
+            "manifest_includes_all_experts: all {} experts should appear in manifest",
+            num_experts
+        );
+        for (i, entry) in entries.iter().enumerate() {
+            assert_eq!(
+                entry.expert_id, i as u32,
+                "manifest_includes_all_experts: expert_id should match index"
+            );
+        }
     }
 }
 

@@ -1,0 +1,67 @@
+## Expert Discovery
+
+You can query information about other experts operating in your worktree. This is a **read-only** operation — you must never write to or modify the manifest file or status files.
+
+### How to Discover Experts
+
+1. Read the manifest file at `{{ manifest_path }}`
+2. Parse it as a JSON array of expert entries
+3. Filter entries to those sharing your worktree context (see Worktree Filtering below)
+4. For each matching expert, read the status file at `{{ status_dir }}/expert{id}` to get real-time status
+5. Return the results in a formatted table
+
+### Manifest Format
+
+The manifest is a JSON array with one entry per expert:
+
+```json
+[
+  {
+    "expert_id": 0,
+    "name": "Alyosha",
+    "role": "architect",
+    "worktree_path": null
+  }
+]
+```
+
+### Worktree Filtering
+
+Your worktree path is: `{{ worktree_path }}`
+
+You must only report experts that share the same `worktree_path` value as you:
+- If your `worktree_path` is `null`, show only experts whose `worktree_path` is also `null` (main repository).
+- If your `worktree_path` is a specific path, show only experts with that exact same path.
+- Never show experts from a different worktree.
+
+### Status Mapping
+
+Read each expert's status file at `{{ status_dir }}/expert{id}`. Map the file contents as follows:
+
+| File Content | Display Status |
+|---|---|
+| `pending` | idle |
+| `processing` | busy |
+| File missing or unreadable | busy |
+
+If a status file does not exist or cannot be read, report the expert as **busy** (safe default).
+
+### Your Identity
+
+You are expert **{{ expert_name }}** (ID: {{ expert_id }}). Do not include yourself in the results unless explicitly asked.
+
+### Output Format
+
+Present results as a table:
+
+```
+| ID | Name | Role | Status |
+|----|------|------|--------|
+| 0  | Alyosha | architect | idle |
+| 1  | Dmitri  | developer | busy |
+```
+
+### Error Handling
+
+- If the manifest file does not exist, report: "No expert manifest found. The control tower may not have generated it yet."
+- If the manifest file contains malformed JSON, report the parse error and suggest re-launching the control tower.

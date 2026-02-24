@@ -117,6 +117,11 @@ pub fn prepare_expert_files(
         .get_expert(expert_id)
         .context("Expert not found in config")?;
 
+    let manifest_path = config.queue_path.join("experts_manifest.json");
+    let manifest_path_str = manifest_path.to_string_lossy();
+    let status_dir = config.queue_path.join("status");
+    let status_dir_str = status_dir.to_string_lossy();
+
     let instruction_result = load_instruction_with_template(
         &config.core_instructions_path,
         &config.role_instructions_path,
@@ -124,6 +129,9 @@ pub fn prepare_expert_files(
         expert_id,
         &expert.name,
         &config.status_file_path(expert_id),
+        None,
+        &manifest_path_str,
+        &status_dir_str,
     )?;
 
     let instruction_file = if !instruction_result.content.is_empty() {
