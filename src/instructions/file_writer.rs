@@ -45,8 +45,10 @@ pub fn write_settings_file(queue_path: &Path, expert_id: u32, json: &str) -> Res
 }
 
 pub fn generate_hooks_settings(status_file_path: &str) -> String {
-    let quoted_path = shell_single_quote(status_file_path);
-    let pre_tool_use_command = concat!(
+    let dq_path = shell_double_quote(status_file_path);
+    let processing_cmd = bash_c_wrap(&format!("printf \"%s\" \"processing\" >| \"{}\"", dq_path));
+    let pending_cmd = bash_c_wrap(&format!("printf \"%s\" \"pending\" >| \"{}\"", dq_path));
+    let pre_tool_use_inner = concat!(
         "INPUT=$(cat); ",
         "TARGET=$(echo \"$INPUT\" | jq -r '(.tool_input.file_path // .tool_input.command // \"\")'); ",
         "if echo \"$TARGET\" | grep -q 'messages/queue/'; then ",
@@ -56,18 +58,19 @@ pub fn generate_hooks_settings(status_file_path: &str) -> String {
         "Write to messages/outbox/ instead.\"}}'; ",
         "fi"
     );
+    let pre_tool_use_command = bash_c_wrap(pre_tool_use_inner);
     json!({
         "hooks": {
             "UserPromptSubmit": [{
                 "hooks": [{
                     "type": "command",
-                    "command": format!("printf '%s' processing >| {}", quoted_path),
+                    "command": processing_cmd,
                 }]
             }],
             "Stop": [{
                 "hooks": [{
                     "type": "command",
-                    "command": format!("printf '%s' pending >| {}", quoted_path),
+                    "command": pending_cmd,
                 }]
             }],
             "PreToolUse": [{
@@ -84,6 +87,18 @@ pub fn generate_hooks_settings(status_file_path: &str) -> String {
 
 fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn shell_double_quote(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('$', "\\$")
+        .replace('`', "\\`")
+}
+
+fn bash_c_wrap(command: &str) -> String {
+    format!("bash -c {}", shell_single_quote(command))
 }
 
 #[allow(dead_code)]
@@ -386,12 +401,12 @@ mod tests {
             .expect("generate_hooks_settings: command should be string");
 
         assert_eq!(
-            processing_cmd, "printf '%s' processing >| '/tmp/status/it'\\''s/me'",
-            "generate_hooks_settings: processing command should safely quote path"
+            processing_cmd, "bash -c 'printf \"%s\" \"processing\" >| \"/tmp/status/it'\\''s/me\"'",
+            "generate_hooks_settings: processing command should be wrapped with bash -c"
         );
         assert_eq!(
-            stop_cmd, "printf '%s' pending >| '/tmp/status/it'\\''s/me'",
-            "generate_hooks_settings: stop command should safely quote path"
+            stop_cmd, "bash -c 'printf \"%s\" \"pending\" >| \"/tmp/status/it'\\''s/me\"'",
+            "generate_hooks_settings: stop command should be wrapped with bash -c"
         );
     }
 }
