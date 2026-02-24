@@ -98,6 +98,7 @@ impl HelpModal {
             Self::key_line("Ctrl+S", "Assign task to selected expert"),
             Self::key_line("Enter", "Insert newline"),
             Self::key_line("Shift+Tab", "Send to selected expert (tmux BTab)"),
+            Self::key_line("! (at start)", "Send to selected expert (toggle bash mode)"),
             Line::from(""),
             Self::subsection_title("Expert Panel"),
             Self::key_line("PageUp", "Enter scroll mode / Scroll up"),
@@ -326,6 +327,24 @@ mod tests {
         assert!(
             text.contains("Ctrl+K") && text.contains("kill-line"),
             "build_help_lines: should show Ctrl+K for kill-line"
+        );
+    }
+
+    #[test]
+    fn help_text_shows_exclamation_for_bash_mode() {
+        let modal = HelpModal::new();
+        let lines = modal.build_help_lines();
+        let text: String = lines
+            .iter()
+            .flat_map(|line| line.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(
+            text.contains("! (at start)"),
+            "build_help_lines: should show '! (at start)' shortcut"
+        );
+        assert!(
+            text.contains("bash mode"),
+            "build_help_lines: should describe bash mode toggle"
         );
     }
 }

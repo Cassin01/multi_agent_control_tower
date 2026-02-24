@@ -80,7 +80,7 @@ pub trait TmuxSender: Send + Sync {
     }
 
     async fn send_keys_with_enter(&self, window_id: u32, keys: &str) -> Result<()> {
-        self.send_keys(window_id, "C-u").await?;
+        self.send_keys(window_id, "C-l").await?;
         self.send_text(window_id, keys).await?;
         let delay = self.pre_enter_delay();
         if !delay.is_zero() {
@@ -736,8 +736,8 @@ mod tests {
 
         let recorded = keys.lock().unwrap();
         assert_eq!(
-            recorded[0], "keys:C-u",
-            "send_keys_with_enter: should send C-u via send_keys"
+            recorded[0], "keys:C-l",
+            "send_keys_with_enter: should send C-l via send_keys"
         );
         assert_eq!(
             recorded[1], "text:hello\nworld",
