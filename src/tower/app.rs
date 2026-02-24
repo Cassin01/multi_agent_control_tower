@@ -869,11 +869,7 @@ impl TowerApp {
                     {
                         if let Some(expert_id) = self.status_display.selected_expert_id() {
                             if let Err(e) = self.claude.send_keys(expert_id, "!").await {
-                                tracing::warn!(
-                                    "Failed to send ! to expert {}: {}",
-                                    expert_id,
-                                    e
-                                );
+                                tracing::warn!("Failed to send ! to expert {}: {}", expert_id, e);
                                 self.set_message(format!("Error sending keys to expert: {e}"));
                             }
                         }
