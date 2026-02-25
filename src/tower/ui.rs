@@ -148,6 +148,36 @@ impl UI {
     fn render_header(frame: &mut Frame, area: Rect, app: &mut TowerApp) {
         let summary = app.status_display().get_status_summary();
 
+        let session_name = app.config().session_name().to_string();
+        let project_path_str = app.config().project_path.display().to_string();
+
+        // Calculate fixed-part widths for wide mode (excluding project path)
+        let wide_fixed: usize = " MACOT ".len()
+            + " - Multi Agent Control Tower ".len()
+            + "| ".len()
+            + "Session: ".len()
+            + session_name.len()
+            + " ".len()
+            + "| ".len();
+
+        // Calculate fixed-part widths for compact mode
+        let compact_fixed: usize =
+            " MACOT ".len() + "| ".len() + session_name.len() + " ".len() + "| ".len();
+
+        let right_text_width =
+            format!("○ {} ", summary.idle).len() + format!("● {} ", summary.busy).len();
+
+        let available = (area.width as usize).saturating_sub(2);
+
+        // Check if the full (wide) header fits
+        let full_path_len = project_path_str.chars().count();
+        let full_content_width = wide_fixed + full_path_len + 1 + right_text_width;
+        let is_wide = full_content_width <= available;
+
+        let fixed_width = if is_wide { wide_fixed } else { compact_fixed };
+        let path_max = available.saturating_sub(fixed_width + right_text_width + 1);
+        let truncate_len = path_max.max(10);
+
         let mut title = vec![Span::styled(
             " MACOT ",
             Style::default()
@@ -155,29 +185,20 @@ impl UI {
                 .add_modifier(Modifier::BOLD),
         )];
 
-        // Show subtitle only when width is sufficient
-        let is_wide = area.width >= 100;
         if is_wide {
             title.push(Span::raw(" - Multi Agent Control Tower "));
         }
         title.push(Span::raw("| "));
 
-        let trancate_len = if is_wide { 40 } else { 20 };
         let session_prefix = if is_wide { "Session: " } else { "" };
         title.extend([
             Span::styled(
-                format!("{}{} ", session_prefix, app.config().session_name()),
+                format!("{}{} ", session_prefix, session_name),
                 Style::default().fg(Color::Yellow),
             ),
             Span::raw("| "),
             Span::styled(
-                format!(
-                    "{} ",
-                    truncate_str_head(
-                        &app.config().project_path.display().to_string(),
-                        trancate_len
-                    )
-                ),
+                format!("{} ", truncate_str_head(&project_path_str, truncate_len)),
                 Style::default().fg(Color::DarkGray),
             ),
         ]);
