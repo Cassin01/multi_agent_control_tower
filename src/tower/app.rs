@@ -778,17 +778,36 @@ impl TowerApp {
 
                     self.clear_message();
 
+                    if key.modifiers.contains(KeyModifiers::CONTROL)
+                        && matches!(key.code, KeyCode::Char('c' | 'q'))
+                    {
+                        self.quit();
+                        return Ok(());
+                    }
+
+                    if self.help_modal.is_visible() {
+                        match key.code {
+                            KeyCode::Enter | KeyCode::Char('q') => {
+                                self.help_modal.hide();
+                            }
+                            KeyCode::Char('i') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                self.help_modal.hide();
+                            }
+                            _ => {}
+                        }
+                        return Ok(());
+                    }
+
                     if key.modifiers.contains(KeyModifiers::CONTROL) {
                         match key.code {
-                            KeyCode::Char('c' | 'q') => {
-                                self.quit();
-                                return Ok(());
-                            }
                             KeyCode::Char('i') => {
                                 self.help_modal.toggle();
                                 return Ok(());
                             }
                             KeyCode::Char('j') => {
+                                if self.expert_panel_display.is_scrolling() {
+                                    self.expert_panel_display.exit_scroll_mode();
+                                }
                                 self.expert_panel_display.toggle();
                                 if !self.expert_panel_display.is_visible()
                                     && self.focus == FocusArea::ExpertPanel
@@ -799,16 +818,6 @@ impl TowerApp {
                             }
                             _ => {}
                         }
-                    }
-
-                    if self.help_modal.is_visible() {
-                        match key.code {
-                            KeyCode::Enter | KeyCode::Char('q') => {
-                                self.help_modal.hide();
-                            }
-                            _ => {}
-                        }
-                        return Ok(());
                     }
 
                     if self.report_display.view_mode() == ViewMode::Detail {
@@ -847,6 +856,9 @@ impl TowerApp {
                     if self.focus == FocusArea::TaskInput
                         && is_shift_tab_for_task_input(key.code, key.modifiers)
                     {
+                        if self.expert_panel_display.is_scrolling() {
+                            self.expert_panel_display.exit_scroll_mode();
+                        }
                         if let Some(expert_id) = self.status_display.selected_expert_id() {
                             if let Err(e) = self.claude.send_keys(expert_id, "BTab").await {
                                 tracing::warn!(
@@ -867,10 +879,70 @@ impl TowerApp {
                             self.task_input.cursor_position(),
                         )
                     {
+                        if self.expert_panel_display.is_scrolling() {
+                            self.expert_panel_display.exit_scroll_mode();
+                        }
                         if let Some(expert_id) = self.status_display.selected_expert_id() {
                             if let Err(e) = self.claude.send_keys(expert_id, "!").await {
                                 tracing::warn!("Failed to send ! to expert {}: {}", expert_id, e);
                                 self.set_message(format!("Error sending keys to expert: {e}"));
+                            }
+                        }
+                        return Ok(());
+                    }
+
+                    // Remote scroll: handle active remote scroll mode
+                    if self.focus == FocusArea::TaskInput
+                        && self.expert_panel_display.is_scrolling()
+                    {
+                        match key.code {
+                            KeyCode::Esc => {
+                                self.expert_panel_display.exit_scroll_mode();
+                                return Ok(());
+                            }
+                            KeyCode::PageUp => {
+                                self.expert_panel_display.scroll_up();
+                                return Ok(());
+                            }
+                            KeyCode::PageDown => {
+                                self.expert_panel_display.scroll_down();
+                                return Ok(());
+                            }
+                            KeyCode::Home => {
+                                self.expert_panel_display.scroll_to_top();
+                                return Ok(());
+                            }
+                            KeyCode::End => {
+                                self.expert_panel_display.scroll_to_bottom();
+                                return Ok(());
+                            }
+                            // Exit scroll + fall through to expert selection
+                            KeyCode::Up | KeyCode::Down => {
+                                self.expert_panel_display.exit_scroll_mode();
+                            }
+                            // Exit scroll + fall through to assign task
+                            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                self.expert_panel_display.exit_scroll_mode();
+                            }
+                            // All other keys fall through to normal handling (keep scroll mode)
+                            _ => {}
+                        }
+                    }
+
+                    // Remote scroll: enter remote scroll mode on PageUp from TaskInput
+                    if self.focus == FocusArea::TaskInput
+                        && key.code == KeyCode::PageUp
+                        && !self.expert_panel_display.is_scrolling()
+                        && self.expert_panel_display.is_visible()
+                    {
+                        if let Some(expert_id) = self.expert_panel_display.expert_id() {
+                            match self.claude.capture_full_history(expert_id).await {
+                                Ok(raw) => self.expert_panel_display.enter_scroll_mode(&raw),
+                                Err(e) => tracing::warn!(
+                                    "Failed to capture history for expert {}: {}",
+                                    expert_id,
+                                    e
+                                ),
                             }
                         }
                         return Ok(());
