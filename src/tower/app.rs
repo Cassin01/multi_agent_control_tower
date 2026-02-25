@@ -788,13 +788,8 @@ impl TowerApp {
                                 self.help_modal.toggle();
                                 return Ok(());
                             }
-                            KeyCode::Char('j') => {
+                            KeyCode::Char('j') if self.focus != FocusArea::ExpertPanel => {
                                 self.expert_panel_display.toggle();
-                                if !self.expert_panel_display.is_visible()
-                                    && self.focus == FocusArea::ExpertPanel
-                                {
-                                    self.set_focus(FocusArea::TaskInput);
-                                }
                                 return Ok(());
                             }
                             _ => {}
@@ -882,8 +877,14 @@ impl TowerApp {
                             self.handle_task_input_keys(key.code, key.modifiers)
                         }
                         FocusArea::ExpertPanel => {
-                            self.handle_expert_panel_keys(key.code, key.modifiers)
-                                .await?;
+                            if key.code == KeyCode::Char('t')
+                                && key.modifiers.contains(KeyModifiers::CONTROL)
+                            {
+                                self.next_focus();
+                            } else {
+                                self.handle_expert_panel_keys(key.code, key.modifiers)
+                                    .await?;
+                            }
                             return Ok(());
                         }
                     }
