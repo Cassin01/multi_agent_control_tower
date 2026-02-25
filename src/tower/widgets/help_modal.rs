@@ -99,6 +99,11 @@ impl HelpModal {
             Self::key_line("Enter", "Insert newline"),
             Self::key_line("Shift+Tab", "Send to selected expert (tmux BTab)"),
             Self::key_line("! (at start)", "Send to selected expert (toggle bash mode)"),
+            Self::nested_subsection_title("Remote Scroll (Expert Panel)"),
+            Self::key_line("PageUp", "Enter scroll mode / Scroll up"),
+            Self::key_line("PageDown", "Scroll down"),
+            Self::key_line("Home / End", "Scroll to top / bottom"),
+            Self::key_line("Esc / \u{2191}\u{2193}", "Exit scroll mode"),
             Line::from(""),
             Self::subsection_title("Expert Panel"),
             Self::key_line("PageUp", "Enter scroll mode / Scroll up"),
@@ -345,6 +350,28 @@ mod tests {
         assert!(
             text.contains("bash mode"),
             "build_help_lines: should describe bash mode toggle"
+        );
+    }
+
+    #[test]
+    fn help_text_shows_remote_scroll_section() {
+        let modal = HelpModal::new();
+        let lines = modal.build_help_lines();
+        let text: String = lines
+            .iter()
+            .flat_map(|line| line.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(
+            text.contains("Remote Scroll"),
+            "build_help_lines: should have Remote Scroll subsection"
+        );
+        assert!(
+            text.contains("Enter scroll mode / Scroll up"),
+            "build_help_lines: should describe remote scroll PageUp"
+        );
+        assert!(
+            text.contains("Exit scroll mode"),
+            "build_help_lines: should describe exit scroll mode"
         );
     }
 }

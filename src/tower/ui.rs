@@ -211,11 +211,21 @@ impl UI {
     }
 
     fn render_task_input(frame: &mut Frame, area: Rect, app: &mut TowerApp) {
+        let is_remote_scrolling =
+            app.focus() == FocusArea::TaskInput && app.expert_panel_display().is_scrolling();
+        let scroll_suffix = if is_remote_scrolling { " [SCROLL]" } else { "" };
         let selected_expert = app
             .status_display()
             .selected()
-            .map(|c| format!("Command for {} (Expert{})", c.expert_name, c.expert_id))
-            .unwrap_or_else(|| "Command Input Center (no expert selected)".to_string());
+            .map(|c| {
+                format!(
+                    "Command for {} (Expert{}){}",
+                    c.expert_name, c.expert_id, scroll_suffix
+                )
+            })
+            .unwrap_or_else(|| {
+                format!("Command Input Center (no expert selected){}", scroll_suffix)
+            });
 
         app.task_input().render(frame, area, &selected_expert);
     }
@@ -239,7 +249,19 @@ impl UI {
             Span::raw(": Switch focus "),
         ];
 
-        if app.focus() == FocusArea::TaskInput {
+        if app.focus() == FocusArea::TaskInput && app.expert_panel_display().is_scrolling() {
+            help_text.push(Span::styled("PgUp/Dn", Style::default().fg(Color::Yellow)));
+            help_text.push(Span::raw(": Scroll "));
+            help_text.push(Span::styled("Home/End", Style::default().fg(Color::Yellow)));
+            help_text.push(Span::raw(": Top/Bot "));
+            help_text.push(Span::styled(
+                "\u{2191}\u{2193}",
+                Style::default().fg(Color::Yellow),
+            ));
+            help_text.push(Span::raw(": Select "));
+            help_text.push(Span::styled("Esc", Style::default().fg(Color::Yellow)));
+            help_text.push(Span::raw(": Exit scroll "));
+        } else if app.focus() == FocusArea::TaskInput {
             help_text.push(Span::styled("Ctrl+S", Style::default().fg(Color::Yellow)));
             help_text.push(Span::raw(": Assign task "));
         }
