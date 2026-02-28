@@ -296,7 +296,7 @@ impl UI {
 
         help_text.push(Span::styled("Ctrl+J", Style::default().fg(Color::Yellow)));
         help_text.push(Span::raw(": Panel "));
-        help_text.push(Span::styled("Ctrl+I", Style::default().fg(Color::Yellow)));
+        help_text.push(Span::styled("F1", Style::default().fg(Color::Yellow)));
         help_text.push(Span::raw(": Help "));
         help_text.push(Span::styled("Ctrl+Q", Style::default().fg(Color::Yellow)));
         help_text.push(Span::raw(": Quit"));

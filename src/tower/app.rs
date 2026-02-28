@@ -787,10 +787,7 @@ impl TowerApp {
 
                     if self.help_modal.is_visible() {
                         match key.code {
-                            KeyCode::Enter | KeyCode::Char('q') => {
-                                self.help_modal.hide();
-                            }
-                            KeyCode::Char('i') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            KeyCode::Enter | KeyCode::Char('q') | KeyCode::F(1) => {
                                 self.help_modal.hide();
                             }
                             _ => {}
@@ -798,12 +795,13 @@ impl TowerApp {
                         return Ok(());
                     }
 
+                    if key.code == KeyCode::F(1) {
+                        self.help_modal.toggle();
+                        return Ok(());
+                    }
+
                     if key.modifiers.contains(KeyModifiers::CONTROL) {
                         match key.code {
-                            KeyCode::Char('i') => {
-                                self.help_modal.toggle();
-                                return Ok(());
-                            }
                             KeyCode::Char('j') if self.focus != FocusArea::ExpertPanel => {
                                 if self.expert_panel_display.is_scrolling() {
                                     self.expert_panel_display.exit_scroll_mode();

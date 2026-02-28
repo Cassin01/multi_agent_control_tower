@@ -172,7 +172,7 @@ macot tower --config ./custom-config.yaml
 |-----|--------|
 | **Global** | |
 | `Ctrl+T` | Switch focus between panels |
-| `Ctrl+H` | Toggle help |
+| `F1` | Toggle help |
 | `Ctrl+C` / `Ctrl+Q` | Quit application |
 | **Task Input** | |
 | `Ctrl+S` | Assign task to selected expert |

@@ -71,7 +71,7 @@ impl HelpModal {
             Self::key_line("Ctrl+T", "Switch focus between panels"),
             Self::key_line("Mouse Click", "Focus clicked panel"),
             Self::key_line("Ctrl+C / Ctrl+Q", "Quit application"),
-            Self::key_line("Ctrl+I", "Toggle this help"),
+            Self::key_line("F1", "Toggle this help"),
             Self::key_line("Ctrl+J", "Toggle expert panel"),
             Line::from(""),
             Self::subsection_title("Task Input"),
@@ -224,7 +224,7 @@ mod tests {
     }
 
     #[test]
-    fn help_text_shows_ctrl_i_for_help() {
+    fn help_text_shows_f1_for_help() {
         let modal = HelpModal::new();
         let lines = modal.build_help_lines();
         let text: String = lines
@@ -232,8 +232,8 @@ mod tests {
             .flat_map(|line| line.spans.iter().map(|s| s.content.as_ref()))
             .collect();
         assert!(
-            text.contains("Ctrl+I"),
-            "build_help_lines: should show Ctrl+I for help toggle"
+            text.contains("F1"),
+            "build_help_lines: should show F1 for help toggle"
         );
     }
 
