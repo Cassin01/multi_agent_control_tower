@@ -814,7 +814,7 @@ mod tests {
     }
 
     #[test]
-    fn check_tmux_status_with_signal_exit_returns_error() {
+    fn check_tmux_status_with_nonzero_exit_returns_error() {
         let output = make_output(2, "", "unknown command");
         let result = check_tmux_status(output, "setenv");
         let err = result.unwrap_err();

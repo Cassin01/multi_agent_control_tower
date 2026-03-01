@@ -86,16 +86,24 @@ fn select_runnable_dag<'a>(tasks: &'a [TaskEntry]) -> ScheduleResult<'a> {
         ScheduleResult::Runnable(runnable)
     } else {
         // Kahn's algorithm: detect cycle members among uncompleted tasks.
-        // Build in-degree map counting only internal uncompleted dependencies.
+        // Build adjacency list and in-degree map from de-duplicated internal deps.
         let uncompleted_set: HashSet<&str> =
             uncompleted.iter().map(|t| t.number.as_str()).collect();
+        let mut adj: HashMap<&str, Vec<&str>> = HashMap::new();
         let mut in_degree: HashMap<&str, usize> = HashMap::new();
         for t in &uncompleted {
-            in_degree.entry(t.number.as_str()).or_insert(0);
-            for dep in &t.dependencies {
-                if uncompleted_set.contains(dep.as_str()) && !completed_set.contains(dep.as_str()) {
-                    *in_degree.entry(t.number.as_str()).or_insert(0) += 1;
-                }
+            let node = t.number.as_str();
+            adj.entry(node).or_default();
+            in_degree.entry(node).or_insert(0);
+            let unique_deps: HashSet<&str> = t
+                .dependencies
+                .iter()
+                .map(|d| d.as_str())
+                .filter(|d| uncompleted_set.contains(d) && !completed_set.contains(d))
+                .collect();
+            for dep in &unique_deps {
+                adj.entry(dep).or_default().push(node);
+                *in_degree.entry(node).or_insert(0) += 1;
             }
         }
 
@@ -108,23 +116,51 @@ fn select_runnable_dag<'a>(tasks: &'a [TaskEntry]) -> ScheduleResult<'a> {
         let mut removed = HashSet::new();
         while let Some(node) = queue.pop() {
             removed.insert(node);
-            for t in &uncompleted {
-                if t.dependencies.iter().any(|d| d.as_str() == node) {
-                    if let Some(deg) = in_degree.get_mut(t.number.as_str()) {
-                        *deg = deg.saturating_sub(1);
-                        if *deg == 0 && !removed.contains(t.number.as_str()) {
-                            queue.push(t.number.as_str());
-                        }
+            for &dependent in adj.get(node).unwrap_or(&Vec::new()) {
+                if let Some(deg) = in_degree.get_mut(dependent) {
+                    *deg = deg.saturating_sub(1);
+                    if *deg == 0 && !removed.contains(dependent) {
+                        queue.push(dependent);
                     }
                 }
             }
         }
 
-        // Remaining nodes (not removed) are cycle members
-        let cycle_members: Vec<String> = uncompleted
+        // Kahn's remainder includes cycle members AND their downstream dependents.
+        // Refine via iterative SCC-like reachability: true cycle members are those
+        // that can reach themselves through the dependency subgraph.
+        let remainder: HashSet<&str> = uncompleted
             .iter()
-            .filter(|t| !removed.contains(t.number.as_str()))
-            .map(|t| t.number.clone())
+            .map(|t| t.number.as_str())
+            .filter(|n| !removed.contains(n))
+            .collect();
+        let cycle_members: Vec<String> = remainder
+            .iter()
+            .filter(|&&node| {
+                // Check if node participates in a cycle within the remainder subgraph
+                let mut visited = HashSet::new();
+                let mut stack = Vec::new();
+                for &next in adj.get(node).unwrap_or(&Vec::new()) {
+                    if remainder.contains(next) {
+                        stack.push(next);
+                    }
+                }
+                while let Some(current) = stack.pop() {
+                    if current == node {
+                        return true;
+                    }
+                    if !visited.insert(current) {
+                        continue;
+                    }
+                    for &next in adj.get(current).unwrap_or(&Vec::new()) {
+                        if remainder.contains(next) {
+                            stack.push(next);
+                        }
+                    }
+                }
+                false
+            })
+            .map(|s| s.to_string())
             .collect();
         let has_cycle = !cycle_members.is_empty();
 
@@ -442,6 +478,54 @@ mod tests {
                 );
             }
             other => panic!("dag_self_cycle_detected: expected Blocked, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn dag_downstream_of_cycle_excluded_from_cycle_members() {
+        // Cycle: 1->2->1, Downstream: 3 depends on 1 (not in cycle itself)
+        let tasks = vec![
+            task("1", false, &["2"]),
+            task("2", false, &["1"]),
+            task("3", false, &["1"]),
+        ];
+        match select_runnable(&tasks, SchedulerMode::Dag) {
+            ScheduleResult::Blocked(diag) => {
+                assert!(
+                    diag.has_cycle,
+                    "dag_downstream_of_cycle: should detect cycle"
+                );
+                let members: HashSet<&str> =
+                    diag.cycle_members.iter().map(|s| s.as_str()).collect();
+                assert!(
+                    members.contains("1") && members.contains("2"),
+                    "dag_downstream_of_cycle: cycle_members should contain 1 and 2, got: {:?}",
+                    diag.cycle_members
+                );
+                assert!(
+                    !members.contains("3"),
+                    "dag_downstream_of_cycle: task 3 is downstream, not a cycle member, got: {:?}",
+                    diag.cycle_members
+                );
+            }
+            other => panic!("dag_downstream_of_cycle: expected Blocked, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn dag_duplicate_deps_not_false_cycle() {
+        // Task 2 depends on task 1 twice (duplicate dep); should not cause false cycle
+        let tasks = vec![task("1", false, &[]), task("2", false, &["1", "1"])];
+        match select_runnable(&tasks, SchedulerMode::Dag) {
+            ScheduleResult::Runnable(r) => {
+                assert_eq!(
+                    r.len(),
+                    1,
+                    "dag_duplicate_deps: only task 1 should be runnable"
+                );
+                assert_eq!(r[0].number, "1");
+            }
+            other => panic!("dag_duplicate_deps: expected Runnable, got {:?}", other),
         }
     }
 }

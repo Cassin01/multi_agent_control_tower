@@ -69,7 +69,7 @@ pub fn truncate_str_head(s: &str, max_chars: usize) -> String {
 /// Convert a Path to a UTF-8 string, returning an error for non-UTF-8 paths.
 pub fn path_to_str(path: &Path) -> Result<&str> {
     path.to_str()
-        .ok_or_else(|| anyhow::anyhow!("Path contains non-UTF8 characters: {}", path.display()))
+        .ok_or_else(|| anyhow::anyhow!("Path contains non-UTF-8 characters: {}", path.display()))
 }
 
 /// Compute a deterministic 8-char hex hash from an absolute path.
@@ -314,12 +314,12 @@ mod tests {
         let result = path_to_str(path);
         assert!(
             result.is_err(),
-            "path_to_str: non-UTF8 path should return Err"
+            "path_to_str: non-UTF-8 path should return Err"
         );
         let msg = result.unwrap_err().to_string();
         assert!(
-            msg.contains("non-UTF8"),
-            "path_to_str: error should mention non-UTF8, got: {}",
+            msg.contains("non-UTF-8"),
+            "path_to_str: error should mention non-UTF-8, got: {}",
             msg
         );
     }
