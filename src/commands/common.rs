@@ -10,7 +10,7 @@ use crate::instructions::{
 };
 use crate::queue::QueueManager;
 use crate::session::{ClaudeManager, ExpertStateDetector, SessionMetadata, TmuxManager};
-use crate::utils::compute_path_hash;
+use crate::utils::{compute_path_hash, path_to_str};
 
 /// Try to find a running session that matches the current directory's hash.
 /// Returns the session name if exactly one match is found.
@@ -94,7 +94,7 @@ pub async fn init_session(config: &Config, project_path: &Path) -> Result<Sessio
         .await
         .context("Failed to initialize context store")?;
 
-    let project_str = project_path.to_str().unwrap();
+    let project_str = path_to_str(project_path)?;
     tmux.create_session(config.num_experts(), project_str)
         .await
         .context("Failed to create tmux session")?;

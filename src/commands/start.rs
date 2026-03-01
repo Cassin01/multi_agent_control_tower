@@ -5,6 +5,7 @@ use tokio::task::JoinSet;
 
 use crate::commands::common;
 use crate::config::Config;
+use crate::utils::path_to_str;
 
 #[derive(ClapArgs)]
 pub struct Args {
@@ -49,7 +50,7 @@ pub async fn execute(args: Args) -> Result<()> {
         let expert_name = expert.name.clone();
         let tmux = managers.tmux.clone();
         let claude = managers.claude.clone();
-        let working_dir = project_path.to_str().unwrap().to_string();
+        let working_dir = path_to_str(&project_path)?.to_string();
         let timeout = config.timeouts.agent_ready;
 
         let (instruction_file, agents_file, settings_file) =

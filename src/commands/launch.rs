@@ -6,6 +6,7 @@ use crate::commands::common;
 use crate::config::Config;
 use crate::session::{TmuxManager, WorktreeManager};
 use crate::tower::TowerApp;
+use crate::utils::path_to_str;
 
 #[derive(ClapArgs)]
 pub struct Args {
@@ -64,18 +65,17 @@ pub async fn execute(args: Args) -> Result<()> {
     let config_clone = config.clone();
     let tmux_clone = managers.tmux.clone();
     let claude_clone = managers.claude.clone();
-    let project_path_clone = project_path.clone();
+    let working_dir = path_to_str(&project_path)?.to_string();
 
     tokio::spawn(async move {
         let config = config_clone;
         let tmux = tmux_clone;
         let claude = claude_clone;
-        let project_path = project_path_clone;
 
         for (i, expert) in config.experts.iter().enumerate() {
             let expert_id = i as u32;
             let expert_name = expert.name.clone();
-            let working_dir = project_path.to_str().unwrap().to_string();
+            let working_dir = working_dir.clone();
             let timeout = config.timeouts.agent_ready;
 
             let (instruction_file, agents_file, settings_file) =
