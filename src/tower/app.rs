@@ -6,15 +6,12 @@ use ratatui::layout::Rect;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use crate::commands::common::{exit_expert_and_set_pending, prepare_expert_files_with_role};
 use crate::config::Config;
 use crate::context::{AvailableRoles, ContextStore, Decision, ExpertContext, SessionExpertRoles};
 use crate::experts::ExpertRegistry;
 use crate::feature::executor::{ExecutionPhase, FeatureExecutor};
 use crate::instructions::manifest::{generate_expert_manifest, write_expert_manifest};
-use crate::instructions::{
-    generate_hooks_settings, load_instruction_with_template, write_agents_file,
-    write_instruction_file, write_settings_file,
-};
 use crate::models::ExpertState;
 use crate::models::{ExpertInfo, Role};
 use crate::queue::{MessageRouter, QueueManager};
@@ -1341,65 +1338,34 @@ impl TowerApp {
             tracing::warn!("Failed to refresh expert manifest after role change: {}", e);
         }
 
-        self.claude.send_exit(expert_id).await?;
-        tokio::time::sleep(Duration::from_secs(3)).await;
+        exit_expert_and_set_pending(&self.claude, &self.detector, expert_id).await?;
 
-        let expert_name = self.config.get_expert_name(expert_id);
-        let manifest_path = self.config.queue_path.join("experts_manifest.json");
-        let manifest_path_str = manifest_path.to_string_lossy();
-        let status_dir = self.config.queue_path.join("status");
-        let status_dir_str = status_dir.to_string_lossy();
         let worktree_path = self
             .expert_registry
             .get_expert(expert_id)
             .and_then(|info| info.worktree_path.as_deref().map(|s| s.to_string()));
-
-        let instruction_result = load_instruction_with_template(
-            &self.config.core_instructions_path,
-            &self.config.role_instructions_path,
+        let prepared = prepare_expert_files_with_role(
+            &self.config,
+            expert_id,
             new_role,
-            expert_id,
-            &expert_name,
-            &self.config.status_file_path(expert_id),
             worktree_path.as_deref(),
-            &manifest_path_str,
-            &status_dir_str,
         )?;
-        let instruction_file = if !instruction_result.content.is_empty() {
-            Some(write_instruction_file(
-                &self.config.queue_path,
-                expert_id,
-                &instruction_result.content,
-            )?)
-        } else {
-            None
-        };
-        let agents_file = match &instruction_result.agents_json {
-            Some(json) => Some(write_agents_file(&self.config.queue_path, expert_id, json)?),
-            None => None,
-        };
-        let hooks_json = generate_hooks_settings(&self.config.status_file_path(expert_id));
-        let settings_file = Some(write_settings_file(
-            &self.config.queue_path,
-            expert_id,
-            &hooks_json,
-        )?);
 
         let working_dir = self.resolve_expert_working_dir(expert_id).await;
         self.claude
             .launch_claude(
                 expert_id,
                 &working_dir,
-                instruction_file.as_deref(),
-                agents_file.as_deref(),
-                settings_file.as_deref(),
+                prepared.instruction_file.as_deref(),
+                prepared.agents_file.as_deref(),
+                prepared.settings_file.as_deref(),
             )
             .await?;
 
-        if instruction_result.used_general_fallback {
+        if prepared.used_general_fallback {
             self.set_message(format!(
                 "Role '{}' not found, using 'general'",
-                instruction_result.requested_role
+                prepared.requested_role
             ));
         } else {
             self.set_message(format!("Expert {expert_id} role changed to {new_role}"));
@@ -1467,8 +1433,7 @@ impl TowerApp {
 
         let working_dir = self.resolve_expert_working_dir(expert_id).await;
 
-        self.claude.send_exit(expert_id).await?;
-        tokio::time::sleep(Duration::from_secs(3)).await;
+        exit_expert_and_set_pending(&self.claude, &self.detector, expert_id).await?;
 
         // Preserve worktree info while clearing session and knowledge
         let session_hash = self.config.session_hash();
@@ -1490,60 +1455,31 @@ impl TowerApp {
             tracing::warn!("Failed to refresh expert manifest after reset: {}", e);
         }
 
-        let manifest_path = self.config.queue_path.join("experts_manifest.json");
-        let manifest_path_str = manifest_path.to_string_lossy();
-        let status_dir = self.config.queue_path.join("status");
-        let status_dir_str = status_dir.to_string_lossy();
         let worktree_path = self
             .expert_registry
             .get_expert(expert_id)
             .and_then(|info| info.worktree_path.as_deref().map(|s| s.to_string()));
-
-        let instruction_result = load_instruction_with_template(
-            &self.config.core_instructions_path,
-            &self.config.role_instructions_path,
+        let prepared = prepare_expert_files_with_role(
+            &self.config,
+            expert_id,
             &instruction_role,
-            expert_id,
-            &expert_name,
-            &self.config.status_file_path(expert_id),
             worktree_path.as_deref(),
-            &manifest_path_str,
-            &status_dir_str,
         )?;
-        let instruction_file = if !instruction_result.content.is_empty() {
-            Some(write_instruction_file(
-                &self.config.queue_path,
-                expert_id,
-                &instruction_result.content,
-            )?)
-        } else {
-            None
-        };
-        let agents_file = match &instruction_result.agents_json {
-            Some(json) => Some(write_agents_file(&self.config.queue_path, expert_id, json)?),
-            None => None,
-        };
-        let hooks_json = generate_hooks_settings(&self.config.status_file_path(expert_id));
-        let settings_file = Some(write_settings_file(
-            &self.config.queue_path,
-            expert_id,
-            &hooks_json,
-        )?);
 
         self.claude
             .launch_claude(
                 expert_id,
                 &working_dir,
-                instruction_file.as_deref(),
-                agents_file.as_deref(),
-                settings_file.as_deref(),
+                prepared.instruction_file.as_deref(),
+                prepared.agents_file.as_deref(),
+                prepared.settings_file.as_deref(),
             )
             .await?;
 
-        if instruction_result.used_general_fallback {
+        if prepared.used_general_fallback {
             self.set_message(format!(
                 "{} reset (role '{}' not found, using 'general')",
-                expert_name, instruction_result.requested_role
+                expert_name, prepared.requested_role
             ));
         } else {
             self.set_message(format!("{expert_name} reset complete"));
@@ -1587,8 +1523,7 @@ impl TowerApp {
 
         self.set_message(format!("Returning {expert_name} to project root..."));
 
-        self.claude.send_exit(expert_id).await?;
-        tokio::time::sleep(Duration::from_secs(3)).await;
+        exit_expert_and_set_pending(&self.claude, &self.detector, expert_id).await?;
 
         if let Ok(Some(mut ctx)) = self
             .context_store
@@ -1612,41 +1547,8 @@ impl TowerApp {
             );
         }
 
-        let manifest_path = self.config.queue_path.join("experts_manifest.json");
-        let manifest_path_str = manifest_path.to_string_lossy();
-        let status_dir = self.config.queue_path.join("status");
-        let status_dir_str = status_dir.to_string_lossy();
-
-        let instruction_result = load_instruction_with_template(
-            &self.config.core_instructions_path,
-            &self.config.role_instructions_path,
-            &instruction_role,
-            expert_id,
-            &expert_name,
-            &self.config.status_file_path(expert_id),
-            None,
-            &manifest_path_str,
-            &status_dir_str,
-        )?;
-        let instruction_file = if !instruction_result.content.is_empty() {
-            Some(write_instruction_file(
-                &self.config.queue_path,
-                expert_id,
-                &instruction_result.content,
-            )?)
-        } else {
-            None
-        };
-        let agents_file = match &instruction_result.agents_json {
-            Some(json) => Some(write_agents_file(&self.config.queue_path, expert_id, json)?),
-            None => None,
-        };
-        let hooks_json = generate_hooks_settings(&self.config.status_file_path(expert_id));
-        let settings_file = Some(write_settings_file(
-            &self.config.queue_path,
-            expert_id,
-            &hooks_json,
-        )?);
+        let prepared =
+            prepare_expert_files_with_role(&self.config, expert_id, &instruction_role, None)?;
 
         let project_root = self.config.project_path.to_str().unwrap_or(".").to_string();
 
@@ -1654,9 +1556,9 @@ impl TowerApp {
             .launch_claude(
                 expert_id,
                 &project_root,
-                instruction_file.as_deref(),
-                agents_file.as_deref(),
-                settings_file.as_deref(),
+                prepared.instruction_file.as_deref(),
+                prepared.agents_file.as_deref(),
+                prepared.settings_file.as_deref(),
             )
             .await?;
 
@@ -1707,17 +1609,14 @@ impl TowerApp {
             .get_role(expert_id)
             .map(ToString::to_string)
             .unwrap_or_else(|| config.get_expert_role(expert_id));
-        let core_path = config.core_instructions_path.clone();
-        let role_path = config.role_instructions_path.clone();
         let queue_path = config.queue_path.clone();
         let expert_name_clone = expert_name.clone();
         let branch_clone = branch_name.clone();
         let ready_timeout = config.timeouts.agent_ready;
-        let status_file_path = config.status_file_path(expert_id);
 
         let handle = tokio::spawn(async move {
-            claude.send_exit(expert_id).await?;
-            tokio::time::sleep(Duration::from_secs(3)).await;
+            let detector = ExpertStateDetector::new(queue_path.join("status"));
+            exit_expert_and_set_pending(&claude, &detector, expert_id).await?;
 
             let worktree_path = if worktree_already_exists {
                 worktree_manager.worktree_path(&branch_clone)
@@ -1747,45 +1646,20 @@ impl TowerApp {
             expert_ctx.set_worktree(branch_clone.clone(), wt_path_str.clone());
             context_store.save_expert_context(&expert_ctx).await?;
 
-            let manifest_path = queue_path.join("experts_manifest.json");
-            let manifest_path_str = manifest_path.to_string_lossy();
-            let status_dir = queue_path.join("status");
-            let status_dir_str = status_dir.to_string_lossy();
-
-            let instruction_result = load_instruction_with_template(
-                &core_path,
-                &role_path,
-                &instruction_role,
+            let prepared = prepare_expert_files_with_role(
+                &config,
                 expert_id,
-                &expert_name_clone,
-                &status_file_path,
+                &instruction_role,
                 Some(&wt_path_str),
-                &manifest_path_str,
-                &status_dir_str,
             )?;
-            let instruction_file = if !instruction_result.content.is_empty() {
-                Some(write_instruction_file(
-                    &queue_path,
-                    expert_id,
-                    &instruction_result.content,
-                )?)
-            } else {
-                None
-            };
-            let agents_file = match &instruction_result.agents_json {
-                Some(json) => Some(write_agents_file(&queue_path, expert_id, json)?),
-                None => None,
-            };
-            let hooks_json = generate_hooks_settings(&status_file_path);
-            let settings_file = Some(write_settings_file(&queue_path, expert_id, &hooks_json)?);
 
             claude
                 .launch_claude(
                     expert_id,
                     &wt_path_str,
-                    instruction_file.as_deref(),
-                    agents_file.as_deref(),
-                    settings_file.as_deref(),
+                    prepared.instruction_file.as_deref(),
+                    prepared.agents_file.as_deref(),
+                    prepared.settings_file.as_deref(),
                 )
                 .await?;
 
@@ -1852,52 +1726,22 @@ impl TowerApp {
             return Ok(());
         }
 
-        let expert_name = self.config.get_expert_name(expert_id);
         let instruction_role = self
             .session_roles
             .get_role(expert_id)
             .map(ToString::to_string)
             .unwrap_or_else(|| self.config.get_expert_role(expert_id));
 
-        let manifest_path = self.config.queue_path.join("experts_manifest.json");
-        let manifest_path_str = manifest_path.to_string_lossy();
-        let status_dir = self.config.queue_path.join("status");
-        let status_dir_str = status_dir.to_string_lossy();
         let worktree_path = self
             .expert_registry
             .get_expert(expert_id)
             .and_then(|info| info.worktree_path.as_deref().map(|s| s.to_string()));
-
-        let instruction_result = load_instruction_with_template(
-            &self.config.core_instructions_path,
-            &self.config.role_instructions_path,
+        let prepared = prepare_expert_files_with_role(
+            &self.config,
+            expert_id,
             &instruction_role,
-            expert_id,
-            &expert_name,
-            &self.config.status_file_path(expert_id),
             worktree_path.as_deref(),
-            &manifest_path_str,
-            &status_dir_str,
         )?;
-        let instruction_file = if !instruction_result.content.is_empty() {
-            Some(write_instruction_file(
-                &self.config.queue_path,
-                expert_id,
-                &instruction_result.content,
-            )?)
-        } else {
-            None
-        };
-        let agents_file = match &instruction_result.agents_json {
-            Some(json) => Some(write_agents_file(&self.config.queue_path, expert_id, json)?),
-            None => None,
-        };
-        let hooks_json = generate_hooks_settings(&self.config.status_file_path(expert_id));
-        let settings_file = Some(write_settings_file(
-            &self.config.queue_path,
-            expert_id,
-            &hooks_json,
-        )?);
 
         let working_dir = self.config.project_path.to_str().unwrap_or(".").to_string();
 
@@ -1906,9 +1750,9 @@ impl TowerApp {
             expert_id,
             &self.config.feature_execution,
             &self.config.project_path,
-            instruction_file,
-            agents_file,
-            settings_file,
+            prepared.instruction_file,
+            prepared.agents_file,
+            prepared.settings_file,
             working_dir,
         );
 

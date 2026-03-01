@@ -107,30 +107,36 @@ pub async fn init_session(config: &Config, project_path: &Path) -> Result<Sessio
     Ok(SessionManagers { tmux, claude })
 }
 
-/// Load instruction template and write instruction/agents/settings files for a single expert.
-/// Returns `(instruction_file, agents_file, settings_file)` paths.
-pub fn prepare_expert_files(
+pub struct PreparedExpertFiles {
+    pub instruction_file: Option<PathBuf>,
+    pub agents_file: Option<PathBuf>,
+    pub settings_file: Option<PathBuf>,
+    pub used_general_fallback: bool,
+    pub requested_role: String,
+}
+
+/// Load instruction template and write instruction/agents/settings files for a single expert
+/// using an explicitly provided role name and optional worktree path.
+pub fn prepare_expert_files_with_role(
     config: &Config,
     expert_id: u32,
-) -> Result<(Option<PathBuf>, Option<PathBuf>, Option<PathBuf>)> {
-    let expert = config
-        .get_expert(expert_id)
-        .context("Expert not found in config")?;
-
+    role: &str,
+    worktree_path: Option<&str>,
+) -> Result<PreparedExpertFiles> {
+    let expert_name = config.get_expert_name(expert_id);
     let manifest_path = config.queue_path.join("experts_manifest.json");
     let manifest_path_str = manifest_path.to_string_lossy();
     let status_dir = config.queue_path.join("status");
     let status_dir_str = status_dir.to_string_lossy();
 
-    let role_name = config.get_expert_role(expert_id);
     let instruction_result = load_instruction_with_template(
         &config.core_instructions_path,
         &config.role_instructions_path,
-        &role_name,
+        role,
         expert_id,
-        &expert.name,
+        &expert_name,
         &config.status_file_path(expert_id),
-        None,
+        worktree_path,
         &manifest_path_str,
         &status_dir_str,
     )?;
@@ -157,7 +163,43 @@ pub fn prepare_expert_files(
         &hooks_json,
     )?);
 
-    Ok((instruction_file, agents_file, settings_file))
+    Ok(PreparedExpertFiles {
+        instruction_file,
+        agents_file,
+        settings_file,
+        used_general_fallback: instruction_result.used_general_fallback,
+        requested_role: instruction_result.requested_role,
+    })
+}
+
+/// Load instruction template and write instruction/agents/settings files for a single expert.
+/// Returns `(instruction_file, agents_file, settings_file)` paths.
+pub fn prepare_expert_files(
+    config: &Config,
+    expert_id: u32,
+) -> Result<(Option<PathBuf>, Option<PathBuf>, Option<PathBuf>)> {
+    let role_name = config.get_expert_role(expert_id);
+    let prepared = prepare_expert_files_with_role(config, expert_id, &role_name, None)?;
+    Ok((
+        prepared.instruction_file,
+        prepared.agents_file,
+        prepared.settings_file,
+    ))
+}
+
+/// Send Escape + /exit to an expert, wait for it to stop, then set status to "pending".
+pub async fn exit_expert_and_set_pending(
+    claude: &ClaudeManager,
+    detector: &ExpertStateDetector,
+    expert_id: u32,
+) -> Result<()> {
+    claude.send_keys(expert_id, "Escape").await?;
+    claude.send_exit(expert_id).await?;
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    detector
+        .set_marker(expert_id, "pending")
+        .context("Failed to reset expert status")?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -183,6 +225,33 @@ mod tests {
         assert!(
             content.contains("Expert Instructions: Architect"),
             "prepare_expert_files: should load architect role instructions, not general fallback"
+        );
+
+        // Clean up
+        std::fs::remove_dir_all(&config.queue_path).ok();
+    }
+
+    #[test]
+    fn prepare_expert_files_with_role_uses_provided_role() {
+        let config =
+            Config::default().with_project_path(PathBuf::from("/tmp/macot-test-common-role"));
+
+        // Create required directories
+        std::fs::create_dir_all(config.queue_path.join("system_prompt")).ok();
+        std::fs::create_dir_all(config.queue_path.join("status")).ok();
+
+        // Use "general" role explicitly instead of the default "architect"
+        let prepared = prepare_expert_files_with_role(&config, 0, "general", None).unwrap();
+
+        let content = std::fs::read_to_string(prepared.instruction_file.unwrap()).unwrap();
+        // "general" role loads Quality Principles, not "Expert Instructions: Architect"
+        assert!(
+            !content.contains("Expert Instructions: Architect"),
+            "prepare_expert_files_with_role: should use 'general' role, not default 'architect'"
+        );
+        assert!(
+            content.contains("Quality Principles"),
+            "prepare_expert_files_with_role: should contain general role content"
         );
 
         // Clean up
