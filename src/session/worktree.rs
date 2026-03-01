@@ -3,10 +3,7 @@ use std::path::{Path, PathBuf};
 use tokio::process::Command;
 use tokio::task::JoinHandle;
 
-fn path_to_str(path: &Path) -> Result<&str> {
-    path.to_str()
-        .ok_or_else(|| anyhow::anyhow!("Path contains non-UTF8 characters: {}", path.display()))
-}
+use crate::utils::path_to_str;
 
 pub struct WorktreeLaunchResult {
     pub expert_id: u32,

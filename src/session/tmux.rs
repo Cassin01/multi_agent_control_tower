@@ -294,7 +294,7 @@ impl TmuxManager {
     }
 
     pub async fn create_session(&self, num_windows: u32, working_dir: &str) -> Result<()> {
-        Command::new("tmux")
+        let output = Command::new("tmux")
             .args([
                 "new-session",
                 "-d",
@@ -306,6 +306,7 @@ impl TmuxManager {
             .output()
             .await
             .context("Failed to create tmux session")?;
+        check_tmux_status(output, "new-session")?;
 
         let output = Command::new("tmux")
             .args([
@@ -321,23 +322,24 @@ impl TmuxManager {
         check_tmux_status(output, "set history-limit")?;
 
         for i in 1..num_windows {
-            Command::new("tmux")
+            let output = Command::new("tmux")
                 .args(["new-window", "-t", &self.session_name, "-c", working_dir])
                 .output()
                 .await
                 .context(format!("Failed to create window {i}"))?;
+            check_tmux_status(output, &format!("new-window {i}"))?;
         }
 
         Ok(())
     }
 
     pub async fn set_env(&self, key: &str, value: &str) -> Result<()> {
-        Command::new("tmux")
+        let output = Command::new("tmux")
             .args(["setenv", "-t", &self.session_name, key, value])
             .output()
             .await
             .context(format!("Failed to set env {key}"))?;
-        Ok(())
+        check_tmux_status(output, &format!("setenv {key}"))
     }
 
     pub async fn get_env(&self, key: &str) -> Result<Option<String>> {
@@ -358,16 +360,16 @@ impl TmuxManager {
     }
 
     pub async fn kill_session(&self) -> Result<()> {
-        Command::new("tmux")
+        let output = Command::new("tmux")
             .args(["kill-session", "-t", &self.session_name])
             .output()
             .await
             .context("Failed to kill tmux session")?;
-        Ok(())
+        check_tmux_status(output, "kill-session")
     }
 
     pub async fn set_pane_title(&self, window_id: u32, title: &str) -> Result<()> {
-        Command::new("tmux")
+        let output = Command::new("tmux")
             .args([
                 "select-pane",
                 "-t",
@@ -378,7 +380,7 @@ impl TmuxManager {
             .output()
             .await
             .context(format!("Failed to set pane title for window {window_id}"))?;
-        Ok(())
+        check_tmux_status(output, &format!("select-pane {window_id}"))
     }
 
     #[allow(dead_code)]
@@ -809,6 +811,32 @@ mod tests {
         );
         assert_eq!(paths[&0], "/valid/path");
         assert_eq!(paths[&1], "/another/path");
+    }
+
+    #[test]
+    fn check_tmux_status_with_signal_exit_returns_error() {
+        let output = make_output(2, "", "unknown command");
+        let result = check_tmux_status(output, "setenv");
+        let err = result.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("setenv"),
+            "check_tmux_status: error should contain context string, got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn check_tmux_status_with_empty_stderr_includes_context() {
+        let output = make_output(127, "", "");
+        let result = check_tmux_status(output, "kill-session");
+        let err = result.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("kill-session"),
+            "check_tmux_status: error with empty stderr should still include context, got: {}",
+            msg
+        );
     }
 
     #[tokio::test]

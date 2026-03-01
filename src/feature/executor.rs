@@ -292,7 +292,8 @@ fn format_blocked_message(diag: &BlockedDiagnostic) -> String {
         );
     }
     if diag.has_cycle {
-        msg.push_str("Possible circular dependency detected.\n");
+        let members = diag.cycle_members.join(", ");
+        let _ = writeln!(msg, "Circular dependency detected among tasks: [{members}]");
     }
     msg
 }
@@ -1041,7 +1042,7 @@ mod tests {
             "next_batch_dag_mode_blocked_returns_error: error message should describe blocked state"
         );
         assert!(
-            msg.contains("circular dependency"),
+            msg.contains("Circular dependency"),
             "next_batch_dag_mode_blocked_returns_error: should mention cycle detection"
         );
     }

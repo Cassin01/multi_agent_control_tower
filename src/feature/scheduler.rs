@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -16,6 +16,7 @@ pub enum SchedulerMode {
 pub struct BlockedDiagnostic {
     pub blocked_tasks: Vec<BlockedTask>,
     pub has_cycle: bool,
+    pub cycle_members: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -42,14 +43,17 @@ pub fn select_runnable<'a>(tasks: &'a [TaskEntry], mode: SchedulerMode) -> Sched
     }
 }
 
+/// Select runnable tasks from a DAG, detecting cycles via Kahn's algorithm.
+///
+/// When no tasks are runnable, uses topological sort (Kahn's algorithm) to
+/// identify which uncompleted tasks form dependency cycles. Tasks remaining
+/// after iteratively removing zero-in-degree nodes are cycle members.
 fn select_runnable_dag<'a>(tasks: &'a [TaskEntry]) -> ScheduleResult<'a> {
     let completed_set: HashSet<&str> = tasks
         .iter()
         .filter(|t| t.completed)
         .map(|t| t.number.as_str())
         .collect();
-
-    let known_set: HashSet<&str> = tasks.iter().map(|t| t.number.as_str()).collect();
 
     let uncompleted: Vec<&TaskEntry> = tasks.iter().filter(|t| !t.completed).collect();
 
@@ -81,15 +85,53 @@ fn select_runnable_dag<'a>(tasks: &'a [TaskEntry]) -> ScheduleResult<'a> {
     if !runnable.is_empty() {
         ScheduleResult::Runnable(runnable)
     } else {
-        let has_cycle = blocked_tasks.iter().all(|bt| {
-            bt.missing_deps
-                .iter()
-                .all(|dep| known_set.contains(dep.as_str()))
-        });
+        // Kahn's algorithm: detect cycle members among uncompleted tasks.
+        // Build in-degree map counting only internal uncompleted dependencies.
+        let uncompleted_set: HashSet<&str> =
+            uncompleted.iter().map(|t| t.number.as_str()).collect();
+        let mut in_degree: HashMap<&str, usize> = HashMap::new();
+        for t in &uncompleted {
+            in_degree.entry(t.number.as_str()).or_insert(0);
+            for dep in &t.dependencies {
+                if uncompleted_set.contains(dep.as_str()) && !completed_set.contains(dep.as_str()) {
+                    *in_degree.entry(t.number.as_str()).or_insert(0) += 1;
+                }
+            }
+        }
+
+        // Iteratively remove nodes with in-degree 0
+        let mut queue: Vec<&str> = in_degree
+            .iter()
+            .filter(|(_, &deg)| deg == 0)
+            .map(|(&node, _)| node)
+            .collect();
+        let mut removed = HashSet::new();
+        while let Some(node) = queue.pop() {
+            removed.insert(node);
+            for t in &uncompleted {
+                if t.dependencies.iter().any(|d| d.as_str() == node) {
+                    if let Some(deg) = in_degree.get_mut(t.number.as_str()) {
+                        *deg = deg.saturating_sub(1);
+                        if *deg == 0 && !removed.contains(t.number.as_str()) {
+                            queue.push(t.number.as_str());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Remaining nodes (not removed) are cycle members
+        let cycle_members: Vec<String> = uncompleted
+            .iter()
+            .filter(|t| !removed.contains(t.number.as_str()))
+            .map(|t| t.number.clone())
+            .collect();
+        let has_cycle = !cycle_members.is_empty();
 
         ScheduleResult::Blocked(BlockedDiagnostic {
             blocked_tasks,
             has_cycle,
+            cycle_members,
         })
     }
 }
@@ -177,6 +219,15 @@ mod tests {
                     diag.blocked_tasks.len(),
                     2,
                     "dag_blocked_when_deps_incomplete: both tasks should be blocked"
+                );
+                assert!(
+                    diag.has_cycle,
+                    "dag_blocked_when_deps_incomplete: should detect cycle"
+                );
+                assert_eq!(
+                    diag.cycle_members.len(),
+                    2,
+                    "dag_blocked_when_deps_incomplete: cycle_members should contain both tasks"
                 );
             }
             other => panic!(
@@ -293,5 +344,104 @@ mod tests {
             ),
             "sequential_all_done: should return AllDone when all tasks completed"
         );
+    }
+
+    // --- Cycle detection with member reporting tests ---
+
+    #[test]
+    fn dag_cycle_reports_cycle_members() {
+        // 2-node mutual cycle
+        let tasks = vec![task("1", false, &["2"]), task("2", false, &["1"])];
+        match select_runnable(&tasks, SchedulerMode::Dag) {
+            ScheduleResult::Blocked(diag) => {
+                assert!(
+                    diag.has_cycle,
+                    "dag_cycle_reports_cycle_members: should detect cycle"
+                );
+                let members: std::collections::HashSet<&str> =
+                    diag.cycle_members.iter().map(|s| s.as_str()).collect();
+                assert!(
+                    members.contains("1") && members.contains("2"),
+                    "dag_cycle_reports_cycle_members: cycle_members should contain both tasks, got: {:?}",
+                    diag.cycle_members
+                );
+            }
+            other => panic!(
+                "dag_cycle_reports_cycle_members: expected Blocked, got {:?}",
+                other
+            ),
+        }
+    }
+
+    #[test]
+    fn dag_three_node_cycle_reports_all_members() {
+        // 3-node cycle: 1->2->3->1
+        let tasks = vec![
+            task("1", false, &["3"]),
+            task("2", false, &["1"]),
+            task("3", false, &["2"]),
+        ];
+        match select_runnable(&tasks, SchedulerMode::Dag) {
+            ScheduleResult::Blocked(diag) => {
+                assert!(
+                    diag.has_cycle,
+                    "dag_three_node_cycle_reports_all_members: should detect cycle"
+                );
+                let members: std::collections::HashSet<&str> =
+                    diag.cycle_members.iter().map(|s| s.as_str()).collect();
+                assert!(
+                    members.contains("1") && members.contains("2") && members.contains("3"),
+                    "dag_three_node_cycle_reports_all_members: all 3 tasks should be cycle members, got: {:?}",
+                    diag.cycle_members
+                );
+            }
+            other => panic!(
+                "dag_three_node_cycle_reports_all_members: expected Blocked, got {:?}",
+                other
+            ),
+        }
+    }
+
+    #[test]
+    fn dag_no_cycle_empty_cycle_members() {
+        // External dep (non-existent task 99), not a cycle
+        let tasks = vec![task("1", false, &["99"])];
+        match select_runnable(&tasks, SchedulerMode::Dag) {
+            ScheduleResult::Blocked(diag) => {
+                assert!(
+                    !diag.has_cycle,
+                    "dag_no_cycle_empty_cycle_members: should not detect cycle for external dep"
+                );
+                assert!(
+                    diag.cycle_members.is_empty(),
+                    "dag_no_cycle_empty_cycle_members: cycle_members should be empty, got: {:?}",
+                    diag.cycle_members
+                );
+            }
+            other => panic!(
+                "dag_no_cycle_empty_cycle_members: expected Blocked, got {:?}",
+                other
+            ),
+        }
+    }
+
+    #[test]
+    fn dag_self_cycle_detected() {
+        // Self-dependency
+        let tasks = vec![task("1", false, &["1"])];
+        match select_runnable(&tasks, SchedulerMode::Dag) {
+            ScheduleResult::Blocked(diag) => {
+                assert!(
+                    diag.has_cycle,
+                    "dag_self_cycle_detected: should detect self-cycle"
+                );
+                assert_eq!(
+                    diag.cycle_members,
+                    vec!["1"],
+                    "dag_self_cycle_detected: cycle_members should contain the self-referencing task"
+                );
+            }
+            other => panic!("dag_self_cycle_detected: expected Blocked, got {:?}", other),
+        }
     }
 }

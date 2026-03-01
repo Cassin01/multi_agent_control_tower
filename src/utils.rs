@@ -1,3 +1,4 @@
+use anyhow::Result;
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
@@ -63,6 +64,12 @@ pub fn truncate_str_head(s: &str, max_chars: usize) -> String {
         let byte_index = s.char_indices().nth(skip).map(|(i, _)| i).unwrap_or(0);
         format!("...{}", &s[byte_index..])
     }
+}
+
+/// Convert a Path to a UTF-8 string, returning an error for non-UTF-8 paths.
+pub fn path_to_str(path: &Path) -> Result<&str> {
+    path.to_str()
+        .ok_or_else(|| anyhow::anyhow!("Path contains non-UTF8 characters: {}", path.display()))
 }
 
 /// Compute a deterministic 8-char hex hash from an absolute path.
@@ -283,6 +290,37 @@ mod tests {
             truncate_str_head(japanese, 10),
             japanese,
             "truncate_str_head: short Japanese string should remain unchanged"
+        );
+    }
+
+    #[test]
+    fn path_to_str_valid_utf8() {
+        let path = std::path::Path::new("/tmp/valid/path");
+        let result = path_to_str(path);
+        assert_eq!(
+            result.unwrap(),
+            "/tmp/valid/path",
+            "path_to_str: valid UTF-8 path should return Ok"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn path_to_str_non_utf8_returns_error() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        let invalid = OsStr::from_bytes(&[0xff, 0xfe]);
+        let path = std::path::Path::new(invalid);
+        let result = path_to_str(path);
+        assert!(
+            result.is_err(),
+            "path_to_str: non-UTF8 path should return Err"
+        );
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("non-UTF8"),
+            "path_to_str: error should mention non-UTF8, got: {}",
+            msg
         );
     }
 
