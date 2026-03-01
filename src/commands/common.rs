@@ -123,6 +123,11 @@ pub fn prepare_expert_files_with_role(
     role: &str,
     worktree_path: Option<&str>,
 ) -> Result<PreparedExpertFiles> {
+    // Validate that the expert ID exists in the configuration
+    config
+        .get_expert(expert_id)
+        .with_context(|| format!("No expert configured with id {}", expert_id))?;
+
     let expert_name = config.get_expert_name(expert_id);
     let manifest_path = config.queue_path.join("experts_manifest.json");
     let manifest_path_str = manifest_path.to_string_lossy();
@@ -198,7 +203,7 @@ pub async fn exit_expert_and_set_pending(
     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
     detector
         .set_marker(expert_id, "pending")
-        .context("Failed to reset expert status")?;
+        .context("Failed to set expert status to pending")?;
     Ok(())
 }
 
@@ -208,43 +213,36 @@ mod tests {
 
     #[test]
     fn prepare_expert_files_uses_role_not_name() {
-        let config = Config::default().with_project_path(PathBuf::from("/tmp/macot-test-common"));
+        let tmp = tempfile::tempdir().unwrap();
+        let config = Config::default().with_project_path(tmp.path().to_path_buf());
         // Default config: expert 0 = name "Alyosha", role "architect"
         let expert = config.get_expert(0).unwrap();
         assert_eq!(expert.name, "Alyosha");
         assert_eq!(expert.role, "architect");
 
-        // Create required directories
         std::fs::create_dir_all(config.queue_path.join("system_prompt")).ok();
         std::fs::create_dir_all(config.queue_path.join("status")).ok();
 
         let (instruction_file, _, _) = prepare_expert_files(&config, 0).unwrap();
 
         let content = std::fs::read_to_string(instruction_file.unwrap()).unwrap();
-        // The content should contain the architect role instructions, not general fallback
         assert!(
             content.contains("Expert Instructions: Architect"),
             "prepare_expert_files: should load architect role instructions, not general fallback"
         );
-
-        // Clean up
-        std::fs::remove_dir_all(&config.queue_path).ok();
     }
 
     #[test]
     fn prepare_expert_files_with_role_uses_provided_role() {
-        let config =
-            Config::default().with_project_path(PathBuf::from("/tmp/macot-test-common-role"));
+        let tmp = tempfile::tempdir().unwrap();
+        let config = Config::default().with_project_path(tmp.path().to_path_buf());
 
-        // Create required directories
         std::fs::create_dir_all(config.queue_path.join("system_prompt")).ok();
         std::fs::create_dir_all(config.queue_path.join("status")).ok();
 
-        // Use "general" role explicitly instead of the default "architect"
         let prepared = prepare_expert_files_with_role(&config, 0, "general", None).unwrap();
 
         let content = std::fs::read_to_string(prepared.instruction_file.unwrap()).unwrap();
-        // "general" role loads Quality Principles, not "Expert Instructions: Architect"
         assert!(
             !content.contains("Expert Instructions: Architect"),
             "prepare_expert_files_with_role: should use 'general' role, not default 'architect'"
@@ -253,9 +251,6 @@ mod tests {
             content.contains("Quality Principles"),
             "prepare_expert_files_with_role: should contain general role content"
         );
-
-        // Clean up
-        std::fs::remove_dir_all(&config.queue_path).ok();
     }
 }
 
