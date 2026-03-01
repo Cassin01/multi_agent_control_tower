@@ -127,6 +127,7 @@ impl ExpertRegistry {
     }
 
     /// Find expert ID by name (case-insensitive)
+    #[allow(dead_code)]
     pub fn find_by_name(&self, name: &str) -> Option<ExpertId> {
         // First try exact match
         if let Some(&expert_id) = self.name_to_id.get(name) {

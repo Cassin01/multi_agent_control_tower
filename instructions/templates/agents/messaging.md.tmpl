@@ -16,7 +16,7 @@ Write a YAML file to `.macot/messages/outbox/` with the following format:
 message_id: "msg-YYYYMMDD-HHMMSSmmm"  # Unique ID with timestamp
 from_expert_id: {{ expert_id }}                      # Your expert ID
 to:
-  expert_name: "Alyosha"               # Target by name, ID, or role
+  expert_id: 0                         # Target by ID or role
 message_type: query                    # query | response | notify | delegate
 priority: normal                       # low | normal | high
 created_at: "2024-01-15T10:30:00Z"    # ISO 8601 timestamp
@@ -29,13 +29,9 @@ reply_to: null                         # Set to original message_id for response
 
 ### Recipient Targeting
 
-Three ways to specify the recipient:
+Two ways to specify the recipient:
 
 ```yaml
-# By expert name (case-insensitive)
-to:
-  expert_name: "Alyosha"
-
 # By expert ID
 to:
   expert_id: 0
@@ -58,8 +54,8 @@ to:
 
 Messages are scoped to the sender's worktree context. When experts are launched in git worktrees, the following rules apply:
 
-- Experts in the **same worktree** can exchange messages freely using any targeting strategy (ID, name, or role).
-- Experts in **different worktrees** cannot exchange messages. Delivery will fail even when targeting by explicit ID or name.
+- Experts in the **same worktree** can exchange messages freely using any targeting strategy (ID or role).
+- Experts in **different worktrees** cannot exchange messages. Delivery will fail even when targeting by explicit ID.
 - Experts in the **main repository** (not in a worktree) form a default communication group and can message each other.
 
 If you are in a worktree, your messages will only reach other experts in the same worktree.
@@ -70,7 +66,7 @@ If you are in a worktree, your messages will only reach other experts in the sam
 message_id: "msg-20240115-103000001"
 from_expert_id: 1
 to:
-  expert_name: "Alyosha"
+  expert_id: 0
 message_type: query
 priority: normal
 created_at: "2024-01-15T10:30:00Z"
