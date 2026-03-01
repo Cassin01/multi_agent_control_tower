@@ -122,10 +122,11 @@ pub fn prepare_expert_files(
     let status_dir = config.queue_path.join("status");
     let status_dir_str = status_dir.to_string_lossy();
 
+    let role_name = config.get_expert_role(expert_id);
     let instruction_result = load_instruction_with_template(
         &config.core_instructions_path,
         &config.role_instructions_path,
-        &expert.name,
+        &role_name,
         expert_id,
         &expert.name,
         &config.status_file_path(expert_id),
@@ -157,6 +158,36 @@ pub fn prepare_expert_files(
     )?);
 
     Ok((instruction_file, agents_file, settings_file))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prepare_expert_files_uses_role_not_name() {
+        let config = Config::default().with_project_path(PathBuf::from("/tmp/macot-test-common"));
+        // Default config: expert 0 = name "Alyosha", role "architect"
+        let expert = config.get_expert(0).unwrap();
+        assert_eq!(expert.name, "Alyosha");
+        assert_eq!(expert.role, "architect");
+
+        // Create required directories
+        std::fs::create_dir_all(config.queue_path.join("system_prompt")).ok();
+        std::fs::create_dir_all(config.queue_path.join("status")).ok();
+
+        let (instruction_file, _, _) = prepare_expert_files(&config, 0).unwrap();
+
+        let content = std::fs::read_to_string(instruction_file.unwrap()).unwrap();
+        // The content should contain the architect role instructions, not general fallback
+        assert!(
+            content.contains("Expert Instructions: Architect"),
+            "prepare_expert_files: should load architect role instructions, not general fallback"
+        );
+
+        // Clean up
+        std::fs::remove_dir_all(&config.queue_path).ok();
+    }
 }
 
 /// Resolve and validate an existing session, returning its TmuxManager and metadata.
