@@ -21,8 +21,6 @@ pub type ExpertId = u32;
 pub enum MessageRecipient {
     /// Send to specific expert by ID
     ExpertId { expert_id: u32 },
-    /// Send to specific expert by name
-    ExpertName { expert_name: String },
     /// Send to any idle expert with this role
     Role { role: String },
 }
@@ -31,12 +29,6 @@ pub enum MessageRecipient {
 impl MessageRecipient {
     pub fn expert_id(id: u32) -> Self {
         Self::ExpertId { expert_id: id }
-    }
-
-    pub fn expert_name(name: impl Into<String>) -> Self {
-        Self::ExpertName {
-            expert_name: name.into(),
-        }
     }
 
     pub fn role(role: impl Into<String>) -> Self {
@@ -177,17 +169,11 @@ mod tests {
     #[test]
     fn message_recipient_constructors() {
         let by_id = MessageRecipient::expert_id(42);
-        let by_name = MessageRecipient::expert_name("backend");
         let by_role = MessageRecipient::role("developer");
 
         match by_id {
             MessageRecipient::ExpertId { expert_id } => assert_eq!(expert_id, 42),
             _ => panic!("Expected ExpertId variant"),
-        }
-
-        match by_name {
-            MessageRecipient::ExpertName { expert_name } => assert_eq!(expert_name, "backend"),
-            _ => panic!("Expected ExpertName variant"),
         }
 
         match by_role {
@@ -263,7 +249,7 @@ mod tests {
             subject: "API Question".to_string(),
             body: "What format should we use for dates?".to_string(),
         };
-        let recipient = MessageRecipient::expert_name("Backend".to_string());
+        let recipient = MessageRecipient::expert_id(2);
 
         let message = Message::new(0, recipient, MessageType::Query, content)
             .with_priority(MessagePriority::High);
@@ -272,7 +258,7 @@ mod tests {
         assert!(yaml.contains("message_type: query"));
         assert!(yaml.contains("priority: high"));
         assert!(yaml.contains("from_expert_id: 0"));
-        assert!(yaml.contains("expert_name: Backend"));
+        assert!(yaml.contains("expert_id: 2"));
     }
 
     #[test]
@@ -318,6 +304,35 @@ metadata: {}
     fn message_priority_default_is_normal() {
         assert_eq!(MessagePriority::default(), MessagePriority::Normal);
     }
+
+    #[test]
+    fn message_recipient_expert_name_yaml_is_rejected() {
+        let yaml = r#"expert_name: "Alyosha""#;
+        let result: Result<MessageRecipient, _> = serde_yaml::from_str(yaml);
+        assert!(
+            result.is_err(),
+            "expert_name YAML should not deserialize into MessageRecipient"
+        );
+    }
+
+    #[test]
+    fn message_recipient_expert_id_yaml_deserializes() {
+        let yaml = "expert_id: 2";
+        let recipient: MessageRecipient = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(recipient, MessageRecipient::ExpertId { expert_id: 2 });
+    }
+
+    #[test]
+    fn message_recipient_role_yaml_deserializes() {
+        let yaml = r#"role: "backend""#;
+        let recipient: MessageRecipient = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            recipient,
+            MessageRecipient::Role {
+                role: "backend".to_string()
+            }
+        );
+    }
 }
 
 #[cfg(test)]
@@ -334,7 +349,6 @@ mod property_tests {
     fn arbitrary_message_recipient() -> impl Strategy<Value = MessageRecipient> {
         prop_oneof![
             (0u32..100).prop_map(MessageRecipient::expert_id),
-            "[a-zA-Z0-9-]{1,50}".prop_map(MessageRecipient::expert_name),
             "[a-zA-Z0-9-]{1,50}".prop_map(MessageRecipient::role),
         ]
     }

@@ -193,9 +193,6 @@ impl MessagingDisplay {
     fn recipient_display(recipient: &crate::models::MessageRecipient) -> String {
         match recipient {
             crate::models::MessageRecipient::ExpertId { expert_id } => format!("→{expert_id}"),
-            crate::models::MessageRecipient::ExpertName { expert_name } => {
-                format!("→{}", truncate_str(expert_name, 8))
-            }
             crate::models::MessageRecipient::Role { role } => {
                 format!("→@{}", truncate_str(role, 7))
             }
@@ -537,10 +534,6 @@ mod tests {
     #[test]
     fn messaging_display_recipient_display_formats_correctly() {
         assert!(MessagingDisplay::recipient_display(&MessageRecipient::expert_id(5)).contains("5"));
-        assert!(
-            MessagingDisplay::recipient_display(&MessageRecipient::expert_name("test".to_string()))
-                .contains("test")
-        );
         assert!(MessagingDisplay::recipient_display(&MessageRecipient::role(
             "backend".to_string()
         ))
@@ -576,7 +569,6 @@ mod property_tests {
     fn arbitrary_message_recipient() -> impl Strategy<Value = MessageRecipient> {
         prop_oneof![
             (1u32..100).prop_map(MessageRecipient::expert_id),
-            "[a-zA-Z0-9]{1,20}".prop_map(MessageRecipient::expert_name),
             "[a-zA-Z0-9]{1,20}".prop_map(MessageRecipient::role),
         ]
     }

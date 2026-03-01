@@ -991,7 +991,6 @@ mod property_tests {
     fn arbitrary_message_recipient() -> impl Strategy<Value = MessageRecipient> {
         prop_oneof![
             (0u32..100).prop_map(MessageRecipient::expert_id),
-            "[a-zA-Z0-9-]{1,50}".prop_map(MessageRecipient::expert_name),
             "[a-zA-Z0-9-]{1,50}".prop_map(MessageRecipient::role),
         ]
     }

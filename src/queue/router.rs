@@ -149,6 +149,7 @@ impl<T: TmuxSender> MessageRouter<T> {
                         // Update delivery attempts and status
                         let mut updated_message = queued_message.clone();
                         updated_message.mark_delivery_attempt();
+                        updated_message.message.increment_delivery_attempts();
 
                         if let Some(error) = &result.error {
                             updated_message.mark_failed(error.clone());
@@ -309,26 +310,6 @@ impl<T: TmuxSender> MessageRouter<T> {
                 } else {
                     warn!("Expert with ID {} not found in registry", expert_id);
                     Ok(None)
-                }
-            }
-            MessageRecipient::ExpertName { expert_name } => {
-                // Targeting by name (case-insensitive)
-                match self.expert_registry.find_by_name(expert_name) {
-                    Some(expert_id) => {
-                        if self.worktree_matches(sender_id, expert_id) {
-                            Ok(Some(expert_id))
-                        } else {
-                            warn!(
-                                "Expert {} is in a different worktree than sender {}",
-                                expert_id, sender_id
-                            );
-                            Ok(None)
-                        }
-                    }
-                    None => {
-                        warn!("Expert with name '{}' not found in registry", expert_name);
-                        Ok(None)
-                    }
                 }
             }
             MessageRecipient::Role { role } => {
@@ -642,19 +623,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn find_recipient_by_expert_name() {
-        let (router, _temp) = create_test_router().await;
-
-        let recipient = MessageRecipient::expert_name("backend-dev".to_string());
-        let result = router.find_recipient(&recipient, 2).await.unwrap();
-        assert_eq!(result, Some(1));
-
-        let recipient = MessageRecipient::expert_name("nonexistent".to_string());
-        let result = router.find_recipient(&recipient, 1).await.unwrap();
-        assert_eq!(result, None);
-    }
-
-    #[tokio::test]
     async fn find_recipient_by_role_returns_idle_expert() {
         let (mut router, _temp) = create_test_router().await;
 
@@ -782,6 +750,82 @@ mod tests {
         // Process outbox (should be empty)
         let processed = router.process_outbox().await.unwrap();
         assert!(processed.is_empty());
+    }
+
+    #[tokio::test]
+    async fn process_queue_increments_message_delivery_attempts() {
+        let (mut router, _temp) = create_test_router().await;
+
+        // Set expert 1 to busy so delivery fails
+        router
+            .expert_registry_mut()
+            .update_expert_state(1, ExpertState::Busy)
+            .unwrap();
+
+        let content = MessageContent {
+            subject: "Test".to_string(),
+            body: "Body".to_string(),
+        };
+        let msg = Message::new(
+            2,
+            MessageRecipient::expert_id(1),
+            MessageType::Query,
+            content,
+        );
+        let msg_id = msg.message_id.clone();
+        router.queue_manager_mut().enqueue(&msg).await.unwrap();
+
+        // Process queue - delivery should fail (expert busy)
+        router.process_queue().await.unwrap();
+
+        // Read back the message from queue and verify delivery_attempts was incremented
+        let pending = router.queue_manager().get_pending_messages().await.unwrap();
+        let updated = pending.iter().find(|m| m.message.message_id == msg_id);
+        assert!(
+            updated.is_some(),
+            "process_queue_increments_message_delivery_attempts: message should still be in queue"
+        );
+        let updated = updated.unwrap();
+        assert_eq!(
+            updated.message.delivery_attempts, 1,
+            "process_queue_increments_message_delivery_attempts: Message.delivery_attempts should be incremented on failed delivery"
+        );
+    }
+
+    #[tokio::test]
+    async fn process_queue_removes_message_after_max_delivery_attempts() {
+        let (mut router, _temp) = create_test_router().await;
+
+        // Set expert 1 to busy so delivery always fails
+        router
+            .expert_registry_mut()
+            .update_expert_state(1, ExpertState::Busy)
+            .unwrap();
+
+        let content = MessageContent {
+            subject: "Test".to_string(),
+            body: "Body".to_string(),
+        };
+        let mut msg = Message::new(
+            2,
+            MessageRecipient::expert_id(1),
+            MessageType::Query,
+            content,
+        );
+        // Set delivery_attempts to one below the max
+        msg.delivery_attempts = MAX_DELIVERY_ATTEMPTS - 1;
+        let msg_id = msg.message_id.clone();
+        router.queue_manager_mut().enqueue(&msg).await.unwrap();
+
+        // Process queue - should increment to MAX and remove
+        router.process_queue().await.unwrap();
+
+        let pending = router.queue_manager().get_pending_messages().await.unwrap();
+        let found = pending.iter().any(|m| m.message.message_id == msg_id);
+        assert!(
+            !found,
+            "process_queue_removes_message_after_max_delivery_attempts: message should be removed after exceeding max attempts"
+        );
     }
 }
 
@@ -947,18 +991,6 @@ mod worktree_tests {
         );
     }
 
-    #[tokio::test]
-    async fn find_recipient_by_name_worktree_mismatch_returns_none() {
-        let (router, _temp) = create_worktree_router().await;
-        // Expert 0 (main) tries to reach "auth-dev" (feature-auth) by name
-        let recipient = MessageRecipient::expert_name("auth-dev".to_string());
-        let result = router.find_recipient(&recipient, 0).await.unwrap();
-        assert_eq!(
-            result, None,
-            "find_recipient: name targeting across worktrees should return None"
-        );
-    }
-
     // Property 3: Role Scoping
     #[tokio::test]
     async fn find_recipient_by_role_returns_only_same_worktree() {
@@ -1008,18 +1040,6 @@ mod worktree_tests {
             result,
             Some(4),
             "find_recipient: main repo experts should find each other by ID"
-        );
-    }
-
-    #[tokio::test]
-    async fn main_repo_experts_can_find_each_other_by_name() {
-        let (router, _temp) = create_worktree_router().await;
-        let recipient = MessageRecipient::expert_name("main-dev".to_string());
-        let result = router.find_recipient(&recipient, 0).await.unwrap();
-        assert_eq!(
-            result,
-            Some(4),
-            "find_recipient: main repo experts should find each other by name"
         );
     }
 
@@ -1152,7 +1172,6 @@ mod property_tests {
     fn arbitrary_message_recipient() -> impl Strategy<Value = MessageRecipient> {
         prop_oneof![
             (1u32..100).prop_map(MessageRecipient::expert_id),
-            "[a-zA-Z0-9-]{1,50}".prop_map(MessageRecipient::expert_name),
             "[a-zA-Z0-9-]{1,50}".prop_map(MessageRecipient::role),
         ]
     }
@@ -1238,14 +1257,6 @@ mod property_tests {
                                 assert_eq!(result, None);
                             }
                         },
-                        MessageRecipient::ExpertName { expert_name } => {
-                            // Requirement 2.2: Message should deliver to expert with exact name
-                            if let Some(found_id) = result {
-                                let expert_info = router.expert_registry().get_expert(found_id).unwrap();
-                                // Name matching should be case-insensitive but exact
-                                assert!(expert_info.name.to_lowercase().contains(&expert_name.to_lowercase()));
-                            }
-                        },
                         MessageRecipient::Role { role } => {
                             // Requirements 2.3, 2.4: Message should deliver to idle expert with matching role
                             if let Some(found_id) = result {
@@ -1302,11 +1313,6 @@ mod property_tests {
                 let result = router.find_recipient(&by_id, sender_id).await.unwrap();
                 assert_eq!(result, Some(target_expert_id));
 
-                // Test targeting by name - should find exactly the target expert
-                let by_name = MessageRecipient::expert_name(target_expert.name.clone());
-                let result = router.find_recipient(&by_name, sender_id).await.unwrap();
-                assert_eq!(result, Some(target_expert_id));
-
                 // Test targeting by role - should find the target expert if it's the only idle one with that role
                 let by_role = MessageRecipient::role(target_expert.role.as_str().to_string());
                 let result = router.find_recipient(&by_role, sender_id).await.unwrap();
@@ -1355,9 +1361,6 @@ mod property_tests {
                     match &recipient {
                         MessageRecipient::ExpertId { expert_id } => {
                             assert_eq!(found_id, *expert_id);
-                        },
-                        MessageRecipient::ExpertName { expert_name } => {
-                            assert!(expert_info.matches_name(expert_name));
                         },
                         MessageRecipient::Role { role } => {
                             assert!(expert_info.matches_role(role));
