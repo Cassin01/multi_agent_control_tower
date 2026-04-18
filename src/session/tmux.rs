@@ -211,9 +211,12 @@ impl TmuxSender for TmuxManager {
     }
 
     async fn resize_pane(&self, window_id: u32, width: u16, height: u16) -> Result<()> {
+        // Use `resize-window`: `resize-pane` only adjusts pane boundaries
+        // within a window and cannot grow a single-pane detached window.
+        // Requires tmux >= 2.9 and `window-size manual` on the session.
         let output = Command::new("tmux")
             .args([
-                "resize-pane",
+                "resize-window",
                 "-t",
                 &format!("{}:{}", self.session_name, window_id),
                 "-x",
@@ -224,7 +227,7 @@ impl TmuxSender for TmuxManager {
             .output()
             .await
             .context(format!("Failed to resize window {window_id}"))?;
-        check_tmux_status(output, &format!("resize-pane {window_id}"))
+        check_tmux_status(output, &format!("resize-window {window_id}"))
     }
 
     async fn get_pane_current_command(&self, window_id: u32) -> Result<Option<String>> {
@@ -320,6 +323,22 @@ impl TmuxManager {
             .await
             .context("Failed to set history-limit")?;
         check_tmux_status(output, "set history-limit")?;
+
+        // Without `window-size manual`, tmux auto-sizes detached windows to
+        // `default-size` (80x24) because no client is attached. That would
+        // make `resize_pane` below a silent no-op.
+        let output = Command::new("tmux")
+            .args([
+                "set-option",
+                "-t",
+                &self.session_name,
+                "window-size",
+                "manual",
+            ])
+            .output()
+            .await
+            .context("Failed to set window-size")?;
+        check_tmux_status(output, "set window-size")?;
 
         for i in 1..num_windows {
             let output = Command::new("tmux")
@@ -858,6 +877,105 @@ mod tests {
         assert!(
             result.is_none(),
             "get_pane_current_command: default trait impl should return None"
+        );
+    }
+
+    // --- Real-tmux integration tests (gated with #[ignore]) ---
+    //
+    // These spawn a real `tmux` process and verify that resize requests
+    // actually change the window dimensions. Run with:
+    //   cargo test -- --ignored
+    //
+    // They are ignored by default so CI environments without tmux can still
+    // run the normal test suite.
+
+    async fn tmux_available() -> bool {
+        Command::new("tmux")
+            .arg("-V")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .await
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    async fn tmux_window_size(session: &str, window_id: u32) -> Option<(u16, u16)> {
+        let output = Command::new("tmux")
+            .args([
+                "list-panes",
+                "-t",
+                &format!("{session}:{window_id}"),
+                "-F",
+                "#{window_width}x#{window_height}",
+            ])
+            .output()
+            .await
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let line = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .next()?
+            .trim()
+            .to_string();
+        let (w, h) = line.split_once('x')?;
+        Some((w.parse().ok()?, h.parse().ok()?))
+    }
+
+    /// Kills the tmux session on drop to prevent leaked sessions when
+    /// assertions panic inside an integration test.
+    struct SessionGuard {
+        session_name: String,
+    }
+
+    impl Drop for SessionGuard {
+        fn drop(&mut self) {
+            let _ = std::process::Command::new("tmux")
+                .args(["kill-session", "-t", &self.session_name])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn resize_pane_actually_grows_window_with_real_tmux() {
+        if !tmux_available().await {
+            eprintln!("tmux not available, skipping");
+            return;
+        }
+
+        let session_name = format!("macot-test-{}-resize", std::process::id());
+        let _guard = SessionGuard {
+            session_name: session_name.clone(),
+        };
+        let manager = TmuxManager::new(session_name.clone());
+
+        manager
+            .create_session(1, "/tmp")
+            .await
+            .expect("create_session should succeed");
+
+        let initial = tmux_window_size(&session_name, 0).await;
+        assert!(
+            initial.is_some(),
+            "tmux list-panes should return a size for the new session"
+        );
+
+        manager
+            .resize_pane(0, 160, 40)
+            .await
+            .expect("resize_pane should succeed");
+
+        let after = tmux_window_size(&session_name, 0).await;
+        assert_eq!(
+            after,
+            Some((160, 40)),
+            "resize_pane: window should report 160x40 after resize, got {:?}",
+            after
         );
     }
 }
