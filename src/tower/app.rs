@@ -29,6 +29,10 @@ const MESSAGE_POLL_INTERVAL: Duration = Duration::from_millis(3000);
 /// 16ms targets ~60 FPS while keeping CPU usage low.
 const EVENT_POLL_TIMEOUT: Duration = Duration::from_millis(16);
 
+/// Logical lines advanced per mouse-wheel notch in the Expert Panel.
+/// One wheel notch ≈ 3 lines matches conventional terminal scrolling.
+const WHEEL_SCROLL_LINES: usize = 3;
+
 use super::ui::UI;
 use super::widgets::{
     ExpertPanelDisplay, HelpModal, MessagingDisplay, ReportDisplay, RoleSelector, StatusDisplay,
@@ -385,6 +389,55 @@ impl TowerApp {
             && pos.0 < rect.x + rect.width
             && pos.1 >= rect.y
             && pos.1 < rect.y + rect.height
+    }
+
+    async fn handle_mouse_wheel(
+        &mut self,
+        kind: MouseEventKind,
+        column: u16,
+        row: u16,
+    ) -> Result<()> {
+        if self.help_modal.is_visible()
+            || self.report_display.view_mode() == ViewMode::Detail
+            || self.role_selector.is_visible()
+        {
+            return Ok(());
+        }
+
+        if !self.expert_panel_display.is_visible() {
+            return Ok(());
+        }
+        if !Self::point_in_rect((column, row), self.layout_areas.expert_panel) {
+            return Ok(());
+        }
+
+        match kind {
+            MouseEventKind::ScrollUp => {
+                if !self.expert_panel_display.is_scrolling() {
+                    if let Some(expert_id) = self.expert_panel_display.expert_id() {
+                        match self.claude.capture_full_history(expert_id).await {
+                            Ok(raw) => self.expert_panel_display.enter_scroll_mode(&raw),
+                            Err(e) => tracing::warn!(
+                                "Failed to capture full history for expert {}: {}",
+                                expert_id,
+                                e
+                            ),
+                        }
+                    }
+                } else {
+                    for _ in 0..WHEEL_SCROLL_LINES {
+                        self.expert_panel_display.scroll_up();
+                    }
+                }
+            }
+            MouseEventKind::ScrollDown => {
+                for _ in 0..WHEEL_SCROLL_LINES {
+                    self.expert_panel_display.scroll_down();
+                }
+            }
+            _ => {}
+        }
+        Ok(())
     }
 
     pub async fn refresh_status(&mut self) -> Result<()> {
@@ -751,12 +804,19 @@ impl TowerApp {
                     // Update input time for mouse events to pause polling during interaction
                     self.last_input_time = Instant::now();
 
-                    if mouse.kind == MouseEventKind::Down(MouseButton::Left)
-                        && !self.help_modal.is_visible()
-                        && self.report_display.view_mode() != ViewMode::Detail
-                        && !self.role_selector.is_visible()
-                    {
-                        self.handle_mouse_click(mouse.column, mouse.row);
+                    match mouse.kind {
+                        MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                            self.handle_mouse_wheel(mouse.kind, mouse.column, mouse.row)
+                                .await?;
+                        }
+                        MouseEventKind::Down(MouseButton::Left)
+                            if !self.help_modal.is_visible()
+                                && self.report_display.view_mode() != ViewMode::Detail
+                                && !self.role_selector.is_visible() =>
+                        {
+                            self.handle_mouse_click(mouse.column, mouse.row);
+                        }
+                        _ => {}
                     }
                     return Ok(());
                 }
@@ -2491,6 +2551,215 @@ mod tests {
 
         app.handle_mouse_click(50, 15);
         assert_eq!(app.focus(), FocusArea::TaskInput);
+    }
+
+    // Mouse-wheel scroll tests (expert-panel-mouse-wheel-scroll feature)
+    //
+    // Gap: the `capture_full_history` error branch in `handle_mouse_wheel` is
+    // not covered here — `ClaudeBackend` has no test seam for forcing failure
+    // without a real tmux session. The design's manual smoke test (§5.3, step
+    // 3) backstops this path.
+
+    fn render_panel_once(app: &mut TowerApp, width: u16, height: u16) {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                app.expert_panel_display
+                    .render(frame, Rect::new(0, 0, width, height));
+            })
+            .unwrap();
+    }
+
+    fn long_panel_content() -> String {
+        (0..30)
+            .map(|i| format!("line{i}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[tokio::test]
+    async fn wheel_up_outside_panel_is_noop() {
+        let mut app = create_test_app();
+        app.expert_panel_display.show();
+        app.set_layout_areas(LayoutAreas {
+            expert_list: Rect::default(),
+            task_input: Rect::default(),
+            expert_panel: Rect::new(0, 20, 100, 15),
+        });
+
+        assert!(!app.expert_panel_display.is_scrolling());
+        app.handle_mouse_wheel(MouseEventKind::ScrollUp, 50, 5)
+            .await
+            .unwrap();
+        assert!(
+            !app.expert_panel_display.is_scrolling(),
+            "wheel up outside the panel must not enter scroll mode"
+        );
+    }
+
+    #[tokio::test]
+    async fn wheel_down_outside_panel_is_noop() {
+        let mut app = create_test_app();
+        app.expert_panel_display.show();
+        app.set_layout_areas(LayoutAreas {
+            expert_list: Rect::default(),
+            task_input: Rect::default(),
+            expert_panel: Rect::new(0, 20, 100, 15),
+        });
+        app.expert_panel_display
+            .enter_scroll_mode(&long_panel_content());
+        render_panel_once(&mut app, 80, 20);
+        app.expert_panel_display.scroll_to_top();
+        let offset_before = app.expert_panel_display.scroll_offset();
+
+        app.handle_mouse_wheel(MouseEventKind::ScrollDown, 50, 5)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            app.expert_panel_display.scroll_offset(),
+            offset_before,
+            "wheel down outside the panel must not change scroll_offset"
+        );
+    }
+
+    #[tokio::test]
+    async fn wheel_up_inside_panel_in_scroll_mode_decrements_offset() {
+        let mut app = create_test_app();
+        app.expert_panel_display.show();
+        app.set_layout_areas(LayoutAreas {
+            expert_list: Rect::default(),
+            task_input: Rect::default(),
+            expert_panel: Rect::new(0, 0, 80, 20),
+        });
+        app.expert_panel_display
+            .enter_scroll_mode(&long_panel_content());
+        render_panel_once(&mut app, 80, 20);
+        app.expert_panel_display.scroll_to_bottom();
+        render_panel_once(&mut app, 80, 20);
+        let offset_before = app.expert_panel_display.scroll_offset();
+
+        app.handle_mouse_wheel(MouseEventKind::ScrollUp, 10, 10)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            offset_before.saturating_sub(app.expert_panel_display.scroll_offset()),
+            WHEEL_SCROLL_LINES as u16,
+            "wheel up inside panel should decrement scroll_offset by WHEEL_SCROLL_LINES"
+        );
+    }
+
+    #[tokio::test]
+    async fn wheel_down_inside_panel_increments_offset() {
+        let mut app = create_test_app();
+        app.expert_panel_display.show();
+        app.set_layout_areas(LayoutAreas {
+            expert_list: Rect::default(),
+            task_input: Rect::default(),
+            expert_panel: Rect::new(0, 0, 80, 20),
+        });
+        app.expert_panel_display
+            .enter_scroll_mode(&long_panel_content());
+        render_panel_once(&mut app, 80, 20);
+        app.expert_panel_display.scroll_to_top();
+        let offset_before = app.expert_panel_display.scroll_offset();
+
+        app.handle_mouse_wheel(MouseEventKind::ScrollDown, 10, 10)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            app.expert_panel_display
+                .scroll_offset()
+                .saturating_sub(offset_before),
+            WHEEL_SCROLL_LINES as u16,
+            "wheel down inside panel should increment scroll_offset by WHEEL_SCROLL_LINES"
+        );
+    }
+
+    #[tokio::test]
+    async fn wheel_does_not_change_focus() {
+        let mut app = create_test_app();
+        app.expert_panel_display.show();
+        app.set_layout_areas(LayoutAreas {
+            expert_list: Rect::default(),
+            task_input: Rect::default(),
+            expert_panel: Rect::new(0, 0, 80, 20),
+        });
+        // Pre-enter scroll mode so the handler takes the sync scroll_up branch
+        // instead of calling capture_full_history.
+        app.expert_panel_display
+            .enter_scroll_mode(&long_panel_content());
+        render_panel_once(&mut app, 80, 20);
+
+        assert_eq!(app.focus(), FocusArea::TaskInput);
+        app.handle_mouse_wheel(MouseEventKind::ScrollUp, 10, 10)
+            .await
+            .unwrap();
+        assert_eq!(
+            app.focus(),
+            FocusArea::TaskInput,
+            "wheel scrolling must not change focus"
+        );
+    }
+
+    #[tokio::test]
+    async fn wheel_suppressed_when_help_modal_visible() {
+        let mut app = create_test_app();
+        app.expert_panel_display.show();
+        app.set_layout_areas(LayoutAreas {
+            expert_list: Rect::default(),
+            task_input: Rect::default(),
+            expert_panel: Rect::new(0, 0, 80, 20),
+        });
+        app.help_modal.show();
+        assert!(!app.expert_panel_display.is_scrolling());
+        let offset_before = app.expert_panel_display.scroll_offset();
+
+        app.handle_mouse_wheel(MouseEventKind::ScrollUp, 10, 10)
+            .await
+            .unwrap();
+
+        assert!(
+            !app.expert_panel_display.is_scrolling(),
+            "help modal should suppress wheel-triggered scroll-mode entry"
+        );
+        assert_eq!(
+            app.expert_panel_display.scroll_offset(),
+            offset_before,
+            "help modal should suppress scroll_offset changes"
+        );
+    }
+
+    #[tokio::test]
+    async fn wheel_suppressed_when_panel_hidden() {
+        let mut app = create_test_app();
+        app.expert_panel_display.hide();
+        app.set_layout_areas(LayoutAreas {
+            expert_list: Rect::default(),
+            task_input: Rect::default(),
+            expert_panel: Rect::new(0, 0, 80, 20),
+        });
+        assert!(!app.expert_panel_display.is_scrolling());
+        let offset_before = app.expert_panel_display.scroll_offset();
+
+        app.handle_mouse_wheel(MouseEventKind::ScrollUp, 10, 10)
+            .await
+            .unwrap();
+
+        assert!(
+            !app.expert_panel_display.is_scrolling(),
+            "hidden panel should suppress wheel-triggered scroll-mode entry"
+        );
+        assert_eq!(
+            app.expert_panel_display.scroll_offset(),
+            offset_before,
+            "hidden panel should suppress scroll_offset changes"
+        );
     }
 
     // Task 10.1: Focus cycling tests (P2, P3)

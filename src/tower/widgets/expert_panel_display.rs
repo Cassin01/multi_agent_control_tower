@@ -92,6 +92,11 @@ impl ExpertPanelDisplay {
         self.last_render_size
     }
 
+    #[cfg(test)]
+    pub fn scroll_offset(&self) -> u16 {
+        self.scroll_offset
+    }
+
     /// Returns the effective dimensions for tmux PTY synchronization.
     ///
     /// The preview size is smaller than the render inner size by
