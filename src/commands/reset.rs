@@ -2,10 +2,10 @@ use anyhow::Result;
 use clap::{Args as ClapArgs, Subcommand};
 use std::path::PathBuf;
 
-use crate::commands::common::{self, exit_expert_and_set_pending, prepare_expert_files_with_role};
+use crate::commands::common::{self, exit_expert, prepare_expert_files_with_role};
 use crate::config::Config;
 use crate::context::ContextStore;
-use crate::session::{ClaudeManager, ExpertStateDetector};
+use crate::session::ClaudeManager;
 
 #[derive(ClapArgs)]
 pub struct Args {
@@ -83,8 +83,7 @@ async fn reset_expert(
     };
 
     println!("  Sending /exit to Claude...");
-    let detector = ExpertStateDetector::new(config.queue_path.join("status"));
-    exit_expert_and_set_pending(&claude, &detector, expert_id).await?;
+    exit_expert(&claude, expert_id).await?;
 
     if full {
         println!("  Clearing context (full)...");

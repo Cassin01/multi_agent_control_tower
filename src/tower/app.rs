@@ -6,7 +6,7 @@ use ratatui::layout::Rect;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use crate::commands::common::{exit_expert_and_set_pending, prepare_expert_files_with_role};
+use crate::commands::common::{exit_expert, prepare_expert_files_with_role};
 use crate::config::Config;
 use crate::context::{AvailableRoles, ContextStore, Decision, ExpertContext, SessionExpertRoles};
 use crate::experts::ExpertRegistry;
@@ -1338,7 +1338,7 @@ impl TowerApp {
             tracing::warn!("Failed to refresh expert manifest after role change: {}", e);
         }
 
-        exit_expert_and_set_pending(&self.claude, &self.detector, expert_id).await?;
+        exit_expert(&self.claude, expert_id).await?;
 
         let worktree_path = self
             .expert_registry
@@ -1433,7 +1433,7 @@ impl TowerApp {
 
         let working_dir = self.resolve_expert_working_dir(expert_id).await;
 
-        exit_expert_and_set_pending(&self.claude, &self.detector, expert_id).await?;
+        exit_expert(&self.claude, expert_id).await?;
 
         // Preserve worktree info while clearing session and knowledge
         let session_hash = self.config.session_hash();
@@ -1523,7 +1523,7 @@ impl TowerApp {
 
         self.set_message(format!("Returning {expert_name} to project root..."));
 
-        exit_expert_and_set_pending(&self.claude, &self.detector, expert_id).await?;
+        exit_expert(&self.claude, expert_id).await?;
 
         if let Ok(Some(mut ctx)) = self
             .context_store
@@ -1609,14 +1609,12 @@ impl TowerApp {
             .get_role(expert_id)
             .map(ToString::to_string)
             .unwrap_or_else(|| config.get_expert_role(expert_id));
-        let queue_path = config.queue_path.clone();
         let expert_name_clone = expert_name.clone();
         let branch_clone = branch_name.clone();
         let ready_timeout = config.timeouts.agent_ready;
 
         let handle = tokio::spawn(async move {
-            let detector = ExpertStateDetector::new(queue_path.join("status"));
-            exit_expert_and_set_pending(&claude, &detector, expert_id).await?;
+            exit_expert(&claude, expert_id).await?;
 
             let worktree_path = if worktree_already_exists {
                 worktree_manager.worktree_path(&branch_clone)

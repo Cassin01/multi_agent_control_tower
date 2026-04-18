@@ -192,18 +192,11 @@ pub fn prepare_expert_files(
     ))
 }
 
-/// Send Escape + /exit to an expert, wait for it to stop, then set status to "pending".
-pub async fn exit_expert_and_set_pending(
-    claude: &ClaudeManager,
-    detector: &ExpertStateDetector,
-    expert_id: u32,
-) -> Result<()> {
+/// Send Escape + /exit to an expert and wait for it to stop.
+pub async fn exit_expert(claude: &ClaudeManager, expert_id: u32) -> Result<()> {
     claude.send_keys(expert_id, "Escape").await?;
     claude.send_exit(expert_id).await?;
     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-    detector
-        .set_marker(expert_id, "pending")
-        .context("Failed to set expert status to pending")?;
     Ok(())
 }
 
