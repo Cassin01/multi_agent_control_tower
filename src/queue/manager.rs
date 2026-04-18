@@ -218,7 +218,7 @@ impl QueueManager {
             }
         }
 
-        reports.sort_by(|a, b| a.started_at.cmp(&b.started_at));
+        reports.sort_by_key(|r| r.started_at);
         Ok(reports)
     }
 
