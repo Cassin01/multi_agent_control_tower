@@ -1,4 +1,6 @@
 use anyhow::Result;
+#[cfg(test)]
+use crossterm::event::MouseEvent;
 use crossterm::event::{
     self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
 };
@@ -29,9 +31,95 @@ const MESSAGE_POLL_INTERVAL: Duration = Duration::from_millis(3000);
 /// 16ms targets ~60 FPS while keeping CPU usage low.
 const EVENT_POLL_TIMEOUT: Duration = Duration::from_millis(16);
 
-/// Logical lines advanced per mouse-wheel notch in the Expert Panel.
-/// One wheel notch ≈ 3 lines matches conventional terminal scrolling.
-const WHEEL_SCROLL_LINES: usize = 3;
+/// Minimum lines advanced per mouse-wheel notch in the Expert Panel.
+/// Matches the X11/Linux terminal convention of 3 lines/notch on small panels.
+const WHEEL_SCROLL_LINES_FLOOR: usize = 3;
+/// Maximum lines advanced per mouse-wheel notch. Prevents runaway scrolling
+/// on very large terminals where a quarter page would feel jarring.
+const WHEEL_SCROLL_LINES_CEIL: usize = 8;
+/// Divisor used to compute a quarter-page scroll step from the panel's inner
+/// height. Produces the "smooth" sweet spot between Vim `Ctrl-E` (1 line) and
+/// `Ctrl-D` (half page).
+const WHEEL_SCROLL_DIVISOR: u16 = 4;
+
+/// Height-proportional wheel step for the Expert Panel.
+///
+/// Returns the number of logical lines to advance per wheel notch, computed as
+/// `(panel_rect_height - 2) / WHEEL_SCROLL_DIVISOR` clamped to
+/// `[WHEEL_SCROLL_LINES_FLOOR, WHEEL_SCROLL_LINES_CEIL]`. The `- 2` accounts
+/// for the top/bottom borders of the panel.
+fn wheel_scroll_lines(panel_rect_height: u16) -> usize {
+    let inner = panel_rect_height.saturating_sub(2);
+    let proportional = (inner / WHEEL_SCROLL_DIVISOR) as usize;
+    proportional.clamp(WHEEL_SCROLL_LINES_FLOOR, WHEEL_SCROLL_LINES_CEIL)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WheelDirection {
+    Up,
+    Down,
+}
+
+impl WheelDirection {
+    fn as_delta(self) -> i32 {
+        match self {
+            Self::Up => 1,
+            Self::Down => -1,
+        }
+    }
+}
+
+fn wheel_direction(kind: MouseEventKind) -> Option<WheelDirection> {
+    match kind {
+        MouseEventKind::ScrollUp => Some(WheelDirection::Up),
+        MouseEventKind::ScrollDown => Some(WheelDirection::Down),
+        _ => None,
+    }
+}
+
+/// Coalesces a burst of contiguous wheel events at the same cursor position
+/// into a single net tick count. Positive `net_ticks` means scroll-up, negative
+/// means scroll-down.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct WheelAccumulator {
+    column: u16,
+    row: u16,
+    net_ticks: i32,
+}
+
+/// Pure coalescing logic for wheel events.
+///
+/// Seeds an accumulator from `first` and folds subsequent wheel events from
+/// `tail` that share the same `(column, row)`. Stops at the first non-wheel
+/// event, the first wheel event at a different position, or end of `tail`.
+/// The returned `Option<Event>` holds the first event that stopped coalescing
+/// (if any), so the caller can re-dispatch it.
+///
+/// Test-only: the production `handle_events` path drains crossterm's event
+/// queue one-at-a-time (to preserve queue semantics for non-matching events).
+/// This pure-slice variant mirrors the same logic for unit testing.
+#[cfg(test)]
+fn coalesce_wheel_events(first: MouseEvent, tail: &[Event]) -> (WheelAccumulator, Option<Event>) {
+    let seed = wheel_direction(first.kind)
+        .expect("coalesce_wheel_events: first event must be a wheel event");
+    let mut acc = WheelAccumulator {
+        column: first.column,
+        row: first.row,
+        net_ticks: seed.as_delta(),
+    };
+    for ev in tail {
+        match ev {
+            Event::Mouse(m) if m.column == acc.column && m.row == acc.row => {
+                match wheel_direction(m.kind) {
+                    Some(d) => acc.net_ticks += d.as_delta(),
+                    None => return (acc, Some(ev.clone())),
+                }
+            }
+            _ => return (acc, Some(ev.clone())),
+        }
+    }
+    (acc, None)
+}
 
 use super::ui::UI;
 use super::widgets::{
@@ -393,9 +481,10 @@ impl TowerApp {
 
     async fn handle_mouse_wheel(
         &mut self,
-        kind: MouseEventKind,
+        direction: WheelDirection,
         column: u16,
         row: u16,
+        ticks: u32,
     ) -> Result<()> {
         if self.help_modal.is_visible()
             || self.report_display.view_mode() == ViewMode::Detail
@@ -411,8 +500,9 @@ impl TowerApp {
             return Ok(());
         }
 
-        match kind {
-            MouseEventKind::ScrollUp => {
+        let lines = wheel_scroll_lines(self.layout_areas.expert_panel.height) * ticks as usize;
+        match direction {
+            WheelDirection::Up => {
                 if !self.expert_panel_display.is_scrolling() {
                     if let Some(expert_id) = self.expert_panel_display.expert_id() {
                         match self.claude.capture_full_history(expert_id).await {
@@ -425,17 +515,16 @@ impl TowerApp {
                         }
                     }
                 } else {
-                    for _ in 0..WHEEL_SCROLL_LINES {
+                    for _ in 0..lines {
                         self.expert_panel_display.scroll_up();
                     }
                 }
             }
-            MouseEventKind::ScrollDown => {
-                for _ in 0..WHEEL_SCROLL_LINES {
+            WheelDirection::Down => {
+                for _ in 0..lines {
                     self.expert_panel_display.scroll_down();
                 }
             }
-            _ => {}
         }
         Ok(())
     }
@@ -795,288 +884,333 @@ impl TowerApp {
     }
 
     pub async fn handle_events(&mut self) -> Result<()> {
-        let has_event = event::poll(EVENT_POLL_TIMEOUT)?;
-        if has_event {
-            self.needs_redraw = true;
-            let event = event::read()?;
-            match event {
-                Event::Mouse(mouse) => {
-                    // Update input time for mouse events to pause polling during interaction
-                    self.last_input_time = Instant::now();
+        if !event::poll(EVENT_POLL_TIMEOUT)? {
+            return Ok(());
+        }
+        self.needs_redraw = true;
+        let first = event::read()?;
 
-                    match mouse.kind {
-                        MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
-                            self.handle_mouse_wheel(mouse.kind, mouse.column, mouse.row)
+        // Fast path: coalesce contiguous wheel events at the same cursor
+        // position so a burst of N notches produces a single render pass.
+        if let Event::Mouse(m) = &first {
+            if let Some(seed) = wheel_direction(m.kind) {
+                let mut acc = WheelAccumulator {
+                    column: m.column,
+                    row: m.row,
+                    net_ticks: seed.as_delta(),
+                };
+                let mut pending: Option<Event> = None;
+                while event::poll(Duration::ZERO)? {
+                    let next = event::read()?;
+                    match &next {
+                        Event::Mouse(nm) if nm.column == acc.column && nm.row == acc.row => {
+                            match wheel_direction(nm.kind) {
+                                Some(d) => acc.net_ticks += d.as_delta(),
+                                None => {
+                                    pending = Some(next);
+                                    break;
+                                }
+                            }
+                        }
+                        _ => {
+                            pending = Some(next);
+                            break;
+                        }
+                    }
+                }
+                self.last_input_time = Instant::now();
+                if acc.net_ticks != 0 {
+                    let (dir, ticks) = if acc.net_ticks > 0 {
+                        (WheelDirection::Up, acc.net_ticks as u32)
+                    } else {
+                        (WheelDirection::Down, (-acc.net_ticks) as u32)
+                    };
+                    self.handle_mouse_wheel(dir, acc.column, acc.row, ticks)
+                        .await?;
+                }
+                if let Some(ev) = pending {
+                    return self.dispatch_event(ev).await;
+                }
+                return Ok(());
+            }
+        }
+        self.dispatch_event(first).await
+    }
+
+    async fn dispatch_event(&mut self, event: Event) -> Result<()> {
+        match event {
+            Event::Mouse(mouse) => {
+                // Update input time for mouse events to pause polling during interaction
+                self.last_input_time = Instant::now();
+
+                match mouse.kind {
+                    MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                        if let Some(dir) = wheel_direction(mouse.kind) {
+                            self.handle_mouse_wheel(dir, mouse.column, mouse.row, 1)
                                 .await?;
                         }
-                        MouseEventKind::Down(MouseButton::Left)
-                            if !self.help_modal.is_visible()
-                                && self.report_display.view_mode() != ViewMode::Detail
-                                && !self.role_selector.is_visible() =>
-                        {
-                            self.handle_mouse_click(mouse.column, mouse.row);
+                    }
+                    MouseEventKind::Down(MouseButton::Left)
+                        if !self.help_modal.is_visible()
+                            && self.report_display.view_mode() != ViewMode::Detail
+                            && !self.role_selector.is_visible() =>
+                    {
+                        self.handle_mouse_click(mouse.column, mouse.row);
+                    }
+                    _ => {}
+                }
+                return Ok(());
+            }
+            Event::Key(key) => {
+                if key.kind != KeyEventKind::Press {
+                    return Ok(());
+                }
+
+                // Update input time for key presses to pause polling during interaction.
+                // Skip when ExpertPanel is focused: keys are forwarded to tmux, and
+                // the debounce would freeze the panel's live capture for 500ms per keystroke.
+                if self.focus != FocusArea::ExpertPanel {
+                    self.last_input_time = Instant::now();
+                }
+                tracing::debug!("Key pressed: {:?}, focus: {:?}", key.code, self.focus);
+
+                self.clear_message();
+
+                if key.modifiers.contains(KeyModifiers::CONTROL)
+                    && matches!(key.code, KeyCode::Char('c' | 'q'))
+                {
+                    self.quit();
+                    return Ok(());
+                }
+
+                if self.help_modal.is_visible() {
+                    match key.code {
+                        KeyCode::Enter | KeyCode::Char('q') | KeyCode::F(1) => {
+                            self.help_modal.hide();
                         }
                         _ => {}
                     }
                     return Ok(());
                 }
-                Event::Key(key) => {
-                    if key.kind != KeyEventKind::Press {
-                        return Ok(());
-                    }
 
-                    // Update input time for key presses to pause polling during interaction.
-                    // Skip when ExpertPanel is focused: keys are forwarded to tmux, and
-                    // the debounce would freeze the panel's live capture for 500ms per keystroke.
-                    if self.focus != FocusArea::ExpertPanel {
-                        self.last_input_time = Instant::now();
-                    }
-                    tracing::debug!("Key pressed: {:?}, focus: {:?}", key.code, self.focus);
+                if key.code == KeyCode::F(1) {
+                    self.help_modal.toggle();
+                    return Ok(());
+                }
 
-                    self.clear_message();
-
-                    if key.modifiers.contains(KeyModifiers::CONTROL)
-                        && matches!(key.code, KeyCode::Char('c' | 'q'))
-                    {
-                        self.quit();
-                        return Ok(());
-                    }
-
-                    if self.help_modal.is_visible() {
-                        match key.code {
-                            KeyCode::Enter | KeyCode::Char('q') | KeyCode::F(1) => {
-                                self.help_modal.hide();
-                            }
-                            _ => {}
-                        }
-                        return Ok(());
-                    }
-
-                    if key.code == KeyCode::F(1) {
-                        self.help_modal.toggle();
-                        return Ok(());
-                    }
-
-                    if key.modifiers.contains(KeyModifiers::CONTROL) {
-                        match key.code {
-                            KeyCode::Char('j') if self.focus != FocusArea::ExpertPanel => {
-                                if self.expert_panel_display.is_scrolling() {
-                                    self.expert_panel_display.exit_scroll_mode();
-                                }
-                                self.expert_panel_display.toggle();
-                                return Ok(());
-                            }
-                            _ => {}
-                        }
-                    }
-
-                    if self.report_display.view_mode() == ViewMode::Detail {
-                        match key.code {
-                            KeyCode::Enter | KeyCode::Char('q') => {
-                                self.report_display.close_detail();
-                            }
-                            KeyCode::Char('x') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                                self.report_display.close_detail();
-                            }
-                            KeyCode::Up | KeyCode::Char('k') => self.report_display.scroll_up(),
-                            KeyCode::Down | KeyCode::Char('j') => self.report_display.scroll_down(),
-                            _ => {}
-                        }
-                        return Ok(());
-                    }
-
-                    if self.role_selector.is_visible() {
-                        match key.code {
-                            KeyCode::Esc | KeyCode::Char('q') => {
-                                self.role_selector.hide();
-                            }
-                            KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                                self.role_selector.hide();
-                            }
-                            KeyCode::Enter => {
-                                self.confirm_role_selection().await?;
-                            }
-                            KeyCode::Up | KeyCode::Char('k') => self.role_selector.prev(),
-                            KeyCode::Down | KeyCode::Char('j') => self.role_selector.next(),
-                            _ => {}
-                        }
-                        return Ok(());
-                    }
-
-                    if self.focus == FocusArea::TaskInput
-                        && is_shift_tab_for_task_input(key.code, key.modifiers)
-                    {
-                        if self.expert_panel_display.is_scrolling() {
-                            self.expert_panel_display.exit_scroll_mode();
-                        }
-                        if let Some(expert_id) = self.status_display.selected_expert_id() {
-                            if let Err(e) = self.claude.send_keys(expert_id, "BTab").await {
-                                tracing::warn!(
-                                    "Failed to send Shift+Tab to expert {}: {}",
-                                    expert_id,
-                                    e
-                                );
-                                self.set_message(format!("Error sending keys to expert: {e}"));
-                            }
-                        }
-                        return Ok(());
-                    }
-
-                    if self.focus == FocusArea::TaskInput
-                        && is_exclamation_at_input_start(
-                            key.code,
-                            key.modifiers,
-                            self.task_input.cursor_position(),
-                        )
-                    {
-                        if self.expert_panel_display.is_scrolling() {
-                            self.expert_panel_display.exit_scroll_mode();
-                        }
-                        if let Some(expert_id) = self.status_display.selected_expert_id() {
-                            if let Err(e) = self.claude.send_keys(expert_id, "!").await {
-                                tracing::warn!("Failed to send ! to expert {}: {}", expert_id, e);
-                                self.set_message(format!("Error sending keys to expert: {e}"));
-                            }
-                        }
-                        return Ok(());
-                    }
-
-                    // Remote scroll: handle active remote scroll mode
-                    if self.focus == FocusArea::TaskInput
-                        && self.expert_panel_display.is_scrolling()
-                    {
-                        match key.code {
-                            KeyCode::Esc => {
-                                self.expert_panel_display.exit_scroll_mode();
-                                return Ok(());
-                            }
-                            KeyCode::PageUp => {
-                                self.expert_panel_display.scroll_up();
-                                return Ok(());
-                            }
-                            KeyCode::PageDown => {
-                                self.expert_panel_display.scroll_down();
-                                return Ok(());
-                            }
-                            KeyCode::Home => {
-                                self.expert_panel_display.scroll_to_top();
-                                return Ok(());
-                            }
-                            KeyCode::End => {
-                                self.expert_panel_display.scroll_to_bottom();
-                                return Ok(());
-                            }
-                            // Exit scroll + fall through to expert selection
-                            KeyCode::Up | KeyCode::Down => {
+                if key.modifiers.contains(KeyModifiers::CONTROL) {
+                    match key.code {
+                        KeyCode::Char('j') if self.focus != FocusArea::ExpertPanel => {
+                            if self.expert_panel_display.is_scrolling() {
                                 self.expert_panel_display.exit_scroll_mode();
                             }
-                            // Exit scroll + fall through to assign task
-                            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                                self.expert_panel_display.exit_scroll_mode();
-                            }
-                            // All other keys fall through to normal handling (keep scroll mode)
-                            _ => {}
-                        }
-                    }
-
-                    // Remote scroll: enter remote scroll mode on PageUp from TaskInput
-                    if self.focus == FocusArea::TaskInput
-                        && key.code == KeyCode::PageUp
-                        && !self.expert_panel_display.is_scrolling()
-                        && self.expert_panel_display.is_visible()
-                    {
-                        if let Some(expert_id) = self.expert_panel_display.expert_id() {
-                            match self.claude.capture_full_history(expert_id).await {
-                                Ok(raw) => self.expert_panel_display.enter_scroll_mode(&raw),
-                                Err(e) => tracing::warn!(
-                                    "Failed to capture history for expert {}: {}",
-                                    expert_id,
-                                    e
-                                ),
-                            }
-                        }
-                        return Ok(());
-                    }
-
-                    match self.focus {
-                        FocusArea::ExpertList => {} // Display only, not selectable
-                        FocusArea::TaskInput => {
-                            self.handle_task_input_keys(key.code, key.modifiers)
-                        }
-                        FocusArea::ExpertPanel => {
-                            if key.code == KeyCode::Char('t')
-                                && key.modifiers.contains(KeyModifiers::CONTROL)
-                            {
-                                self.next_focus();
-                            } else {
-                                self.handle_expert_panel_keys(key.code, key.modifiers)
-                                    .await?;
-                            }
+                            self.expert_panel_display.toggle();
                             return Ok(());
                         }
-                    }
-
-                    if key.code == KeyCode::Char('t')
-                        && key.modifiers.contains(KeyModifiers::CONTROL)
-                    {
-                        self.next_focus();
-                    }
-
-                    if key.code == KeyCode::Char('s')
-                        && key.modifiers.contains(KeyModifiers::CONTROL)
-                        && self.focus == FocusArea::TaskInput
-                    {
-                        self.assign_task().await?;
-                    }
-
-                    if self.focus == FocusArea::TaskInput {
-                        match key.code {
-                            KeyCode::Up => self.status_display.prev(),
-                            KeyCode::Down => self.status_display.next(),
-                            _ => {}
-                        }
-                        if key.modifiers.contains(KeyModifiers::CONTROL) {
-                            if let KeyCode::Char('o') = key.code {
-                                self.open_role_selector();
-                            }
-                        }
-                    }
-
-                    if key.code == KeyCode::Char('r')
-                        && key.modifiers.contains(KeyModifiers::CONTROL)
-                        && self.focus == FocusArea::TaskInput
-                    {
-                        self.reset_expert().await?;
-                    }
-
-                    if key.code == KeyCode::Char('w')
-                        && key.modifiers.contains(KeyModifiers::CONTROL)
-                        && self.focus == FocusArea::TaskInput
-                    {
-                        let input = self.task_input.content().trim().to_string();
-                        if input.is_empty() {
-                            self.return_expert_from_worktree().await?;
-                        } else {
-                            self.launch_expert_in_worktree().await?;
-                        }
-                    }
-
-                    if key.code == KeyCode::Char('g')
-                        && key.modifiers.contains(KeyModifiers::CONTROL)
-                        && self.focus == FocusArea::TaskInput
-                    {
-                        self.handle_feature_execution().await?;
-                    }
-
-                    if key.code == KeyCode::Char('x')
-                        && key.modifiers.contains(KeyModifiers::CONTROL)
-                        && self.focus == FocusArea::TaskInput
-                    {
-                        self.open_expert_report();
+                        _ => {}
                     }
                 }
-                _ => {}
+
+                if self.report_display.view_mode() == ViewMode::Detail {
+                    match key.code {
+                        KeyCode::Enter | KeyCode::Char('q') => {
+                            self.report_display.close_detail();
+                        }
+                        KeyCode::Char('x') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            self.report_display.close_detail();
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => self.report_display.scroll_up(),
+                        KeyCode::Down | KeyCode::Char('j') => self.report_display.scroll_down(),
+                        _ => {}
+                    }
+                    return Ok(());
+                }
+
+                if self.role_selector.is_visible() {
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') => {
+                            self.role_selector.hide();
+                        }
+                        KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            self.role_selector.hide();
+                        }
+                        KeyCode::Enter => {
+                            self.confirm_role_selection().await?;
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => self.role_selector.prev(),
+                        KeyCode::Down | KeyCode::Char('j') => self.role_selector.next(),
+                        _ => {}
+                    }
+                    return Ok(());
+                }
+
+                if self.focus == FocusArea::TaskInput
+                    && is_shift_tab_for_task_input(key.code, key.modifiers)
+                {
+                    if self.expert_panel_display.is_scrolling() {
+                        self.expert_panel_display.exit_scroll_mode();
+                    }
+                    if let Some(expert_id) = self.status_display.selected_expert_id() {
+                        if let Err(e) = self.claude.send_keys(expert_id, "BTab").await {
+                            tracing::warn!(
+                                "Failed to send Shift+Tab to expert {}: {}",
+                                expert_id,
+                                e
+                            );
+                            self.set_message(format!("Error sending keys to expert: {e}"));
+                        }
+                    }
+                    return Ok(());
+                }
+
+                if self.focus == FocusArea::TaskInput
+                    && is_exclamation_at_input_start(
+                        key.code,
+                        key.modifiers,
+                        self.task_input.cursor_position(),
+                    )
+                {
+                    if self.expert_panel_display.is_scrolling() {
+                        self.expert_panel_display.exit_scroll_mode();
+                    }
+                    if let Some(expert_id) = self.status_display.selected_expert_id() {
+                        if let Err(e) = self.claude.send_keys(expert_id, "!").await {
+                            tracing::warn!("Failed to send ! to expert {}: {}", expert_id, e);
+                            self.set_message(format!("Error sending keys to expert: {e}"));
+                        }
+                    }
+                    return Ok(());
+                }
+
+                // Remote scroll: handle active remote scroll mode
+                if self.focus == FocusArea::TaskInput && self.expert_panel_display.is_scrolling() {
+                    match key.code {
+                        KeyCode::Esc => {
+                            self.expert_panel_display.exit_scroll_mode();
+                            return Ok(());
+                        }
+                        KeyCode::PageUp => {
+                            self.expert_panel_display.scroll_up();
+                            return Ok(());
+                        }
+                        KeyCode::PageDown => {
+                            self.expert_panel_display.scroll_down();
+                            return Ok(());
+                        }
+                        KeyCode::Home => {
+                            self.expert_panel_display.scroll_to_top();
+                            return Ok(());
+                        }
+                        KeyCode::End => {
+                            self.expert_panel_display.scroll_to_bottom();
+                            return Ok(());
+                        }
+                        // Exit scroll + fall through to expert selection
+                        KeyCode::Up | KeyCode::Down => {
+                            self.expert_panel_display.exit_scroll_mode();
+                        }
+                        // Exit scroll + fall through to assign task
+                        KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            self.expert_panel_display.exit_scroll_mode();
+                        }
+                        // All other keys fall through to normal handling (keep scroll mode)
+                        _ => {}
+                    }
+                }
+
+                // Remote scroll: enter remote scroll mode on PageUp from TaskInput
+                if self.focus == FocusArea::TaskInput
+                    && key.code == KeyCode::PageUp
+                    && !self.expert_panel_display.is_scrolling()
+                    && self.expert_panel_display.is_visible()
+                {
+                    if let Some(expert_id) = self.expert_panel_display.expert_id() {
+                        match self.claude.capture_full_history(expert_id).await {
+                            Ok(raw) => self.expert_panel_display.enter_scroll_mode(&raw),
+                            Err(e) => tracing::warn!(
+                                "Failed to capture history for expert {}: {}",
+                                expert_id,
+                                e
+                            ),
+                        }
+                    }
+                    return Ok(());
+                }
+
+                match self.focus {
+                    FocusArea::ExpertList => {} // Display only, not selectable
+                    FocusArea::TaskInput => self.handle_task_input_keys(key.code, key.modifiers),
+                    FocusArea::ExpertPanel => {
+                        if key.code == KeyCode::Char('t')
+                            && key.modifiers.contains(KeyModifiers::CONTROL)
+                        {
+                            self.next_focus();
+                        } else {
+                            self.handle_expert_panel_keys(key.code, key.modifiers)
+                                .await?;
+                        }
+                        return Ok(());
+                    }
+                }
+
+                if key.code == KeyCode::Char('t') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                    self.next_focus();
+                }
+
+                if key.code == KeyCode::Char('s')
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                    && self.focus == FocusArea::TaskInput
+                {
+                    self.assign_task().await?;
+                }
+
+                if self.focus == FocusArea::TaskInput {
+                    match key.code {
+                        KeyCode::Up => self.status_display.prev(),
+                        KeyCode::Down => self.status_display.next(),
+                        _ => {}
+                    }
+                    if key.modifiers.contains(KeyModifiers::CONTROL) {
+                        if let KeyCode::Char('o') = key.code {
+                            self.open_role_selector();
+                        }
+                    }
+                }
+
+                if key.code == KeyCode::Char('r')
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                    && self.focus == FocusArea::TaskInput
+                {
+                    self.reset_expert().await?;
+                }
+
+                if key.code == KeyCode::Char('w')
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                    && self.focus == FocusArea::TaskInput
+                {
+                    let input = self.task_input.content().trim().to_string();
+                    if input.is_empty() {
+                        self.return_expert_from_worktree().await?;
+                    } else {
+                        self.launch_expert_in_worktree().await?;
+                    }
+                }
+
+                if key.code == KeyCode::Char('g')
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                    && self.focus == FocusArea::TaskInput
+                {
+                    self.handle_feature_execution().await?;
+                }
+
+                if key.code == KeyCode::Char('x')
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                    && self.focus == FocusArea::TaskInput
+                {
+                    self.open_expert_report();
+                }
             }
+            _ => {}
         }
         Ok(())
     }
@@ -2591,7 +2725,7 @@ mod tests {
         });
 
         assert!(!app.expert_panel_display.is_scrolling());
-        app.handle_mouse_wheel(MouseEventKind::ScrollUp, 50, 5)
+        app.handle_mouse_wheel(WheelDirection::Up, 50, 5, 1)
             .await
             .unwrap();
         assert!(
@@ -2615,7 +2749,7 @@ mod tests {
         app.expert_panel_display.scroll_to_top();
         let offset_before = app.expert_panel_display.scroll_offset();
 
-        app.handle_mouse_wheel(MouseEventKind::ScrollDown, 50, 5)
+        app.handle_mouse_wheel(WheelDirection::Down, 50, 5, 1)
             .await
             .unwrap();
 
@@ -2642,14 +2776,15 @@ mod tests {
         render_panel_once(&mut app, 80, 20);
         let offset_before = app.expert_panel_display.scroll_offset();
 
-        app.handle_mouse_wheel(MouseEventKind::ScrollUp, 10, 10)
+        let expected_lines = wheel_scroll_lines(app.layout_areas.expert_panel.height) as u16;
+        app.handle_mouse_wheel(WheelDirection::Up, 10, 10, 1)
             .await
             .unwrap();
 
         assert_eq!(
             offset_before.saturating_sub(app.expert_panel_display.scroll_offset()),
-            WHEEL_SCROLL_LINES as u16,
-            "wheel up inside panel should decrement scroll_offset by WHEEL_SCROLL_LINES"
+            expected_lines,
+            "wheel up inside panel should decrement scroll_offset by wheel_scroll_lines"
         );
     }
 
@@ -2668,7 +2803,8 @@ mod tests {
         app.expert_panel_display.scroll_to_top();
         let offset_before = app.expert_panel_display.scroll_offset();
 
-        app.handle_mouse_wheel(MouseEventKind::ScrollDown, 10, 10)
+        let expected_lines = wheel_scroll_lines(app.layout_areas.expert_panel.height) as u16;
+        app.handle_mouse_wheel(WheelDirection::Down, 10, 10, 1)
             .await
             .unwrap();
 
@@ -2676,8 +2812,8 @@ mod tests {
             app.expert_panel_display
                 .scroll_offset()
                 .saturating_sub(offset_before),
-            WHEEL_SCROLL_LINES as u16,
-            "wheel down inside panel should increment scroll_offset by WHEEL_SCROLL_LINES"
+            expected_lines,
+            "wheel down inside panel should increment scroll_offset by wheel_scroll_lines"
         );
     }
 
@@ -2697,7 +2833,7 @@ mod tests {
         render_panel_once(&mut app, 80, 20);
 
         assert_eq!(app.focus(), FocusArea::TaskInput);
-        app.handle_mouse_wheel(MouseEventKind::ScrollUp, 10, 10)
+        app.handle_mouse_wheel(WheelDirection::Up, 10, 10, 1)
             .await
             .unwrap();
         assert_eq!(
@@ -2720,7 +2856,7 @@ mod tests {
         assert!(!app.expert_panel_display.is_scrolling());
         let offset_before = app.expert_panel_display.scroll_offset();
 
-        app.handle_mouse_wheel(MouseEventKind::ScrollUp, 10, 10)
+        app.handle_mouse_wheel(WheelDirection::Up, 10, 10, 1)
             .await
             .unwrap();
 
@@ -2747,7 +2883,7 @@ mod tests {
         assert!(!app.expert_panel_display.is_scrolling());
         let offset_before = app.expert_panel_display.scroll_offset();
 
-        app.handle_mouse_wheel(MouseEventKind::ScrollUp, 10, 10)
+        app.handle_mouse_wheel(WheelDirection::Up, 10, 10, 1)
             .await
             .unwrap();
 
@@ -4054,6 +4190,401 @@ mod tests {
                 "manifest_includes_all_experts: expert_id should match index"
             );
         }
+    }
+
+    // Phase A: wheel_scroll_lines tests (P8, P9, P10)
+
+    #[test]
+    fn wheel_scroll_lines_is_3_for_small_panels() {
+        // P10: preserves floor behavior for small TUI layouts.
+        for h in [0u16, 2, 10, 14] {
+            assert_eq!(
+                wheel_scroll_lines(h),
+                3,
+                "wheel_scroll_lines: panel_rect_height={h} must clamp to floor (3)"
+            );
+        }
+    }
+
+    #[test]
+    fn wheel_scroll_lines_is_proportional_mid_range() {
+        // Mid-range inputs return quarter-page values within [3, 8].
+        assert_eq!(wheel_scroll_lines(22), 5, "wheel_scroll_lines: 22 → 5");
+        assert_eq!(wheel_scroll_lines(26), 6, "wheel_scroll_lines: 26 → 6");
+        assert_eq!(wheel_scroll_lines(30), 7, "wheel_scroll_lines: 30 → 7");
+    }
+
+    #[test]
+    fn wheel_scroll_lines_is_8_for_large_panels() {
+        // P8: large panels clamp to ceiling.
+        for h in [50u16, 100, u16::MAX] {
+            assert_eq!(
+                wheel_scroll_lines(h),
+                8,
+                "wheel_scroll_lines: panel_rect_height={h} must clamp to ceiling (8)"
+            );
+        }
+    }
+
+    #[test]
+    fn wheel_scroll_lines_is_monotonic() {
+        // P9: monotonic in panel height. Deterministic sampling across the u16 range.
+        let samples: [u16; 12] = [0, 4, 10, 14, 18, 22, 26, 30, 40, 50, 100, u16::MAX];
+        let mut pair_count = 0usize;
+        for (i, &h1) in samples.iter().enumerate() {
+            for &h2 in samples.iter().skip(i) {
+                let a = wheel_scroll_lines(h1);
+                let b = wheel_scroll_lines(h2);
+                assert!(
+                    a <= b,
+                    "wheel_scroll_lines: monotonicity broken at h1={h1}, h2={h2} (a={a}, b={b})"
+                );
+                pair_count += 1;
+            }
+        }
+        assert!(
+            pair_count >= 50,
+            "wheel_scroll_lines_is_monotonic: must sample at least 50 pairs (got {pair_count})"
+        );
+    }
+
+    // Phase A: wheel_direction helper tests (supports P3 position gating).
+
+    #[test]
+    fn wheel_direction_classifies_scroll_events() {
+        assert_eq!(
+            wheel_direction(MouseEventKind::ScrollUp),
+            Some(WheelDirection::Up),
+            "wheel_direction: ScrollUp → Some(Up)"
+        );
+        assert_eq!(
+            wheel_direction(MouseEventKind::ScrollDown),
+            Some(WheelDirection::Down),
+            "wheel_direction: ScrollDown → Some(Down)"
+        );
+        assert_eq!(
+            wheel_direction(MouseEventKind::Moved),
+            None,
+            "wheel_direction: non-wheel kinds return None"
+        );
+        assert_eq!(
+            wheel_direction(MouseEventKind::Down(MouseButton::Left)),
+            None,
+            "wheel_direction: button-down events return None"
+        );
+    }
+
+    #[test]
+    fn wheel_direction_as_delta_signs() {
+        assert_eq!(
+            WheelDirection::Up.as_delta(),
+            1,
+            "WheelDirection::Up.as_delta() must be +1"
+        );
+        assert_eq!(
+            WheelDirection::Down.as_delta(),
+            -1,
+            "WheelDirection::Down.as_delta() must be -1"
+        );
+    }
+
+    // Phase A: handle_mouse_wheel tests — direction + ticks scaling (P8, P10).
+
+    fn render_expert_panel_once(app: &mut TowerApp, width: u16, height: u16) {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                app.expert_panel_display
+                    .render(frame, Rect::new(0, 0, width, height));
+            })
+            .unwrap();
+    }
+
+    fn long_panel_content_for_wheel_tests() -> String {
+        (0..200)
+            .map(|i| format!("line{i}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[tokio::test]
+    async fn handle_mouse_wheel_down_ticks_1_scrolls_wheel_scroll_lines() {
+        let mut app = create_test_app();
+        app.expert_panel_display.show();
+        let panel_rect = Rect::new(0, 0, 80, 20);
+        app.set_layout_areas(LayoutAreas {
+            expert_list: Rect::default(),
+            task_input: Rect::default(),
+            expert_panel: panel_rect,
+        });
+        app.expert_panel_display
+            .enter_scroll_mode(&long_panel_content_for_wheel_tests());
+        render_expert_panel_once(&mut app, 80, 20);
+        app.expert_panel_display.scroll_to_top();
+        let before = app.expert_panel_display.scroll_offset();
+
+        app.handle_mouse_wheel(WheelDirection::Down, 10, 10, 1)
+            .await
+            .unwrap();
+
+        let expected = wheel_scroll_lines(panel_rect.height) as u16;
+        assert_eq!(
+            app.expert_panel_display
+                .scroll_offset()
+                .saturating_sub(before),
+            expected,
+            "handle_mouse_wheel: ticks=1 must advance scroll_offset by wheel_scroll_lines(h)"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_mouse_wheel_down_ticks_3_scales_linearly() {
+        let mut app = create_test_app();
+        app.expert_panel_display.show();
+        let panel_rect = Rect::new(0, 0, 80, 20);
+        app.set_layout_areas(LayoutAreas {
+            expert_list: Rect::default(),
+            task_input: Rect::default(),
+            expert_panel: panel_rect,
+        });
+        app.expert_panel_display
+            .enter_scroll_mode(&long_panel_content_for_wheel_tests());
+        render_expert_panel_once(&mut app, 80, 20);
+        app.expert_panel_display.scroll_to_top();
+        let before = app.expert_panel_display.scroll_offset();
+
+        app.handle_mouse_wheel(WheelDirection::Down, 10, 10, 3)
+            .await
+            .unwrap();
+
+        let expected = (wheel_scroll_lines(panel_rect.height) * 3) as u16;
+        assert_eq!(
+            app.expert_panel_display
+                .scroll_offset()
+                .saturating_sub(before),
+            expected,
+            "handle_mouse_wheel: ticks=3 must advance scroll_offset by 3 * wheel_scroll_lines(h)"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_mouse_wheel_up_ticks_1_scrolls_wheel_scroll_lines() {
+        let mut app = create_test_app();
+        app.expert_panel_display.show();
+        let panel_rect = Rect::new(0, 0, 80, 20);
+        app.set_layout_areas(LayoutAreas {
+            expert_list: Rect::default(),
+            task_input: Rect::default(),
+            expert_panel: panel_rect,
+        });
+        app.expert_panel_display
+            .enter_scroll_mode(&long_panel_content_for_wheel_tests());
+        render_expert_panel_once(&mut app, 80, 20);
+        app.expert_panel_display.scroll_to_bottom();
+        render_expert_panel_once(&mut app, 80, 20);
+        let before = app.expert_panel_display.scroll_offset();
+
+        app.handle_mouse_wheel(WheelDirection::Up, 10, 10, 1)
+            .await
+            .unwrap();
+
+        let expected = wheel_scroll_lines(panel_rect.height) as u16;
+        assert_eq!(
+            before.saturating_sub(app.expert_panel_display.scroll_offset()),
+            expected,
+            "handle_mouse_wheel: ticks=1 Up must decrement scroll_offset by wheel_scroll_lines(h)"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_mouse_wheel_up_ticks_3_scales_linearly() {
+        let mut app = create_test_app();
+        app.expert_panel_display.show();
+        let panel_rect = Rect::new(0, 0, 80, 20);
+        app.set_layout_areas(LayoutAreas {
+            expert_list: Rect::default(),
+            task_input: Rect::default(),
+            expert_panel: panel_rect,
+        });
+        app.expert_panel_display
+            .enter_scroll_mode(&long_panel_content_for_wheel_tests());
+        render_expert_panel_once(&mut app, 80, 20);
+        app.expert_panel_display.scroll_to_bottom();
+        render_expert_panel_once(&mut app, 80, 20);
+        let before = app.expert_panel_display.scroll_offset();
+
+        app.handle_mouse_wheel(WheelDirection::Up, 10, 10, 3)
+            .await
+            .unwrap();
+
+        let expected = (wheel_scroll_lines(panel_rect.height) * 3) as u16;
+        assert_eq!(
+            before.saturating_sub(app.expert_panel_display.scroll_offset()),
+            expected,
+            "handle_mouse_wheel: ticks=3 Up must decrement scroll_offset by 3 * wheel_scroll_lines(h)"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_mouse_wheel_direction_mapping() {
+        let mut app = create_test_app();
+        app.expert_panel_display.show();
+        let panel_rect = Rect::new(0, 0, 80, 20);
+        app.set_layout_areas(LayoutAreas {
+            expert_list: Rect::default(),
+            task_input: Rect::default(),
+            expert_panel: panel_rect,
+        });
+        app.expert_panel_display
+            .enter_scroll_mode(&long_panel_content_for_wheel_tests());
+        render_expert_panel_once(&mut app, 80, 20);
+        app.expert_panel_display.scroll_to_top();
+
+        let start = app.expert_panel_display.scroll_offset();
+        app.handle_mouse_wheel(WheelDirection::Down, 10, 10, 1)
+            .await
+            .unwrap();
+        let after_down = app.expert_panel_display.scroll_offset();
+        assert!(
+            after_down > start,
+            "WheelDirection::Down must advance scroll_offset"
+        );
+
+        app.handle_mouse_wheel(WheelDirection::Up, 10, 10, 1)
+            .await
+            .unwrap();
+        let after_up = app.expert_panel_display.scroll_offset();
+        assert!(
+            after_up < after_down,
+            "WheelDirection::Up must decrement scroll_offset"
+        );
+    }
+
+    // Phase C: coalesce_wheel_events tests (P1, P2, P3, P4).
+
+    fn wheel_event(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn coalesce_wheel_same_position_sums_ticks() {
+        // P1: a burst of 5 ScrollUp at (10, 5) yields net_ticks = 5 and no
+        // pending event — the whole burst collapses into one dispatch.
+        let first = wheel_event(MouseEventKind::ScrollUp, 10, 5);
+        let tail: Vec<Event> = (0..4)
+            .map(|_| Event::Mouse(wheel_event(MouseEventKind::ScrollUp, 10, 5)))
+            .collect();
+        let (acc, pending) = coalesce_wheel_events(first, &tail);
+        assert_eq!(
+            acc,
+            WheelAccumulator {
+                column: 10,
+                row: 5,
+                net_ticks: 5
+            },
+            "coalesce_wheel_events: 5 ScrollUp at same position must yield net_ticks = 5"
+        );
+        assert!(
+            pending.is_none(),
+            "coalesce_wheel_events: contiguous same-position burst must not leave a pending event"
+        );
+    }
+
+    #[test]
+    fn coalesce_wheel_up_down_cancels() {
+        // P4: 3 up + 3 down at the same position yields net_ticks = 0.
+        let first = wheel_event(MouseEventKind::ScrollUp, 10, 5);
+        let mut tail: Vec<Event> = Vec::new();
+        for _ in 0..2 {
+            tail.push(Event::Mouse(wheel_event(MouseEventKind::ScrollUp, 10, 5)));
+        }
+        for _ in 0..3 {
+            tail.push(Event::Mouse(wheel_event(MouseEventKind::ScrollDown, 10, 5)));
+        }
+        let (acc, pending) = coalesce_wheel_events(first, &tail);
+        assert_eq!(
+            acc.net_ticks, 0,
+            "coalesce_wheel_events: equal up/down must cancel to net_ticks = 0"
+        );
+        assert!(
+            pending.is_none(),
+            "coalesce_wheel_events: canceling burst must not leave a pending event"
+        );
+    }
+
+    #[test]
+    fn coalesce_wheel_stops_on_position_change() {
+        // P3: two ScrollUp at (10, 5), then one ScrollUp at (10, 6). The
+        // position-mismatching wheel event is re-queued and the accumulator
+        // stops at net_ticks = 2.
+        let first = wheel_event(MouseEventKind::ScrollUp, 10, 5);
+        let moved = Event::Mouse(wheel_event(MouseEventKind::ScrollUp, 10, 6));
+        let tail = vec![
+            Event::Mouse(wheel_event(MouseEventKind::ScrollUp, 10, 5)),
+            moved.clone(),
+        ];
+        let (acc, pending) = coalesce_wheel_events(first, &tail);
+        assert_eq!(
+            acc.net_ticks, 2,
+            "coalesce_wheel_events: position change must end accumulation at 2"
+        );
+        assert_eq!(
+            pending,
+            Some(moved),
+            "coalesce_wheel_events: the position-mismatching wheel event must be re-queued"
+        );
+    }
+
+    #[test]
+    fn coalesce_wheel_stops_on_key_event() {
+        // P2: two ScrollUp then a Key event. The accumulator stops at 2 and
+        // the Key event is returned as pending so dispatch order is preserved.
+        let first = wheel_event(MouseEventKind::ScrollUp, 10, 5);
+        let key = Event::Key(crossterm::event::KeyEvent::new(
+            KeyCode::Char('a'),
+            KeyModifiers::NONE,
+        ));
+        let tail = vec![
+            Event::Mouse(wheel_event(MouseEventKind::ScrollUp, 10, 5)),
+            key.clone(),
+        ];
+        let (acc, pending) = coalesce_wheel_events(first, &tail);
+        assert_eq!(
+            acc.net_ticks, 2,
+            "coalesce_wheel_events: non-wheel event must end accumulation at 2"
+        );
+        assert_eq!(
+            pending,
+            Some(key),
+            "coalesce_wheel_events: non-wheel event must be returned as pending"
+        );
+    }
+
+    #[test]
+    fn coalesce_wheel_stops_on_non_wheel_mouse_event() {
+        // Non-wheel mouse events at the same position also end coalescing and
+        // are re-queued. Guards against a subtle misread of P3.
+        let first = wheel_event(MouseEventKind::ScrollUp, 10, 5);
+        let click = Event::Mouse(wheel_event(MouseEventKind::Down(MouseButton::Left), 10, 5));
+        let tail = vec![click.clone()];
+        let (acc, pending) = coalesce_wheel_events(first, &tail);
+        assert_eq!(
+            acc.net_ticks, 1,
+            "coalesce_wheel_events: non-wheel mouse event must not contribute to net_ticks"
+        );
+        assert_eq!(
+            pending,
+            Some(click),
+            "coalesce_wheel_events: non-wheel mouse event must be re-queued"
+        );
     }
 }
 

@@ -2,7 +2,7 @@ use ansi_to_tui::IntoText;
 use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
-    text::{Span, Text},
+    text::{Line, Span, Text},
     widgets::{Block, Borders, Paragraph, Wrap},
     Frame,
 };
@@ -25,6 +25,11 @@ pub struct ExpertPanelDisplay {
     focused: bool,
     auto_scroll: bool,
     is_scrolling: bool,
+    /// Set to true once the user navigates above the visual bottom while in
+    /// scroll mode. Enables the render-time auto-exit when the offset returns
+    /// to the bottom, so the initial post-`enter_scroll_mode` clamp does not
+    /// immediately terminate the mode.
+    moved_off_bottom_in_scroll: bool,
     last_render_size: (u16, u16),
     content_hash: u64,
     cached_visual_line_count: usize,
@@ -49,6 +54,7 @@ impl ExpertPanelDisplay {
             focused: false,
             auto_scroll: true,
             is_scrolling: false,
+            moved_off_bottom_in_scroll: false,
             last_render_size: (0, 0),
             content_hash: 0,
             cached_visual_line_count: 0,
@@ -124,6 +130,7 @@ impl ExpertPanelDisplay {
     pub fn enter_scroll_mode(&mut self, raw: &str) {
         self.is_scrolling = true;
         self.auto_scroll = false;
+        self.moved_off_bottom_in_scroll = false;
         self.content_hash = 0;
         self.cached_visual_line_count = 0;
         self.cached_display_width = 0;
@@ -136,6 +143,7 @@ impl ExpertPanelDisplay {
 
     pub fn exit_scroll_mode(&mut self) {
         self.is_scrolling = false;
+        self.moved_off_bottom_in_scroll = false;
         self.content = Text::default();
         self.raw_line_count = 0;
         self.content_hash = 0;
@@ -207,6 +215,28 @@ impl ExpertPanelDisplay {
         self.auto_scroll = true;
     }
 
+    /// Returns a shallow borrowed view of `self.content` as a `Vec<Line<'_>>`.
+    ///
+    /// Each `Span`'s `content` is a `Cow::Borrowed(&str)` pointing into the
+    /// owned `Cow` of `self.content`, so no string bytes are copied.
+    fn borrow_lines(&self) -> Vec<Line<'_>> {
+        self.content
+            .lines
+            .iter()
+            .map(|line| {
+                let spans: Vec<Span<'_>> = line
+                    .spans
+                    .iter()
+                    .map(|s| Span::styled(s.content.as_ref(), s.style))
+                    .collect();
+                let mut out = Line::from(spans);
+                out.style = line.style;
+                out.alignment = line.alignment;
+                out
+            })
+            .collect()
+    }
+
     pub fn render(&mut self, frame: &mut Frame, area: Rect) {
         let title = match (&self.expert_name, self.expert_id) {
             (Some(name), Some(id)) => format!("{name} (Expert{id})"),
@@ -226,9 +256,127 @@ impl ExpertPanelDisplay {
         let visible_height = inner_height as usize;
         let display_width = inner_width as usize;
 
-        // Build paragraph without block for accurate line_count measurement.
-        // line_count() passes width directly to WordWrapper, and rendering
-        // uses block.inner(area).width == inner_width, so both see the same width.
+        // Visual line count is measured via a probe `Paragraph` that borrows
+        // `self.content` through the shallow `borrow_lines` view. The probe is
+        // dropped before any `&mut self` updates so the borrow never overlaps
+        // with cache or scroll mutations. line_count() passes width directly
+        // to WordWrapper, matching the width used at render time (block.inner).
+        let visual_line_count =
+            if display_width != self.cached_display_width || self.cached_display_width == 0 {
+                let count = if inner_width > 0 {
+                    let probe = Paragraph::new(self.borrow_lines()).wrap(Wrap { trim: false });
+                    probe.line_count(inner_width)
+                } else {
+                    self.raw_line_count
+                };
+                self.cached_visual_line_count = count;
+                self.cached_display_width = display_width;
+                count
+            } else {
+                self.cached_visual_line_count
+            };
+
+        let max_scroll = visual_line_count.saturating_sub(visible_height) as u16;
+        if self.auto_scroll {
+            self.scroll_offset = max_scroll;
+        } else {
+            self.scroll_offset = self.scroll_offset.min(max_scroll);
+        }
+        self.reconcile_scroll_mode_at_bottom(max_scroll);
+
+        let history_indicator = if self.is_scrolling {
+            " [SCROLL MODE]"
+        } else {
+            ""
+        };
+        let scroll_indicator = if !self.auto_scroll {
+            let bottom_visible =
+                (self.scroll_offset as usize + visible_height).min(visual_line_count);
+            format!(" [{}/{}]", bottom_visible, visual_line_count)
+        } else {
+            String::new()
+        };
+
+        let block = Block::default()
+            .title(Span::styled(
+                format!("{title}{history_indicator}{scroll_indicator} "),
+                Style::default()
+                    .fg(border_color)
+                    .add_modifier(Modifier::BOLD),
+            ))
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(border_color));
+
+        // Final paragraph uses the same shallow view — no string bytes copied.
+        let paragraph = Paragraph::new(self.borrow_lines())
+            .wrap(Wrap { trim: false })
+            .block(block)
+            .scroll((self.scroll_offset, 0));
+
+        frame.render_widget(paragraph, area);
+    }
+
+    /// Shared render-time reconciliation of scroll state near the bottom.
+    ///
+    /// Two responsibilities:
+    /// 1. In normal mode, re-enable `auto_scroll` once offset catches the bottom.
+    /// 2. In scroll mode, auto-exit back to live tailing when the user returns
+    ///    to the bottom after having moved away from it at least once. The
+    ///    "moved away" flag prevents the initial post-`enter_scroll_mode` clamp
+    ///    (which lands at the bottom by design) from tripping the auto-exit.
+    fn reconcile_scroll_mode_at_bottom(&mut self, max_scroll: u16) {
+        if !self.is_scrolling {
+            if self.scroll_offset >= max_scroll {
+                self.auto_scroll = true;
+            }
+            return;
+        }
+        if self.scroll_offset < max_scroll {
+            self.moved_off_bottom_in_scroll = true;
+            return;
+        }
+        if self.moved_off_bottom_in_scroll {
+            self.is_scrolling = false;
+            self.moved_off_bottom_in_scroll = false;
+            self.auto_scroll = true;
+            // Force the next try_set_content to refresh content from the live
+            // pane capture. The current frame still renders the full-history
+            // tail, which is visually identical to the live pane at the bottom.
+            self.content_hash = 0;
+        }
+    }
+
+    /// Parse raw ANSI-escaped string into styled `Text`.
+    /// Falls back to plain `Text::raw()` on parse error (P10).
+    pub fn parse_ansi(raw: &str) -> Text<'static> {
+        raw.into_text()
+            .unwrap_or_else(|_| Text::raw(raw.to_string()))
+    }
+
+    /// Test-only render path that uses the legacy deep-clone of `self.content`.
+    ///
+    /// Used by `render_shallow_view_matches_cloned_view` to prove the shallow
+    /// `borrow_lines` view produces byte-identical rendering to the old path.
+    #[cfg(test)]
+    fn render_cloned_for_parity_test(&mut self, frame: &mut Frame, area: Rect) {
+        let title = match (&self.expert_name, self.expert_id) {
+            (Some(name), Some(id)) => format!("{name} (Expert{id})"),
+            _ => " Expert Panel (no expert selected) ".to_string(),
+        };
+
+        let border_color = if self.focused {
+            Color::Cyan
+        } else {
+            Color::DarkGray
+        };
+
+        let inner_width = area.width.saturating_sub(2);
+        let inner_height = area.height.saturating_sub(2);
+        self.last_render_size = (inner_width, inner_height);
+
+        let visible_height = inner_height as usize;
+        let display_width = inner_width as usize;
+
         let paragraph = Paragraph::new(self.content.clone()).wrap(Wrap { trim: false });
 
         let visual_line_count =
@@ -251,9 +399,7 @@ impl ExpertPanelDisplay {
         } else {
             self.scroll_offset = self.scroll_offset.min(max_scroll);
         }
-        if self.scroll_offset >= max_scroll && !self.is_scrolling {
-            self.auto_scroll = true;
-        }
+        self.reconcile_scroll_mode_at_bottom(max_scroll);
 
         let history_indicator = if self.is_scrolling {
             " [SCROLL MODE]"
@@ -261,7 +407,9 @@ impl ExpertPanelDisplay {
             ""
         };
         let scroll_indicator = if !self.auto_scroll {
-            format!(" [{}/{}]", self.scroll_offset + 1, visual_line_count)
+            let bottom_visible =
+                (self.scroll_offset as usize + visible_height).min(visual_line_count);
+            format!(" [{}/{}]", bottom_visible, visual_line_count)
         } else {
             String::new()
         };
@@ -277,15 +425,7 @@ impl ExpertPanelDisplay {
             .border_style(Style::default().fg(border_color));
 
         let paragraph = paragraph.block(block).scroll((self.scroll_offset, 0));
-
         frame.render_widget(paragraph, area);
-    }
-
-    /// Parse raw ANSI-escaped string into styled `Text`.
-    /// Falls back to plain `Text::raw()` on parse error (P10).
-    pub fn parse_ansi(raw: &str) -> Text<'static> {
-        raw.into_text()
-            .unwrap_or_else(|_| Text::raw(raw.to_string()))
     }
 }
 
@@ -704,6 +844,41 @@ mod tests {
         assert!(
             !rendered.contains("/"),
             "render: should NOT show scroll position indicator when auto_scroll is enabled"
+        );
+    }
+
+    #[test]
+    fn scroll_indicator_shows_bottom_visible_line_at_full_scroll() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.set_expert(1, "Alice".to_string());
+        let content = make_wrapping_content(5, 200);
+        panel.enter_scroll_mode(&content);
+
+        // First render: resolves u16::MAX sentinel to max_scroll.
+        let _ = render_to_string(&mut panel, 40, 10);
+
+        // visible_height = 10 - 2 = 8, inner_width = 40 - 2 = 38
+        let display_width = 38_usize;
+        let expected_visual: usize = content
+            .lines()
+            .map(|l| {
+                let w = l.len();
+                if w == 0 {
+                    1
+                } else {
+                    w.div_ceil(display_width)
+                }
+            })
+            .sum();
+
+        let rendered = render_to_string(&mut panel, 40, 10);
+        let title = rendered.lines().next().unwrap_or("");
+        let expected = format!("[{}/{}]", expected_visual, expected_visual);
+        assert!(
+            title.contains(&expected),
+            "scroll indicator at visual bottom should read '{}' (bottom-visible line), got title: {}",
+            expected,
+            title
         );
     }
 
@@ -1402,6 +1577,60 @@ mod tests {
         assert!(panel.is_scrolling, "should remain in scroll mode");
     }
 
+    #[test]
+    fn scroll_down_to_bottom_after_scroll_up_exits_scroll_mode() {
+        let mut panel = ExpertPanelDisplay::new();
+        let content = make_wrapping_content(5, 200);
+        panel.enter_scroll_mode(&content);
+
+        // Initial render clamps offset to max_scroll (visual bottom).
+        render_panel(&mut panel, 40, 10);
+        assert!(panel.is_scrolling, "precondition: should be in scroll mode");
+
+        // User scrolls up — moves offset below max_scroll.
+        for _ in 0..20 {
+            panel.scroll_up();
+        }
+        render_panel(&mut panel, 40, 10);
+        assert!(
+            panel.is_scrolling,
+            "precondition: should stay in scroll mode after scroll_up"
+        );
+
+        // User scrolls back down past the bottom.
+        for _ in 0..100 {
+            panel.scroll_down();
+        }
+        render_panel(&mut panel, 40, 10);
+
+        assert!(
+            !panel.is_scrolling,
+            "scroll_down to bottom after scroll_up should exit scroll mode"
+        );
+        assert!(
+            panel.auto_scroll,
+            "reaching bottom should re-enable live auto_scroll"
+        );
+    }
+
+    #[test]
+    fn enter_scroll_mode_render_alone_does_not_auto_exit() {
+        let mut panel = ExpertPanelDisplay::new();
+        let content = make_wrapping_content(5, 200);
+        panel.enter_scroll_mode(&content);
+
+        // Multiple renders without any user scroll action must not auto-exit,
+        // because enter_scroll_mode already positions at visual bottom.
+        render_panel(&mut panel, 40, 10);
+        render_panel(&mut panel, 40, 10);
+        render_panel(&mut panel, 40, 10);
+
+        assert!(
+            panel.is_scrolling,
+            "entering scroll mode then idling must not auto-exit"
+        );
+    }
+
     // Word-wrap regression test: verifies visual line count uses ratatui's
     // WordWrapper (word boundaries) rather than div_ceil (character-level).
 
@@ -1428,6 +1657,193 @@ mod tests {
         assert_eq!(
             panel.cached_visual_line_count, 3,
             "word-wrap: 'aaaa bbbbbbbb cccc' at width 10 should be 3 visual lines, not 2"
+        );
+    }
+
+    // Shallow-view (borrow_lines) tests — Phase B, Task 5.1.
+    // Validates correctness properties P5 (no string data duplication) and
+    // P6 (borrow safety) of the shallow Paragraph view.
+
+    fn styled_text_fixture() -> Text<'static> {
+        use ratatui::layout::Alignment;
+        let mut line1 = Line::from(vec![
+            Span::styled("hello", Style::default().fg(Color::Red)),
+            Span::styled(" ", Style::default()),
+            Span::styled(
+                "world",
+                Style::default()
+                    .fg(Color::Blue)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]);
+        line1.style = Style::default().add_modifier(Modifier::ITALIC);
+        line1.alignment = Some(Alignment::Center);
+
+        let line2 = Line::from(vec![Span::styled(
+            "second",
+            Style::default().fg(Color::Green),
+        )]);
+
+        Text::from(vec![line1, line2])
+    }
+
+    #[test]
+    fn borrow_lines_returns_same_line_count() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.content = styled_text_fixture();
+        let view = panel.borrow_lines();
+        assert_eq!(
+            view.len(),
+            panel.content.lines.len(),
+            "borrow_lines: view length should equal source line count"
+        );
+    }
+
+    #[test]
+    fn borrow_lines_preserves_span_text() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.content = styled_text_fixture();
+        let view = panel.borrow_lines();
+
+        for (src_line, view_line) in panel.content.lines.iter().zip(view.iter()) {
+            assert_eq!(
+                src_line.spans.len(),
+                view_line.spans.len(),
+                "borrow_lines: span count per line should match"
+            );
+            for (src_span, view_span) in src_line.spans.iter().zip(view_line.spans.iter()) {
+                assert_eq!(
+                    src_span.content.as_ref(),
+                    view_span.content.as_ref(),
+                    "borrow_lines: span text should match byte-for-byte"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn borrow_lines_preserves_styles() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.content = styled_text_fixture();
+        let view = panel.borrow_lines();
+
+        for (src_line, view_line) in panel.content.lines.iter().zip(view.iter()) {
+            assert_eq!(
+                src_line.style, view_line.style,
+                "borrow_lines: per-line style should propagate"
+            );
+            assert_eq!(
+                src_line.alignment, view_line.alignment,
+                "borrow_lines: per-line alignment should propagate"
+            );
+            for (src_span, view_span) in src_line.spans.iter().zip(view_line.spans.iter()) {
+                assert_eq!(
+                    src_span.style, view_span.style,
+                    "borrow_lines: per-span style should propagate"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn borrow_lines_spans_are_borrowed() {
+        use std::borrow::Cow;
+
+        let mut panel = ExpertPanelDisplay::new();
+        panel.content = styled_text_fixture();
+        let view = panel.borrow_lines();
+
+        for line in &view {
+            for span in &line.spans {
+                assert!(
+                    matches!(span.content, Cow::Borrowed(_)),
+                    "borrow_lines: span content must be Cow::Borrowed (no string allocation)"
+                );
+            }
+        }
+    }
+
+    // Render parity: the shallow `borrow_lines` path must produce byte-identical
+    // output to the legacy `self.content.clone()` path (Task 6.1).
+
+    fn make_panel_with_styled_content() -> ExpertPanelDisplay {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.set_expert(1, "Alice".to_string());
+        // Mix of ANSI-styled and plain lines exercising colors, modifiers,
+        // and wrap boundaries.
+        let raw = "\x1b[31mred line\x1b[0m\n\
+                   plain second line with some text\n\
+                   \x1b[1;34mbold blue third\x1b[0m line\n\
+                   fourth line\n\
+                   \x1b[32mgreen fifth line\x1b[0m";
+        let text = ExpertPanelDisplay::parse_ansi(raw);
+        let line_count = raw.lines().count();
+        panel.set_content(text, line_count);
+        panel
+    }
+
+    fn render_with<F>(panel: &mut ExpertPanelDisplay, width: u16, height: u16, f: F) -> Vec<String>
+    where
+        F: FnOnce(&mut ExpertPanelDisplay, &mut ratatui::Frame, Rect),
+    {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                f(panel, frame, area);
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer().clone();
+        let mut rows = Vec::with_capacity(buffer.area.height as usize);
+        for y in 0..buffer.area.height {
+            let mut row = String::new();
+            for x in 0..buffer.area.width {
+                row.push_str(buffer[(x, y)].symbol());
+            }
+            rows.push(row);
+        }
+        rows
+    }
+
+    #[test]
+    fn render_shallow_view_matches_cloned_view() {
+        let mut panel_borrow = make_panel_with_styled_content();
+        let mut panel_clone = make_panel_with_styled_content();
+
+        let rows_borrow = render_with(&mut panel_borrow, 40, 10, |p, f, a| p.render(f, a));
+        let rows_clone = render_with(&mut panel_clone, 40, 10, |p, f, a| {
+            p.render_cloned_for_parity_test(f, a)
+        });
+
+        assert_eq!(
+            rows_borrow, rows_clone,
+            "render parity: shallow borrow view must match cloned view buffer-for-buffer"
+        );
+    }
+
+    #[test]
+    fn render_shallow_view_matches_cloned_view_while_scrolling() {
+        let mut panel_borrow = make_panel_with_styled_content();
+        let mut panel_clone = make_panel_with_styled_content();
+
+        // Disable auto-scroll and drive both panels to the same offset.
+        for _ in 0..3 {
+            panel_borrow.scroll_up();
+            panel_clone.scroll_up();
+        }
+
+        let rows_borrow = render_with(&mut panel_borrow, 40, 10, |p, f, a| p.render(f, a));
+        let rows_clone = render_with(&mut panel_clone, 40, 10, |p, f, a| {
+            p.render_cloned_for_parity_test(f, a)
+        });
+
+        assert_eq!(
+            rows_borrow, rows_clone,
+            "render parity: scroll indicator and content must match across paths"
         );
     }
 }
