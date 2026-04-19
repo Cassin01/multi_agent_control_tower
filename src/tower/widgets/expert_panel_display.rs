@@ -284,7 +284,9 @@ impl ExpertPanelDisplay {
             ""
         };
         let scroll_indicator = if !self.auto_scroll {
-            format!(" [{}/{}]", self.scroll_offset + 1, visual_line_count)
+            let bottom_visible =
+                (self.scroll_offset as usize + visible_height).min(visual_line_count);
+            format!(" [{}/{}]", bottom_visible, visual_line_count)
         } else {
             String::new()
         };
@@ -371,7 +373,9 @@ impl ExpertPanelDisplay {
             ""
         };
         let scroll_indicator = if !self.auto_scroll {
-            format!(" [{}/{}]", self.scroll_offset + 1, visual_line_count)
+            let bottom_visible =
+                (self.scroll_offset as usize + visible_height).min(visual_line_count);
+            format!(" [{}/{}]", bottom_visible, visual_line_count)
         } else {
             String::new()
         };
@@ -806,6 +810,41 @@ mod tests {
         assert!(
             !rendered.contains("/"),
             "render: should NOT show scroll position indicator when auto_scroll is enabled"
+        );
+    }
+
+    #[test]
+    fn scroll_indicator_shows_bottom_visible_line_at_full_scroll() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.set_expert(1, "Alice".to_string());
+        let content = make_wrapping_content(5, 200);
+        panel.enter_scroll_mode(&content);
+
+        // First render: resolves u16::MAX sentinel to max_scroll.
+        let _ = render_to_string(&mut panel, 40, 10);
+
+        // visible_height = 10 - 2 = 8, inner_width = 40 - 2 = 38
+        let display_width = 38_usize;
+        let expected_visual: usize = content
+            .lines()
+            .map(|l| {
+                let w = l.len();
+                if w == 0 {
+                    1
+                } else {
+                    w.div_ceil(display_width)
+                }
+            })
+            .sum();
+
+        let rendered = render_to_string(&mut panel, 40, 10);
+        let title = rendered.lines().next().unwrap_or("");
+        let expected = format!("[{}/{}]", expected_visual, expected_visual);
+        assert!(
+            title.contains(&expected),
+            "scroll indicator at visual bottom should read '{}' (bottom-visible line), got title: {}",
+            expected,
+            title
         );
     }
 
