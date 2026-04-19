@@ -1487,6 +1487,61 @@ impl TowerApp {
         Ok(())
     }
 
+    /// Clear all worktree-related state for an expert returning to the project root.
+    ///
+    /// Resets the persisted `ExpertContext`, both in-memory `ExpertRegistry`
+    /// instances (main and router), and the on-disk manifest. The registry sync
+    /// is load-bearing: `MessageRouter` enforces worktree affinity via
+    /// `ExpertInfo::same_worktree`, and a stale `worktree_path` in the registry
+    /// will block cross-expert messaging even after the context file is cleared.
+    async fn clear_expert_worktree_state(&mut self, expert_id: u32) -> Result<()> {
+        let session_hash = self.config.session_hash();
+
+        if let Ok(Some(mut ctx)) = self
+            .context_store
+            .load_expert_context(&session_hash, expert_id)
+            .await
+        {
+            ctx.clear_worktree();
+            ctx.clear_session();
+            ctx.clear_knowledge();
+            self.context_store.save_expert_context(&ctx).await?;
+        } else {
+            self.context_store
+                .clear_expert_context(&session_hash, expert_id)
+                .await?;
+        }
+
+        if let Err(e) = self.expert_registry.update_expert_worktree(expert_id, None) {
+            tracing::warn!(
+                "Failed to clear expert {} worktree in registry: {}",
+                expert_id,
+                e
+            );
+        }
+        if let Some(ref mut router) = self.message_router {
+            if let Err(e) = router
+                .expert_registry_mut()
+                .update_expert_worktree(expert_id, None)
+            {
+                tracing::warn!(
+                    "Failed to clear expert {} worktree in router: {}",
+                    expert_id,
+                    e
+                );
+            }
+        }
+
+        if let Err(e) = self.refresh_expert_manifest() {
+            tracing::warn!(
+                "Failed to refresh expert manifest after worktree return: {}",
+                e
+            );
+        }
+
+        Ok(())
+    }
+
     pub async fn return_expert_from_worktree(&mut self) -> Result<()> {
         let expert_id = match self.status_display.selected_expert_id() {
             Some(id) => id,
@@ -1525,27 +1580,7 @@ impl TowerApp {
 
         exit_expert(&self.claude, expert_id).await?;
 
-        if let Ok(Some(mut ctx)) = self
-            .context_store
-            .load_expert_context(&session_hash, expert_id)
-            .await
-        {
-            ctx.clear_worktree();
-            ctx.clear_session();
-            ctx.clear_knowledge();
-            self.context_store.save_expert_context(&ctx).await?;
-        } else {
-            self.context_store
-                .clear_expert_context(&session_hash, expert_id)
-                .await?;
-        }
-
-        if let Err(e) = self.refresh_expert_manifest() {
-            tracing::warn!(
-                "Failed to refresh expert manifest after worktree return: {}",
-                e
-            );
-        }
+        self.clear_expert_worktree_state(expert_id).await?;
 
         let prepared =
             prepare_expert_files_with_role(&self.config, expert_id, &instruction_role, None)?;
@@ -3378,6 +3413,140 @@ mod tests {
             router_expert.worktree_path,
             Some("/tmp/wt/feature-auth".to_string()),
             "poll_worktree_launch: should update worktree_path in router registry"
+        );
+    }
+
+    // --- Ctrl+W (empty input) worktree-return regression tests ---
+    //
+    // Bug: return_expert_from_worktree cleared the persisted ExpertContext but
+    // did not reset the in-memory ExpertRegistry in either the main instance or
+    // the MessageRouter's copy. The stale worktree_path caused MessageRouter to
+    // fail worktree affinity checks for messages whose sender and recipient
+    // should have both been at the project root, leaving messages stuck in the
+    // queue. clear_expert_worktree_state encapsulates the full reset.
+
+    #[tokio::test]
+    async fn clear_expert_worktree_state_resets_main_registry() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let config = Config::default().with_project_path(temp.path().to_path_buf());
+        let wm = WorktreeManager::new(config.project_path.clone());
+        let mut app = TowerApp::new(config, wm);
+
+        app.expert_registry
+            .update_expert_worktree(0, Some("/tmp/wt/feature".to_string()))
+            .unwrap();
+
+        app.clear_expert_worktree_state(0).await.unwrap();
+
+        let expert = app.expert_registry.get_expert(0).unwrap();
+        assert_eq!(
+            expert.worktree_path, None,
+            "clear_expert_worktree_state: main registry worktree_path should be cleared"
+        );
+    }
+
+    #[tokio::test]
+    async fn clear_expert_worktree_state_resets_router_registry() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let config = Config::default().with_project_path(temp.path().to_path_buf());
+        let wm = WorktreeManager::new(config.project_path.clone());
+        let mut app = TowerApp::new(config, wm);
+
+        app.expert_registry
+            .update_expert_worktree(0, Some("/tmp/wt/feature".to_string()))
+            .unwrap();
+        app.message_router
+            .as_mut()
+            .unwrap()
+            .expert_registry_mut()
+            .update_expert_worktree(0, Some("/tmp/wt/feature".to_string()))
+            .unwrap();
+
+        app.clear_expert_worktree_state(0).await.unwrap();
+
+        let router_expert = app
+            .message_router
+            .as_ref()
+            .unwrap()
+            .expert_registry()
+            .get_expert(0)
+            .unwrap();
+        assert_eq!(
+            router_expert.worktree_path, None,
+            "clear_expert_worktree_state: router registry worktree_path should be cleared (MessageRouter uses it for worktree-affinity checks)"
+        );
+    }
+
+    #[tokio::test]
+    async fn clear_expert_worktree_state_clears_persisted_context() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let config = Config::default().with_project_path(temp.path().to_path_buf());
+        let wm = WorktreeManager::new(config.project_path.clone());
+        let mut app = TowerApp::new(config.clone(), wm);
+
+        let mut ctx =
+            ExpertContext::new(0, "Alyosha".to_string(), config.session_hash().to_string());
+        ctx.set_worktree("feature".to_string(), "/tmp/wt/feature".to_string());
+        app.context_store.save_expert_context(&ctx).await.unwrap();
+
+        app.clear_expert_worktree_state(0).await.unwrap();
+
+        let reloaded = app
+            .context_store
+            .load_expert_context(&config.session_hash(), 0)
+            .await
+            .unwrap()
+            .expect("context should still exist after clear");
+        assert_eq!(
+            reloaded.worktree_path, None,
+            "clear_expert_worktree_state: persisted ExpertContext worktree_path should be None"
+        );
+        assert_eq!(
+            reloaded.worktree_branch, None,
+            "clear_expert_worktree_state: persisted ExpertContext worktree_branch should be None"
+        );
+    }
+
+    #[tokio::test]
+    async fn clear_expert_worktree_state_regenerates_manifest_with_null_worktree() {
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(temp.path().join(".macot")).unwrap();
+        let config = Config::default().with_project_path(temp.path().to_path_buf());
+        let wm = WorktreeManager::new(config.project_path.clone());
+        let mut app = TowerApp::new(config.clone(), wm);
+
+        app.expert_registry
+            .update_expert_worktree(0, Some("/tmp/wt/feature".to_string()))
+            .unwrap();
+        app.message_router
+            .as_mut()
+            .unwrap()
+            .expert_registry_mut()
+            .update_expert_worktree(0, Some("/tmp/wt/feature".to_string()))
+            .unwrap();
+        app.refresh_expert_manifest().unwrap();
+
+        let before = std::fs::read_to_string(config.queue_path.join("experts_manifest.json"))
+            .expect("manifest should exist after refresh");
+        assert!(
+            before.contains("/tmp/wt/feature"),
+            "manifest precondition: should contain worktree_path before clear, got: {before}"
+        );
+
+        app.clear_expert_worktree_state(0).await.unwrap();
+
+        let after = std::fs::read_to_string(config.queue_path.join("experts_manifest.json"))
+            .expect("manifest should still exist after clear");
+        let entries: serde_json::Value = serde_json::from_str(&after).unwrap();
+        let expert0 = &entries[0];
+        assert_eq!(
+            expert0["expert_id"], 0,
+            "manifest: first entry should be expert 0"
+        );
+        assert!(
+            expert0["worktree_path"].is_null(),
+            "clear_expert_worktree_state: manifest entry 0 worktree_path should be null, got: {}",
+            expert0["worktree_path"]
         );
     }
 
