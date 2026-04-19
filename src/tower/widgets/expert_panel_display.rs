@@ -25,6 +25,11 @@ pub struct ExpertPanelDisplay {
     focused: bool,
     auto_scroll: bool,
     is_scrolling: bool,
+    /// Set to true once the user navigates above the visual bottom while in
+    /// scroll mode. Enables the render-time auto-exit when the offset returns
+    /// to the bottom, so the initial post-`enter_scroll_mode` clamp does not
+    /// immediately terminate the mode.
+    moved_off_bottom_in_scroll: bool,
     last_render_size: (u16, u16),
     content_hash: u64,
     cached_visual_line_count: usize,
@@ -49,6 +54,7 @@ impl ExpertPanelDisplay {
             focused: false,
             auto_scroll: true,
             is_scrolling: false,
+            moved_off_bottom_in_scroll: false,
             last_render_size: (0, 0),
             content_hash: 0,
             cached_visual_line_count: 0,
@@ -124,6 +130,7 @@ impl ExpertPanelDisplay {
     pub fn enter_scroll_mode(&mut self, raw: &str) {
         self.is_scrolling = true;
         self.auto_scroll = false;
+        self.moved_off_bottom_in_scroll = false;
         self.content_hash = 0;
         self.cached_visual_line_count = 0;
         self.cached_display_width = 0;
@@ -136,6 +143,7 @@ impl ExpertPanelDisplay {
 
     pub fn exit_scroll_mode(&mut self) {
         self.is_scrolling = false;
+        self.moved_off_bottom_in_scroll = false;
         self.content = Text::default();
         self.raw_line_count = 0;
         self.content_hash = 0;
@@ -274,9 +282,7 @@ impl ExpertPanelDisplay {
         } else {
             self.scroll_offset = self.scroll_offset.min(max_scroll);
         }
-        if self.scroll_offset >= max_scroll && !self.is_scrolling {
-            self.auto_scroll = true;
-        }
+        self.reconcile_scroll_mode_at_bottom(max_scroll);
 
         let history_indicator = if self.is_scrolling {
             " [SCROLL MODE]"
@@ -308,6 +314,36 @@ impl ExpertPanelDisplay {
             .scroll((self.scroll_offset, 0));
 
         frame.render_widget(paragraph, area);
+    }
+
+    /// Shared render-time reconciliation of scroll state near the bottom.
+    ///
+    /// Two responsibilities:
+    /// 1. In normal mode, re-enable `auto_scroll` once offset catches the bottom.
+    /// 2. In scroll mode, auto-exit back to live tailing when the user returns
+    ///    to the bottom after having moved away from it at least once. The
+    ///    "moved away" flag prevents the initial post-`enter_scroll_mode` clamp
+    ///    (which lands at the bottom by design) from tripping the auto-exit.
+    fn reconcile_scroll_mode_at_bottom(&mut self, max_scroll: u16) {
+        if !self.is_scrolling {
+            if self.scroll_offset >= max_scroll {
+                self.auto_scroll = true;
+            }
+            return;
+        }
+        if self.scroll_offset < max_scroll {
+            self.moved_off_bottom_in_scroll = true;
+            return;
+        }
+        if self.moved_off_bottom_in_scroll {
+            self.is_scrolling = false;
+            self.moved_off_bottom_in_scroll = false;
+            self.auto_scroll = true;
+            // Force the next try_set_content to refresh content from the live
+            // pane capture. The current frame still renders the full-history
+            // tail, which is visually identical to the live pane at the bottom.
+            self.content_hash = 0;
+        }
     }
 
     /// Parse raw ANSI-escaped string into styled `Text`.
@@ -363,9 +399,7 @@ impl ExpertPanelDisplay {
         } else {
             self.scroll_offset = self.scroll_offset.min(max_scroll);
         }
-        if self.scroll_offset >= max_scroll && !self.is_scrolling {
-            self.auto_scroll = true;
-        }
+        self.reconcile_scroll_mode_at_bottom(max_scroll);
 
         let history_indicator = if self.is_scrolling {
             " [SCROLL MODE]"
@@ -1541,6 +1575,60 @@ mod tests {
             "auto_scroll should NOT be re-enabled during scroll mode even when at bottom"
         );
         assert!(panel.is_scrolling, "should remain in scroll mode");
+    }
+
+    #[test]
+    fn scroll_down_to_bottom_after_scroll_up_exits_scroll_mode() {
+        let mut panel = ExpertPanelDisplay::new();
+        let content = make_wrapping_content(5, 200);
+        panel.enter_scroll_mode(&content);
+
+        // Initial render clamps offset to max_scroll (visual bottom).
+        render_panel(&mut panel, 40, 10);
+        assert!(panel.is_scrolling, "precondition: should be in scroll mode");
+
+        // User scrolls up — moves offset below max_scroll.
+        for _ in 0..20 {
+            panel.scroll_up();
+        }
+        render_panel(&mut panel, 40, 10);
+        assert!(
+            panel.is_scrolling,
+            "precondition: should stay in scroll mode after scroll_up"
+        );
+
+        // User scrolls back down past the bottom.
+        for _ in 0..100 {
+            panel.scroll_down();
+        }
+        render_panel(&mut panel, 40, 10);
+
+        assert!(
+            !panel.is_scrolling,
+            "scroll_down to bottom after scroll_up should exit scroll mode"
+        );
+        assert!(
+            panel.auto_scroll,
+            "reaching bottom should re-enable live auto_scroll"
+        );
+    }
+
+    #[test]
+    fn enter_scroll_mode_render_alone_does_not_auto_exit() {
+        let mut panel = ExpertPanelDisplay::new();
+        let content = make_wrapping_content(5, 200);
+        panel.enter_scroll_mode(&content);
+
+        // Multiple renders without any user scroll action must not auto-exit,
+        // because enter_scroll_mode already positions at visual bottom.
+        render_panel(&mut panel, 40, 10);
+        render_panel(&mut panel, 40, 10);
+        render_panel(&mut panel, 40, 10);
+
+        assert!(
+            panel.is_scrolling,
+            "entering scroll mode then idling must not auto-exit"
+        );
     }
 
     // Word-wrap regression test: verifies visual line count uses ratatui's
