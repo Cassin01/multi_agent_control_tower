@@ -1,4 +1,6 @@
 use anyhow::Result;
+#[cfg(test)]
+use crossterm::event::MouseEvent;
 use crossterm::event::{
     self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
 };
@@ -33,10 +35,79 @@ const EVENT_POLL_TIMEOUT: Duration = Duration::from_millis(16);
 /// One wheel notch ≈ 3 lines matches conventional terminal scrolling.
 const WHEEL_SCROLL_LINES: usize = 3;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WheelDirection {
+    Up,
+    Down,
+}
+
+impl WheelDirection {
+    fn as_delta(self) -> i32 {
+        match self {
+            Self::Up => 1,
+            Self::Down => -1,
+        }
+    }
+}
+
+fn wheel_direction(kind: MouseEventKind) -> Option<WheelDirection> {
+    match kind {
+        MouseEventKind::ScrollUp => Some(WheelDirection::Up),
+        MouseEventKind::ScrollDown => Some(WheelDirection::Down),
+        _ => None,
+    }
+}
+
+/// Accumulator for a contiguous burst of wheel events inside the same panel
+/// region. `net_ticks > 0` is net scroll-up, `< 0` is net scroll-down.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct WheelAccumulator {
+    column: u16,
+    row: u16,
+    net_ticks: i32,
+}
+
+/// Pure coalescing logic for wheel events.
+///
+/// Seeds an accumulator from `first` and folds subsequent wheel events from
+/// `tail` whose position shares the panel-region predicate
+/// (`TowerApp::same_wheel_region`). Stops at the first non-wheel event, the
+/// first event in a different region, or end of `tail`. The returned
+/// `Option<Event>` is the event that stopped coalescing, so the caller can
+/// re-dispatch it.
+#[cfg(test)]
+fn coalesce_wheel_events(
+    first: MouseEvent,
+    tail: &[Event],
+    panel: Rect,
+) -> (WheelAccumulator, Option<Event>) {
+    let seed = wheel_direction(first.kind)
+        .expect("coalesce_wheel_events: first event must be a wheel event");
+    let mut acc = WheelAccumulator {
+        column: first.column,
+        row: first.row,
+        net_ticks: seed.as_delta(),
+    };
+    for ev in tail {
+        match ev {
+            Event::Mouse(m)
+                if TowerApp::same_wheel_region((acc.column, acc.row), (m.column, m.row), panel) =>
+            {
+                match wheel_direction(m.kind) {
+                    Some(d) => acc.net_ticks += d.as_delta(),
+                    None => return (acc, Some(ev.clone())),
+                }
+            }
+            _ => return (acc, Some(ev.clone())),
+        }
+    }
+    (acc, None)
+}
+
 use super::ui::UI;
 use super::widgets::{
-    ExpertPanelDisplay, HelpModal, MessagingDisplay, ReportDisplay, RoleSelector, StatusDisplay,
-    TaskInput, ViewMode,
+    ExpertPanelDisplay, HelpModal, MessagingDisplay, ReportDisplay, RoleSelector, ScrollOrigin,
+    StatusDisplay, TaskInput, ViewMode,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,6 +184,83 @@ enum ExpertPanelUpdateState {
     },
 }
 
+/// Result produced by a background scroll-mode capture task.
+/// Contains the expert id so `poll_scroll_mode_capture` can discard stale results
+/// when the user changed experts before the task completed.
+#[allow(dead_code)]
+struct ScrollModeCaptureResult {
+    expert_id: u32,
+    text: ratatui::text::Text<'static>,
+    raw_line_count: usize,
+}
+
+/// Tracks a single in-flight `capture_full_history + parse_ansi` task spawned
+/// by `try_enter_scroll_mode`. At most one `InProgress` variant lives at a time.
+#[derive(Default)]
+enum ScrollModeCaptureState {
+    #[default]
+    Idle,
+    InProgress {
+        expert_id: u32,
+        #[allow(dead_code)]
+        origin: ScrollOrigin,
+        handle: tokio::task::JoinHandle<Result<ScrollModeCaptureResult>>,
+    },
+}
+
+/// Post-exit TTL cache: after `reconcile_scroll_mode_at_bottom` auto-exits
+/// scroll mode, we stash the parsed full-history `Text` here so a rapid
+/// re-entry (up-down-up wheel gesture) can reuse it without re-running
+/// `capture_full_history + parse_ansi`.
+const SCROLL_MODE_CACHE_TTL: Duration = Duration::from_millis(750);
+
+#[allow(dead_code)]
+struct ScrollModeCache {
+    expert_id: u32,
+    text: ratatui::text::Text<'static>,
+    raw_line_count: usize,
+    captured_at: Instant,
+    live_hash_at_capture: u64,
+}
+
+impl ScrollModeCache {
+    /// A cached entry is considered fresh iff the expert matches, the live-pane
+    /// hash observed at capture time still matches the current live hash, and
+    /// the entry's age is within `SCROLL_MODE_CACHE_TTL`. Any mismatch falls
+    /// through to a fresh capture.
+    #[allow(dead_code)]
+    fn is_fresh(&self, expert_id: u32, current_live_hash: u64) -> bool {
+        self.expert_id == expert_id
+            && self.captured_at.elapsed() < SCROLL_MODE_CACHE_TTL
+            && self.live_hash_at_capture == current_live_hash
+    }
+}
+
+/// Shared helper used by `try_enter_scroll_mode`'s background task.
+/// Performs the blocking tmux subprocess capture then offloads the CPU-bound
+/// ANSI parse to `spawn_blocking`, so neither call starves the tokio runtime.
+async fn capture_full_history_and_parse<T>(
+    claude: ClaudeManager<T>,
+    expert_id: u32,
+) -> Result<ScrollModeCaptureResult>
+where
+    T: TmuxSender + Clone + Send + Sync + 'static,
+{
+    let raw = claude.capture_full_history(expert_id).await?;
+    let (text, raw_line_count) = tokio::task::spawn_blocking(move || {
+        let line_count = raw.lines().count();
+        let text = ExpertPanelDisplay::parse_ansi(&raw);
+        (text, line_count)
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("parse_ansi task panicked: {e}"))?;
+    Ok(ScrollModeCaptureResult {
+        expert_id,
+        text,
+        raw_line_count,
+    })
+}
+
 pub struct TowerApp {
     config: Config,
     #[allow(dead_code)]
@@ -150,6 +298,9 @@ pub struct TowerApp {
     last_preview_size: (u16, u16),
     last_resized_expert_id: Option<u32>,
     expert_panel_update_state: ExpertPanelUpdateState,
+    scroll_mode_capture_state: ScrollModeCaptureState,
+    #[allow(dead_code)]
+    scroll_mode_cache: Option<ScrollModeCache>,
 
     worktree_manager: WorktreeManager,
     worktree_launch_state: WorktreeLaunchState,
@@ -245,6 +396,8 @@ impl TowerApp {
             last_preview_size: (0, 0),
             last_resized_expert_id: None,
             expert_panel_update_state: ExpertPanelUpdateState::default(),
+            scroll_mode_capture_state: ScrollModeCaptureState::default(),
+            scroll_mode_cache: None,
 
             worktree_manager,
             worktree_launch_state: WorktreeLaunchState::default(),
@@ -269,6 +422,7 @@ impl TowerApp {
 
     pub fn quit(&mut self) {
         self.cancel_expert_panel_update();
+        self.cancel_scroll_mode_capture();
         self.running = false;
     }
 
@@ -277,6 +431,106 @@ impl TowerApp {
         if let ExpertPanelUpdateState::InProgress { handle } = state {
             handle.abort();
         }
+    }
+
+    fn cancel_scroll_mode_capture(&mut self) {
+        let state = std::mem::take(&mut self.scroll_mode_capture_state);
+        if let ScrollModeCaptureState::InProgress { handle, .. } = state {
+            handle.abort();
+        }
+    }
+
+    /// Publish the just-exited scroll-mode content into `scroll_mode_cache`
+    /// so a rapid re-entry (e.g. up-down-up wheel gesture) can reuse the
+    /// parsed full history without re-running `capture_full_history + parse_ansi`.
+    /// Called once per frame after `terminal.draw`; consumes the one-shot
+    /// `just_auto_exited` flag raised by the display's auto-exit branch.
+    #[allow(dead_code)]
+    fn store_scroll_cache_if_auto_exited(&mut self) {
+        if !self.expert_panel_display.take_auto_exit_signal() {
+            return;
+        }
+        let Some(expert_id) = self.expert_panel_display.expert_id() else {
+            return;
+        };
+        let (text, raw_line_count) = self.expert_panel_display.snapshot_scroll_content();
+        self.scroll_mode_cache = Some(ScrollModeCache {
+            expert_id,
+            text,
+            raw_line_count,
+            captured_at: Instant::now(),
+            live_hash_at_capture: self.expert_panel_display.content_hash(),
+        });
+    }
+
+    /// Fire-and-forget scroll-mode entry. Returns within constant time regardless
+    /// of tmux latency: flips the panel into an optimistic scroll mode using the
+    /// already-cached live pane content, then spawns a background task to fetch
+    /// the full history and parse it. The result is swapped in by
+    /// `poll_scroll_mode_capture` once complete.
+    #[allow(dead_code)]
+    pub async fn try_enter_scroll_mode(&mut self, origin: ScrollOrigin) -> Result<()> {
+        if self.expert_panel_display.is_scrolling() {
+            return Ok(());
+        }
+
+        let expert_id = match self.expert_panel_display.expert_id() {
+            Some(id) => id,
+            None => return Ok(()),
+        };
+
+        // Fast path: reuse a fresh post-exit cache entry, skipping tmux capture
+        // and ANSI parse entirely. Any staleness falls through to the spawn path.
+        let live_hash = self.expert_panel_display.content_hash();
+        if self
+            .scroll_mode_cache
+            .as_ref()
+            .is_some_and(|c| c.is_fresh(expert_id, live_hash))
+        {
+            if let Some(cache) = self.scroll_mode_cache.take() {
+                self.expert_panel_display
+                    .enter_scroll_mode_from_text(cache.text, cache.raw_line_count);
+                self.needs_redraw = true;
+                return Ok(());
+            }
+        }
+
+        // Coalesce concurrent triggers: same-expert re-entry is already satisfied
+        // by the optimistic state; different-expert aborts any in-flight task.
+        let prev_state = std::mem::take(&mut self.scroll_mode_capture_state);
+        match prev_state {
+            ScrollModeCaptureState::InProgress {
+                expert_id: prev_expert_id,
+                origin: prev_origin,
+                handle,
+            } => {
+                if prev_expert_id == expert_id {
+                    // Keep the existing in-flight task; restore state and exit.
+                    self.scroll_mode_capture_state = ScrollModeCaptureState::InProgress {
+                        expert_id: prev_expert_id,
+                        origin: prev_origin,
+                        handle,
+                    };
+                    return Ok(());
+                }
+                handle.abort();
+            }
+            ScrollModeCaptureState::Idle => {}
+        }
+
+        self.expert_panel_display.enter_scroll_mode_optimistic();
+
+        let claude = self.claude.clone();
+        let handle =
+            tokio::spawn(async move { capture_full_history_and_parse(claude, expert_id).await });
+
+        self.scroll_mode_capture_state = ScrollModeCaptureState::InProgress {
+            expert_id,
+            origin,
+            handle,
+        };
+
+        Ok(())
     }
 
     pub fn set_message(&mut self, msg: String) {
@@ -391,6 +645,14 @@ impl TowerApp {
             && pos.1 < rect.y + rect.height
     }
 
+    /// Wheel-burst coalescing predicate: two positions share the same "region"
+    /// iff they are both inside the Expert Panel rect or both outside it.
+    /// Trackpad jitter of 1–3 rows within the panel is absorbed; crossing the
+    /// panel boundary flushes the accumulator.
+    fn same_wheel_region(acc_pos: (u16, u16), pos: (u16, u16), panel: Rect) -> bool {
+        Self::point_in_rect(acc_pos, panel) == Self::point_in_rect(pos, panel)
+    }
+
     async fn handle_mouse_wheel(
         &mut self,
         kind: MouseEventKind,
@@ -414,16 +676,7 @@ impl TowerApp {
         match kind {
             MouseEventKind::ScrollUp => {
                 if !self.expert_panel_display.is_scrolling() {
-                    if let Some(expert_id) = self.expert_panel_display.expert_id() {
-                        match self.claude.capture_full_history(expert_id).await {
-                            Ok(raw) => self.expert_panel_display.enter_scroll_mode(&raw),
-                            Err(e) => tracing::warn!(
-                                "Failed to capture full history for expert {}: {}",
-                                expert_id,
-                                e
-                            ),
-                        }
-                    }
+                    self.try_enter_scroll_mode(ScrollOrigin::WheelUp).await?;
                 } else {
                     for _ in 0..WHEEL_SCROLL_LINES {
                         self.expert_panel_display.scroll_up();
@@ -716,6 +969,53 @@ impl TowerApp {
         Ok(())
     }
 
+    /// Non-blocking poll of the in-flight scroll-mode capture task.
+    /// Swaps the full-history content in when the task completes successfully
+    /// *and* the user is still scrolling the same expert; otherwise drops the
+    /// result silently. Must be called on the main loop each tick.
+    async fn poll_scroll_mode_capture(&mut self) {
+        let state = std::mem::take(&mut self.scroll_mode_capture_state);
+        match state {
+            ScrollModeCaptureState::InProgress {
+                expert_id,
+                origin,
+                handle,
+            } => {
+                if handle.is_finished() {
+                    match handle.await {
+                        Ok(Ok(result)) => {
+                            if self.expert_panel_display.expert_id() == Some(result.expert_id)
+                                && self.expert_panel_display.is_scrolling()
+                            {
+                                self.expert_panel_display.swap_scroll_content(
+                                    result.text,
+                                    result.raw_line_count,
+                                    origin,
+                                );
+                                self.needs_redraw = true;
+                            }
+                            // else: user changed expert or exited; drop result.
+                        }
+                        Ok(Err(e)) => {
+                            tracing::warn!("scroll-mode capture failed: {e}");
+                        }
+                        Err(e) => {
+                            tracing::warn!("scroll-mode capture task panicked: {e}");
+                        }
+                    }
+                    // state is already Idle via mem::take.
+                } else {
+                    self.scroll_mode_capture_state = ScrollModeCaptureState::InProgress {
+                        expert_id,
+                        origin,
+                        handle,
+                    };
+                }
+            }
+            ScrollModeCaptureState::Idle => {}
+        }
+    }
+
     async fn poll_expert_panel_update_result(&mut self) {
         let state = std::mem::take(&mut self.expert_panel_update_state);
         match state {
@@ -798,7 +1098,66 @@ impl TowerApp {
         let has_event = event::poll(EVENT_POLL_TIMEOUT)?;
         if has_event {
             self.needs_redraw = true;
-            let event = event::read()?;
+            let mut event = event::read()?;
+
+            // Wheel-burst coalescing: drain contiguous wheel events whose
+            // cursor stays on the same side of the Expert Panel boundary so
+            // trackpad jitter produces one dispatch per burst instead of one
+            // render per notch.
+            if let Event::Mouse(first) = &event {
+                if wheel_direction(first.kind).is_some() {
+                    let mut acc = WheelAccumulator {
+                        column: first.column,
+                        row: first.row,
+                        net_ticks: wheel_direction(first.kind)
+                            .expect("wheel_direction: first event must be wheel")
+                            .as_delta(),
+                    };
+                    let mut pending: Option<Event> = None;
+                    while event::poll(Duration::ZERO)? {
+                        let next = event::read()?;
+                        match &next {
+                            Event::Mouse(nm)
+                                if Self::same_wheel_region(
+                                    (acc.column, acc.row),
+                                    (nm.column, nm.row),
+                                    self.layout_areas.expert_panel,
+                                ) =>
+                            {
+                                match wheel_direction(nm.kind) {
+                                    Some(d) => acc.net_ticks += d.as_delta(),
+                                    None => {
+                                        pending = Some(next);
+                                        break;
+                                    }
+                                }
+                            }
+                            _ => {
+                                pending = Some(next);
+                                break;
+                            }
+                        }
+                    }
+
+                    self.last_input_time = Instant::now();
+                    if acc.net_ticks != 0 {
+                        let kind = if acc.net_ticks > 0 {
+                            MouseEventKind::ScrollUp
+                        } else {
+                            MouseEventKind::ScrollDown
+                        };
+                        for _ in 0..acc.net_ticks.unsigned_abs() as usize {
+                            self.handle_mouse_wheel(kind, acc.column, acc.row).await?;
+                        }
+                    }
+
+                    match pending {
+                        Some(ev) => event = ev,
+                        None => return Ok(()),
+                    }
+                }
+            }
+
             match event {
                 Event::Mouse(mouse) => {
                     // Update input time for mouse events to pause polling during interaction
@@ -985,16 +1344,8 @@ impl TowerApp {
                         && !self.expert_panel_display.is_scrolling()
                         && self.expert_panel_display.is_visible()
                     {
-                        if let Some(expert_id) = self.expert_panel_display.expert_id() {
-                            match self.claude.capture_full_history(expert_id).await {
-                                Ok(raw) => self.expert_panel_display.enter_scroll_mode(&raw),
-                                Err(e) => tracing::warn!(
-                                    "Failed to capture history for expert {}: {}",
-                                    expert_id,
-                                    e
-                                ),
-                            }
-                        }
+                        self.try_enter_scroll_mode(ScrollOrigin::PageUpRemote)
+                            .await?;
                         return Ok(());
                     }
 
@@ -1147,20 +1498,8 @@ impl TowerApp {
         match code {
             KeyCode::PageUp => {
                 if !self.expert_panel_display.is_scrolling() {
-                    if let Some(expert_id) = self.expert_panel_display.expert_id() {
-                        match self.claude.capture_full_history(expert_id).await {
-                            Ok(raw) => {
-                                self.expert_panel_display.enter_scroll_mode(&raw);
-                            }
-                            Err(e) => {
-                                tracing::warn!(
-                                    "Failed to capture full history for expert {}: {}",
-                                    expert_id,
-                                    e
-                                );
-                            }
-                        }
-                    }
+                    self.try_enter_scroll_mode(ScrollOrigin::PageUpLocal)
+                        .await?;
                 } else {
                     self.expert_panel_display.scroll_up();
                 }
@@ -2223,6 +2562,7 @@ impl TowerApp {
                 terminal.draw(|frame| UI::render(frame, self))?;
                 self.needs_redraw = false;
             }
+            self.store_scroll_cache_if_auto_exited();
             let draw_elapsed = draw_start.elapsed();
 
             let events_start = Instant::now();
@@ -2246,6 +2586,7 @@ impl TowerApp {
             let poll_messages_elapsed = poll_messages_start.elapsed();
 
             self.poll_expert_panel().await?;
+            self.poll_scroll_mode_capture().await;
             self.poll_feature_executor().await?;
 
             let loop_elapsed = loop_start.elapsed();
@@ -2590,10 +2931,9 @@ mod tests {
 
     // Mouse-wheel scroll tests (expert-panel-mouse-wheel-scroll feature)
     //
-    // Gap: the `capture_full_history` error branch in `handle_mouse_wheel` is
-    // not covered here — `ClaudeBackend` has no test seam for forcing failure
-    // without a real tmux session. The design's manual smoke test (§5.3, step
-    // 3) backstops this path.
+    // Post-migration, scroll-mode entry is fire-and-forget via
+    // `try_enter_scroll_mode`; capture errors surface through
+    // `poll_scroll_mode_capture` and are exercised by its own tests.
 
     fn render_panel_once(app: &mut TowerApp, width: u16, height: u16) {
         use ratatui::backend::TestBackend;
@@ -2726,7 +3066,7 @@ mod tests {
             expert_panel: Rect::new(0, 0, 80, 20),
         });
         // Pre-enter scroll mode so the handler takes the sync scroll_up branch
-        // instead of calling capture_full_history.
+        // instead of dispatching to try_enter_scroll_mode.
         app.expert_panel_display
             .enter_scroll_mode(&long_panel_content());
         render_panel_once(&mut app, 80, 20);
@@ -2794,6 +3134,131 @@ mod tests {
             app.expert_panel_display.scroll_offset(),
             offset_before,
             "hidden panel should suppress scroll_offset changes"
+        );
+    }
+
+    // Task 22.1: same_wheel_region predicate tests (P10, P11)
+
+    #[test]
+    fn same_region_for_in_panel_drift() {
+        let panel = Rect::new(10, 5, 40, 10);
+        assert!(
+            TowerApp::same_wheel_region((20, 8), (25, 10), panel),
+            "same_wheel_region: positions drifting within the same panel must be same region"
+        );
+    }
+
+    #[test]
+    fn different_region_when_new_pos_leaves_panel() {
+        let panel = Rect::new(10, 5, 40, 10);
+        assert!(
+            !TowerApp::same_wheel_region((20, 8), (20, 20), panel),
+            "same_wheel_region: new position leaving the panel must flush the accumulator"
+        );
+    }
+
+    #[test]
+    fn different_region_when_new_pos_enters_panel() {
+        let panel = Rect::new(10, 5, 40, 10);
+        assert!(
+            !TowerApp::same_wheel_region((0, 0), (20, 8), panel),
+            "same_wheel_region: new position entering the panel must flush the accumulator"
+        );
+    }
+
+    #[test]
+    fn same_region_for_both_outside_panel() {
+        let panel = Rect::new(10, 5, 40, 10);
+        assert!(
+            TowerApp::same_wheel_region((0, 0), (60, 20), panel),
+            "same_wheel_region: both positions outside the panel must be same region"
+        );
+    }
+
+    // Task 23.1: coalesce_wheel_events integration tests (P10, P11)
+
+    #[test]
+    fn burst_of_5_wheel_events_with_jitter_inside_panel_coalesces_to_one_dispatch_with_net_5_ticks()
+    {
+        use crossterm::event::MouseEvent;
+        let panel = Rect::new(0, 0, 80, 30);
+        let first = MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 10,
+            row: 5,
+            modifiers: KeyModifiers::NONE,
+        };
+        // 4 additional ticks with jittery positions, all inside the panel.
+        let tail = vec![
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::ScrollUp,
+                column: 11,
+                row: 5,
+                modifiers: KeyModifiers::NONE,
+            }),
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::ScrollUp,
+                column: 12,
+                row: 6,
+                modifiers: KeyModifiers::NONE,
+            }),
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::ScrollUp,
+                column: 10,
+                row: 7,
+                modifiers: KeyModifiers::NONE,
+            }),
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::ScrollUp,
+                column: 9,
+                row: 6,
+                modifiers: KeyModifiers::NONE,
+            }),
+        ];
+        let (acc, pending) = coalesce_wheel_events(first, &tail, panel);
+        assert_eq!(
+            acc.net_ticks, 5,
+            "coalesce_wheel_events: 5 jittery scroll-up ticks inside panel should yield net_ticks = 5"
+        );
+        assert!(
+            pending.is_none(),
+            "coalesce_wheel_events: entire tail coalesces, no pending event"
+        );
+    }
+
+    #[test]
+    fn wheel_event_drifting_outside_panel_mid_burst_flushes_accumulator() {
+        use crossterm::event::MouseEvent;
+        let panel = Rect::new(0, 0, 80, 20);
+        let first = MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 10,
+            row: 5,
+            modifiers: KeyModifiers::NONE,
+        };
+        let tail = vec![
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::ScrollUp,
+                column: 11,
+                row: 5,
+                modifiers: KeyModifiers::NONE,
+            }),
+            // This event is outside the panel (row 25 >= 20).
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::ScrollUp,
+                column: 10,
+                row: 25,
+                modifiers: KeyModifiers::NONE,
+            }),
+        ];
+        let (acc, pending) = coalesce_wheel_events(first, &tail, panel);
+        assert_eq!(
+            acc.net_ticks, 2,
+            "coalesce_wheel_events: only events inside the panel should accumulate (2 so far)"
+        );
+        assert!(
+            pending.is_some(),
+            "coalesce_wheel_events: event drifting outside the panel must become pending"
         );
     }
 
@@ -4223,6 +4688,855 @@ mod tests {
                 "manifest_includes_all_experts: expert_id should match index"
             );
         }
+    }
+
+    // --- Task 8.1: scroll-mode async state scaffolding ---
+
+    #[test]
+    fn scroll_mode_capture_state_defaults_to_idle() {
+        let state = ScrollModeCaptureState::default();
+        assert!(
+            matches!(state, ScrollModeCaptureState::Idle),
+            "ScrollModeCaptureState::default() should be Idle"
+        );
+    }
+
+    #[test]
+    fn scroll_origin_variants_are_copy() {
+        fn assert_copy<T: Copy>(_: &T) {}
+        let origin = ScrollOrigin::WheelUp;
+        assert_copy(&origin);
+        // PageUp variants should also be constructible and distinct.
+        let _ = ScrollOrigin::PageUpRemote;
+        let _ = ScrollOrigin::PageUpLocal;
+    }
+
+    #[test]
+    fn scroll_mode_capture_result_holds_expert_id_and_line_count() {
+        let result = ScrollModeCaptureResult {
+            expert_id: 42,
+            text: ratatui::text::Text::raw("hello"),
+            raw_line_count: 1,
+        };
+        assert_eq!(result.expert_id, 42);
+        assert_eq!(result.raw_line_count, 1);
+    }
+
+    // --- Task 9: TowerApp scroll_mode_capture_state field ---
+
+    #[test]
+    fn tower_app_scroll_mode_capture_state_defaults_to_idle() {
+        let app = create_test_app();
+        assert!(
+            matches!(app.scroll_mode_capture_state, ScrollModeCaptureState::Idle),
+            "TowerApp::new: scroll_mode_capture_state should default to Idle"
+        );
+    }
+
+    // --- Task 10: capture_full_history_and_parse helper ---
+
+    #[derive(Clone)]
+    struct FakeCaptureSender {
+        raw: std::sync::Arc<std::sync::Mutex<String>>,
+        fail: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl FakeCaptureSender {
+        fn new(raw: &str) -> Self {
+            Self {
+                raw: std::sync::Arc::new(std::sync::Mutex::new(raw.to_string())),
+                fail: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            }
+        }
+
+        fn with_failure(self) -> Self {
+            self.fail.store(true, std::sync::atomic::Ordering::SeqCst);
+            self
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl crate::session::TmuxSender for FakeCaptureSender {
+        async fn send_keys(&self, _window_id: u32, _keys: &str) -> Result<()> {
+            Ok(())
+        }
+
+        async fn capture_pane(&self, _window_id: u32) -> Result<String> {
+            if self.fail.load(std::sync::atomic::Ordering::SeqCst) {
+                anyhow::bail!("simulated capture failure");
+            }
+            Ok(self.raw.lock().unwrap().clone())
+        }
+    }
+
+    #[tokio::test]
+    async fn helper_constructs_expected_result_for_known_input() {
+        let mock = FakeCaptureSender::new("line1\nline2\nline3");
+        let claude = ClaudeManager::with_sender(mock);
+
+        let result = capture_full_history_and_parse(claude, 7)
+            .await
+            .expect("helper should succeed");
+
+        assert_eq!(
+            result.expert_id, 7,
+            "capture_full_history_and_parse: should preserve expert_id"
+        );
+        assert_eq!(
+            result.raw_line_count, 3,
+            "capture_full_history_and_parse: raw_line_count should match lines in raw"
+        );
+        // Parsed text should roundtrip through parse_ansi for the same input.
+        let expected = ExpertPanelDisplay::parse_ansi("line1\nline2\nline3");
+        assert_eq!(
+            result.text.lines.len(),
+            expected.lines.len(),
+            "capture_full_history_and_parse: parsed text line count should match parse_ansi"
+        );
+    }
+
+    #[tokio::test]
+    async fn helper_propagates_capture_failure() {
+        let mock = FakeCaptureSender::new("").with_failure();
+        let claude = ClaudeManager::with_sender(mock);
+
+        let result = capture_full_history_and_parse(claude, 3).await;
+        assert!(
+            result.is_err(),
+            "capture_full_history_and_parse: should propagate capture error"
+        );
+    }
+
+    // --- Task 11: try_enter_scroll_mode dispatcher ---
+
+    fn create_test_app_with_expert_selected(expert_id: u32) -> TowerApp {
+        let mut app = create_test_app();
+        app.expert_panel_display
+            .set_expert(expert_id, format!("expert{expert_id}"));
+        app
+    }
+
+    #[tokio::test]
+    async fn try_enter_from_idle_transitions_to_in_progress() {
+        let mut app = create_test_app_with_expert_selected(0);
+
+        app.try_enter_scroll_mode(ScrollOrigin::WheelUp)
+            .await
+            .expect("try_enter_scroll_mode should succeed");
+
+        assert!(
+            matches!(
+                app.scroll_mode_capture_state,
+                ScrollModeCaptureState::InProgress { expert_id: 0, .. }
+            ),
+            "try_enter_scroll_mode: Idle → InProgress for selected expert"
+        );
+        assert!(
+            app.expert_panel_display.is_scrolling(),
+            "try_enter_scroll_mode: should flip panel into scroll mode optimistically"
+        );
+    }
+
+    #[tokio::test]
+    async fn try_enter_when_no_expert_selected_is_noop() {
+        let mut app = create_test_app();
+        // No set_expert call → expert_id() returns None.
+        assert!(app.expert_panel_display.expert_id().is_none());
+
+        app.try_enter_scroll_mode(ScrollOrigin::WheelUp)
+            .await
+            .expect("try_enter_scroll_mode should return Ok when no expert selected");
+
+        assert!(
+            matches!(app.scroll_mode_capture_state, ScrollModeCaptureState::Idle),
+            "try_enter_scroll_mode: should remain Idle when no expert selected"
+        );
+        assert!(
+            !app.expert_panel_display.is_scrolling(),
+            "try_enter_scroll_mode: should not enter scroll mode without an expert"
+        );
+    }
+
+    #[tokio::test]
+    async fn try_enter_when_already_scrolling_is_noop() {
+        let mut app = create_test_app_with_expert_selected(0);
+        // Pre-populate scroll state as if we entered via a prior path.
+        app.expert_panel_display.enter_scroll_mode_optimistic();
+        assert!(app.expert_panel_display.is_scrolling());
+
+        app.try_enter_scroll_mode(ScrollOrigin::WheelUp)
+            .await
+            .expect("try_enter_scroll_mode should short-circuit");
+
+        assert!(
+            matches!(app.scroll_mode_capture_state, ScrollModeCaptureState::Idle),
+            "try_enter_scroll_mode: short-circuit should leave capture state Idle"
+        );
+    }
+
+    #[tokio::test]
+    async fn try_enter_different_expert_aborts_previous_handle() {
+        let mut app = create_test_app_with_expert_selected(0);
+
+        app.try_enter_scroll_mode(ScrollOrigin::WheelUp)
+            .await
+            .unwrap();
+        // Grab the original handle so we can check abort status afterwards.
+        let first_handle = match std::mem::replace(
+            &mut app.scroll_mode_capture_state,
+            ScrollModeCaptureState::Idle,
+        ) {
+            ScrollModeCaptureState::InProgress { handle, .. } => handle,
+            _ => panic!("expected InProgress after first try_enter"),
+        };
+        // Put state back (simulating InProgress for expert 0).
+        app.scroll_mode_capture_state = ScrollModeCaptureState::InProgress {
+            expert_id: 0,
+            origin: ScrollOrigin::WheelUp,
+            handle: tokio::spawn(async {
+                // Never-ending task to simulate an in-flight capture for expert 0.
+                std::future::pending::<()>().await;
+                Ok(ScrollModeCaptureResult {
+                    expert_id: 0,
+                    text: ratatui::text::Text::default(),
+                    raw_line_count: 0,
+                })
+            }),
+        };
+        // Abort the first handle (we have no more use for it).
+        first_handle.abort();
+
+        // Now switch the panel to a different expert and re-trigger.
+        app.expert_panel_display
+            .set_expert(1, "expert1".to_string());
+        app.try_enter_scroll_mode(ScrollOrigin::WheelUp)
+            .await
+            .unwrap();
+
+        // The new state should reference expert 1.
+        match &app.scroll_mode_capture_state {
+            ScrollModeCaptureState::InProgress { expert_id, .. } => {
+                assert_eq!(
+                    *expert_id, 1,
+                    "try_enter_scroll_mode: should spawn new capture for expert 1"
+                );
+            }
+            _ => panic!("try_enter_scroll_mode: expected InProgress for expert 1, got Idle"),
+        }
+    }
+
+    #[tokio::test]
+    async fn try_enter_returns_without_awaiting_capture() {
+        let mut app = create_test_app_with_expert_selected(0);
+
+        let start = std::time::Instant::now();
+        app.try_enter_scroll_mode(ScrollOrigin::WheelUp)
+            .await
+            .unwrap();
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed < Duration::from_millis(50),
+            "try_enter_scroll_mode: should return within 50ms (observed {:?}) — capture is fire-and-forget",
+            elapsed
+        );
+    }
+
+    // --- Task 12: poll_scroll_mode_capture ---
+
+    /// Wait until `scroll_mode_capture_state` becomes `Idle` by polling in a loop,
+    /// or time out after ~500ms. Used to synchronize on spawned JoinHandle completion
+    /// without making tests flaky.
+    async fn poll_until_idle(app: &mut TowerApp) {
+        for _ in 0..100 {
+            app.poll_scroll_mode_capture().await;
+            if matches!(app.scroll_mode_capture_state, ScrollModeCaptureState::Idle) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        panic!("poll_scroll_mode_capture: state did not reach Idle within timeout");
+    }
+
+    fn install_completed_capture(
+        app: &mut TowerApp,
+        expert_id: u32,
+        text: ratatui::text::Text<'static>,
+        raw_line_count: usize,
+    ) {
+        let handle = tokio::spawn(async move {
+            Ok(ScrollModeCaptureResult {
+                expert_id,
+                text,
+                raw_line_count,
+            })
+        });
+        app.scroll_mode_capture_state = ScrollModeCaptureState::InProgress {
+            expert_id,
+            origin: ScrollOrigin::WheelUp,
+            handle,
+        };
+    }
+
+    #[tokio::test]
+    async fn poll_swaps_content_when_result_matches_current_expert() {
+        let mut app = create_test_app_with_expert_selected(0);
+        app.expert_panel_display.enter_scroll_mode_optimistic();
+        app.clear_needs_redraw();
+
+        install_completed_capture(
+            &mut app,
+            0,
+            ratatui::text::Text::raw("full history line 1\nfull history line 2"),
+            2,
+        );
+
+        poll_until_idle(&mut app).await;
+
+        assert!(
+            app.expert_panel_display.is_scrolling(),
+            "poll_scroll_mode_capture: should leave panel in scroll mode after successful swap"
+        );
+        assert!(
+            app.needs_redraw(),
+            "poll_scroll_mode_capture: should request redraw after swap"
+        );
+    }
+
+    #[tokio::test]
+    async fn poll_discards_result_when_expert_changed_before_completion() {
+        let mut app = create_test_app_with_expert_selected(0);
+        app.expert_panel_display.enter_scroll_mode_optimistic();
+
+        install_completed_capture(&mut app, 0, ratatui::text::Text::raw("stale"), 1);
+
+        // User switched experts before the task completed.
+        app.expert_panel_display
+            .set_expert(1, "expert1".to_string());
+        app.clear_needs_redraw();
+
+        poll_until_idle(&mut app).await;
+
+        // Swap should be skipped; no redraw triggered for stale result.
+        assert!(
+            !app.needs_redraw(),
+            "poll_scroll_mode_capture: should not request redraw when expert changed"
+        );
+        assert!(
+            matches!(app.scroll_mode_capture_state, ScrollModeCaptureState::Idle),
+            "poll_scroll_mode_capture: state should return to Idle even when result is stale"
+        );
+    }
+
+    #[tokio::test]
+    async fn poll_discards_result_when_scroll_exited_before_completion() {
+        let mut app = create_test_app_with_expert_selected(0);
+        app.expert_panel_display.enter_scroll_mode_optimistic();
+
+        install_completed_capture(&mut app, 0, ratatui::text::Text::raw("stale"), 1);
+
+        // User exited scroll mode before the task completed.
+        app.expert_panel_display.exit_scroll_mode();
+        app.clear_needs_redraw();
+
+        poll_until_idle(&mut app).await;
+
+        assert!(
+            !app.expert_panel_display.is_scrolling(),
+            "poll_scroll_mode_capture: should respect user-initiated exit"
+        );
+        assert!(
+            !app.needs_redraw(),
+            "poll_scroll_mode_capture: should not request redraw for post-exit result"
+        );
+    }
+
+    #[tokio::test]
+    async fn poll_logs_and_recovers_on_capture_error() {
+        let mut app = create_test_app_with_expert_selected(0);
+        app.expert_panel_display.enter_scroll_mode_optimistic();
+
+        let handle = tokio::spawn(async {
+            Err::<ScrollModeCaptureResult, _>(anyhow::anyhow!("simulated capture failure"))
+        });
+        app.scroll_mode_capture_state = ScrollModeCaptureState::InProgress {
+            expert_id: 0,
+            origin: ScrollOrigin::WheelUp,
+            handle,
+        };
+
+        poll_until_idle(&mut app).await;
+
+        assert!(
+            matches!(app.scroll_mode_capture_state, ScrollModeCaptureState::Idle),
+            "poll_scroll_mode_capture: should return to Idle after capture error"
+        );
+        // Optimistic state should persist so the user can retry or continue browsing.
+        assert!(
+            app.expert_panel_display.is_scrolling(),
+            "poll_scroll_mode_capture: optimistic scroll mode should persist after a capture failure"
+        );
+    }
+
+    #[tokio::test]
+    async fn poll_is_noop_when_idle() {
+        let mut app = create_test_app_with_expert_selected(0);
+        app.clear_needs_redraw();
+
+        app.poll_scroll_mode_capture().await;
+
+        assert!(
+            matches!(app.scroll_mode_capture_state, ScrollModeCaptureState::Idle),
+            "poll_scroll_mode_capture: Idle state should remain Idle"
+        );
+        assert!(
+            !app.needs_redraw(),
+            "poll_scroll_mode_capture: should not request redraw when Idle"
+        );
+    }
+
+    // --- Task 14: quit aborts scroll_mode_capture_state ---
+
+    #[tokio::test]
+    async fn quit_aborts_scroll_mode_capture_in_progress_handle() {
+        let mut app = create_test_app_with_expert_selected(0);
+
+        // Seed a never-resolving handle so we can observe the abort.
+        let handle = tokio::spawn(async {
+            // Park indefinitely until aborted.
+            futures::future::pending::<Result<ScrollModeCaptureResult>>().await
+        });
+        app.scroll_mode_capture_state = ScrollModeCaptureState::InProgress {
+            expert_id: 0,
+            origin: ScrollOrigin::WheelUp,
+            handle,
+        };
+
+        app.quit();
+
+        // Yield so the aborted task can observe cancellation.
+        tokio::task::yield_now().await;
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        assert!(
+            matches!(app.scroll_mode_capture_state, ScrollModeCaptureState::Idle),
+            "quit: scroll_mode_capture_state should transition to Idle"
+        );
+        assert!(!app.is_running(), "quit: running flag should be cleared");
+    }
+
+    // --- Task 16: ScrollModeCache freshness ---
+
+    fn make_cache(expert_id: u32, live_hash: u64, captured_at: Instant) -> ScrollModeCache {
+        ScrollModeCache {
+            expert_id,
+            text: ratatui::text::Text::raw("cached"),
+            raw_line_count: 1,
+            captured_at,
+            live_hash_at_capture: live_hash,
+        }
+    }
+
+    #[test]
+    fn fresh_when_expert_and_hash_match_and_ttl_not_elapsed() {
+        let cache = make_cache(7, 0xDEAD_BEEF, Instant::now());
+        assert!(
+            cache.is_fresh(7, 0xDEAD_BEEF),
+            "ScrollModeCache: should be fresh for same expert + hash within TTL"
+        );
+    }
+
+    #[test]
+    fn stale_on_ttl_expiry() {
+        let long_ago = Instant::now()
+            .checked_sub(SCROLL_MODE_CACHE_TTL + Duration::from_millis(50))
+            .expect("test host clock should allow subtraction");
+        let cache = make_cache(7, 0xDEAD_BEEF, long_ago);
+        assert!(
+            !cache.is_fresh(7, 0xDEAD_BEEF),
+            "ScrollModeCache: should be stale once TTL has elapsed"
+        );
+    }
+
+    #[test]
+    fn stale_on_live_hash_mismatch() {
+        let cache = make_cache(7, 0xDEAD_BEEF, Instant::now());
+        assert!(
+            !cache.is_fresh(7, 0xCAFEF00D),
+            "ScrollModeCache: differing live hash should invalidate the cache"
+        );
+    }
+
+    #[test]
+    fn stale_on_expert_id_mismatch() {
+        let cache = make_cache(7, 0xDEAD_BEEF, Instant::now());
+        assert!(
+            !cache.is_fresh(8, 0xDEAD_BEEF),
+            "ScrollModeCache: differing expert_id should invalidate the cache"
+        );
+    }
+
+    #[test]
+    fn scroll_mode_cache_ttl_is_750ms() {
+        assert_eq!(
+            SCROLL_MODE_CACHE_TTL,
+            Duration::from_millis(750),
+            "SCROLL_MODE_CACHE_TTL: should be 750ms per design §3.2"
+        );
+    }
+
+    // --- Task 17: TowerApp scroll_mode_cache field ---
+
+    #[test]
+    fn tower_app_scroll_mode_cache_defaults_to_none() {
+        let app = create_test_app();
+        assert!(
+            app.scroll_mode_cache.is_none(),
+            "TowerApp::new: scroll_mode_cache should default to None"
+        );
+    }
+
+    // --- Task 18: store_scroll_cache_if_auto_exited ---
+
+    #[test]
+    fn store_populates_cache_after_auto_exit_signal_set() {
+        let mut app = create_test_app_with_expert_selected(0);
+        // Seed the panel with content that snapshot_scroll_content can return.
+        app.expert_panel_display
+            .enter_scroll_mode_from_text(ratatui::text::Text::raw("cached line"), 1);
+        app.expert_panel_display.set_auto_exit_signal_for_test();
+
+        app.store_scroll_cache_if_auto_exited();
+
+        let cache = app
+            .scroll_mode_cache
+            .as_ref()
+            .expect("store_scroll_cache_if_auto_exited: should populate cache when signal is set");
+        assert_eq!(
+            cache.expert_id, 0,
+            "store_scroll_cache_if_auto_exited: cache expert_id should match current expert"
+        );
+        assert_eq!(
+            cache.raw_line_count, 1,
+            "store_scroll_cache_if_auto_exited: cache should carry snapshot line count"
+        );
+        assert_eq!(
+            cache.live_hash_at_capture,
+            app.expert_panel_display.content_hash(),
+            "store_scroll_cache_if_auto_exited: live_hash_at_capture should match current hash"
+        );
+    }
+
+    #[test]
+    fn store_is_noop_when_signal_unset() {
+        let mut app = create_test_app_with_expert_selected(0);
+        app.expert_panel_display
+            .enter_scroll_mode_from_text(ratatui::text::Text::raw("cached line"), 1);
+        // No set_auto_exit_signal_for_test call.
+
+        app.store_scroll_cache_if_auto_exited();
+
+        assert!(
+            app.scroll_mode_cache.is_none(),
+            "store_scroll_cache_if_auto_exited: must not populate cache without the auto-exit signal"
+        );
+    }
+
+    #[test]
+    fn store_is_noop_when_no_expert_selected() {
+        let mut app = create_test_app();
+        app.expert_panel_display.set_auto_exit_signal_for_test();
+
+        app.store_scroll_cache_if_auto_exited();
+
+        assert!(
+            app.scroll_mode_cache.is_none(),
+            "store_scroll_cache_if_auto_exited: must not populate cache when no expert is selected"
+        );
+    }
+
+    #[test]
+    fn store_replaces_existing_entry_for_different_expert() {
+        let mut app = create_test_app_with_expert_selected(1);
+        // Pre-seed cache with a stale entry referring to another expert.
+        app.scroll_mode_cache = Some(ScrollModeCache {
+            expert_id: 99,
+            text: ratatui::text::Text::raw("stale"),
+            raw_line_count: 42,
+            captured_at: Instant::now(),
+            live_hash_at_capture: 0xAAAA_BBBB,
+        });
+
+        app.expert_panel_display
+            .enter_scroll_mode_from_text(ratatui::text::Text::raw("new"), 7);
+        app.expert_panel_display.set_auto_exit_signal_for_test();
+
+        app.store_scroll_cache_if_auto_exited();
+
+        let cache = app
+            .scroll_mode_cache
+            .as_ref()
+            .expect("store_scroll_cache_if_auto_exited: cache should still be populated");
+        assert_eq!(
+            cache.expert_id, 1,
+            "store_scroll_cache_if_auto_exited: should replace entry for the current expert"
+        );
+        assert_eq!(
+            cache.raw_line_count, 7,
+            "store_scroll_cache_if_auto_exited: replacement should carry the new line count"
+        );
+    }
+
+    #[test]
+    fn store_consumes_auto_exit_signal() {
+        let mut app = create_test_app_with_expert_selected(0);
+        app.expert_panel_display
+            .enter_scroll_mode_from_text(ratatui::text::Text::raw("x"), 1);
+        app.expert_panel_display.set_auto_exit_signal_for_test();
+
+        app.store_scroll_cache_if_auto_exited();
+
+        assert!(
+            !app.expert_panel_display.take_auto_exit_signal(),
+            "store_scroll_cache_if_auto_exited: should consume the one-shot auto-exit signal"
+        );
+    }
+
+    // --- Task 20: try_enter_scroll_mode cache-hit bypass ---
+
+    #[tokio::test]
+    async fn cache_hit_path_does_not_spawn_capture() {
+        let mut app = create_test_app_with_expert_selected(0);
+        // Populate live-pane content so content_hash is non-zero and matches the cache.
+        app.expert_panel_display
+            .try_set_content("live-pane-content");
+        let live_hash = app.expert_panel_display.content_hash();
+
+        app.scroll_mode_cache = Some(ScrollModeCache {
+            expert_id: 0,
+            text: ratatui::text::Text::raw("cached full history"),
+            raw_line_count: 42,
+            captured_at: Instant::now(),
+            live_hash_at_capture: live_hash,
+        });
+
+        app.try_enter_scroll_mode(ScrollOrigin::WheelUp)
+            .await
+            .expect("try_enter_scroll_mode should succeed on cache hit");
+
+        assert!(
+            matches!(app.scroll_mode_capture_state, ScrollModeCaptureState::Idle),
+            "try_enter_scroll_mode: cache hit must not spawn a background capture"
+        );
+        assert!(
+            app.expert_panel_display.is_scrolling(),
+            "try_enter_scroll_mode: cache hit should still enter scroll mode"
+        );
+        assert!(
+            app.scroll_mode_cache.is_none(),
+            "try_enter_scroll_mode: cache entry should be consumed on hit"
+        );
+        assert!(
+            app.needs_redraw(),
+            "try_enter_scroll_mode: cache hit should request a redraw"
+        );
+    }
+
+    #[tokio::test]
+    async fn cache_miss_on_stale_live_hash_falls_through_to_spawn() {
+        let mut app = create_test_app_with_expert_selected(0);
+        app.expert_panel_display
+            .try_set_content("live-pane-content");
+
+        // Cache hash intentionally differs from current live hash.
+        app.scroll_mode_cache = Some(ScrollModeCache {
+            expert_id: 0,
+            text: ratatui::text::Text::raw("cached"),
+            raw_line_count: 1,
+            captured_at: Instant::now(),
+            live_hash_at_capture: 0xDEAD_BEEF_DEAD_BEEF,
+        });
+
+        app.try_enter_scroll_mode(ScrollOrigin::WheelUp)
+            .await
+            .expect("try_enter_scroll_mode should succeed on stale cache");
+
+        assert!(
+            matches!(
+                app.scroll_mode_capture_state,
+                ScrollModeCaptureState::InProgress { .. }
+            ),
+            "try_enter_scroll_mode: stale cache hash should fall through to spawn"
+        );
+    }
+
+    #[tokio::test]
+    async fn cache_miss_after_ttl_falls_through_to_spawn() {
+        let mut app = create_test_app_with_expert_selected(0);
+        app.expert_panel_display
+            .try_set_content("live-pane-content");
+        let live_hash = app.expert_panel_display.content_hash();
+
+        let long_ago = Instant::now()
+            .checked_sub(SCROLL_MODE_CACHE_TTL + Duration::from_millis(50))
+            .expect("test host clock should allow subtraction");
+        app.scroll_mode_cache = Some(ScrollModeCache {
+            expert_id: 0,
+            text: ratatui::text::Text::raw("expired"),
+            raw_line_count: 1,
+            captured_at: long_ago,
+            live_hash_at_capture: live_hash,
+        });
+
+        app.try_enter_scroll_mode(ScrollOrigin::WheelUp)
+            .await
+            .expect("try_enter_scroll_mode should succeed when cache TTL has expired");
+
+        assert!(
+            matches!(
+                app.scroll_mode_capture_state,
+                ScrollModeCaptureState::InProgress { .. }
+            ),
+            "try_enter_scroll_mode: expired cache should fall through to spawn"
+        );
+    }
+
+    #[tokio::test]
+    async fn cache_miss_on_expert_change_falls_through_to_spawn() {
+        let mut app = create_test_app_with_expert_selected(1);
+        app.expert_panel_display
+            .try_set_content("live-pane-content");
+        let live_hash = app.expert_panel_display.content_hash();
+
+        // Cache refers to a different expert than is currently selected.
+        app.scroll_mode_cache = Some(ScrollModeCache {
+            expert_id: 99,
+            text: ratatui::text::Text::raw("other-expert"),
+            raw_line_count: 1,
+            captured_at: Instant::now(),
+            live_hash_at_capture: live_hash,
+        });
+
+        app.try_enter_scroll_mode(ScrollOrigin::WheelUp)
+            .await
+            .expect("try_enter_scroll_mode should succeed on expert mismatch");
+
+        assert!(
+            matches!(
+                app.scroll_mode_capture_state,
+                ScrollModeCaptureState::InProgress { .. }
+            ),
+            "try_enter_scroll_mode: cache for a different expert should fall through to spawn"
+        );
+    }
+
+    // --- Task 25.1: handle_mouse_wheel migrates to non-blocking try_enter_scroll_mode ---
+
+    #[tokio::test]
+    async fn handle_mouse_wheel_scroll_up_enters_scroll_mode_via_try_enter() {
+        let mut app = create_test_app_with_expert_selected(0);
+        app.expert_panel_display.show();
+        app.set_layout_areas(LayoutAreas {
+            expert_list: Rect::default(),
+            task_input: Rect::default(),
+            expert_panel: Rect::new(0, 0, 80, 20),
+        });
+        assert!(!app.expert_panel_display.is_scrolling());
+
+        let start = std::time::Instant::now();
+        app.handle_mouse_wheel(MouseEventKind::ScrollUp, 10, 10)
+            .await
+            .expect("handle_mouse_wheel should succeed");
+        let elapsed = start.elapsed();
+
+        assert!(
+            matches!(
+                app.scroll_mode_capture_state,
+                ScrollModeCaptureState::InProgress {
+                    origin: ScrollOrigin::WheelUp,
+                    ..
+                }
+            ),
+            "handle_mouse_wheel: ScrollUp on non-scrolling panel should spawn InProgress(WheelUp) capture"
+        );
+        assert!(
+            app.expert_panel_display.is_scrolling(),
+            "handle_mouse_wheel: ScrollUp should flip panel to optimistic scroll mode"
+        );
+        assert!(
+            elapsed < Duration::from_millis(50),
+            "handle_mouse_wheel: ScrollUp must be fire-and-forget (observed {:?})",
+            elapsed
+        );
+    }
+
+    // --- Task 26.1: PageUp from TaskInput focus migrates to try_enter_scroll_mode(PageUpRemote) ---
+
+    #[tokio::test]
+    async fn page_up_from_task_input_enters_scroll_mode_via_try_enter_with_remote_origin() {
+        let mut app = create_test_app_with_expert_selected(0);
+        app.expert_panel_display.show();
+
+        let start = std::time::Instant::now();
+        app.try_enter_scroll_mode(ScrollOrigin::PageUpRemote)
+            .await
+            .expect("try_enter_scroll_mode(PageUpRemote) should succeed");
+        let elapsed = start.elapsed();
+
+        assert!(
+            matches!(
+                app.scroll_mode_capture_state,
+                ScrollModeCaptureState::InProgress {
+                    origin: ScrollOrigin::PageUpRemote,
+                    ..
+                }
+            ),
+            "try_enter_scroll_mode(PageUpRemote): should spawn capture with PageUpRemote origin"
+        );
+        assert!(
+            app.expert_panel_display.is_scrolling(),
+            "try_enter_scroll_mode(PageUpRemote): should flip panel to optimistic scroll mode"
+        );
+        assert!(
+            elapsed < Duration::from_millis(50),
+            "try_enter_scroll_mode(PageUpRemote): must be fire-and-forget (observed {:?})",
+            elapsed
+        );
+    }
+
+    // --- Task 27.1: PageUp from ExpertPanel focus migrates to non-blocking try_enter_scroll_mode ---
+
+    #[tokio::test]
+    async fn handle_expert_panel_keys_page_up_enters_scroll_mode_via_try_enter() {
+        let mut app = create_test_app_with_expert_selected(0);
+        app.expert_panel_display.show();
+        assert!(!app.expert_panel_display.is_scrolling());
+
+        let start = std::time::Instant::now();
+        app.handle_expert_panel_keys(KeyCode::PageUp, KeyModifiers::NONE)
+            .await
+            .expect("handle_expert_panel_keys PageUp should succeed");
+        let elapsed = start.elapsed();
+
+        assert!(
+            matches!(
+                app.scroll_mode_capture_state,
+                ScrollModeCaptureState::InProgress {
+                    origin: ScrollOrigin::PageUpLocal,
+                    ..
+                }
+            ),
+            "handle_expert_panel_keys(PageUp): should spawn InProgress(PageUpLocal) capture"
+        );
+        assert!(
+            app.expert_panel_display.is_scrolling(),
+            "handle_expert_panel_keys(PageUp): should flip panel to optimistic scroll mode"
+        );
+        assert!(
+            elapsed < Duration::from_millis(50),
+            "handle_expert_panel_keys(PageUp): must be fire-and-forget (observed {:?})",
+            elapsed
+        );
     }
 }
 

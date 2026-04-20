@@ -2,11 +2,21 @@ use ansi_to_tui::IntoText;
 use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
-    text::{Span, Text},
+    text::{Line, Span, Text},
     widgets::{Block, Borders, Paragraph, Wrap},
     Frame,
 };
+use std::borrow::Cow;
 use xxhash_rust::xxh3::xxh3_64;
+
+// Test-only instrumentation: counts `ExpertPanelDisplay::borrow_lines` invocations
+// per thread. Used by the Property 12 tests to assert the warm-cache path calls
+// `borrow_lines` exactly once per frame while the cold-cache path calls it twice
+// (probe + final). Thread-local so parallel `cargo test` threads don't interfere.
+#[cfg(test)]
+thread_local! {
+    static BORROW_LINES_COUNTER: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 /// Safety margin subtracted from inner width when setting tmux PTY size.
 /// Prevents edge-case line wrapping at width boundaries.
@@ -14,6 +24,17 @@ const PREVIEW_WIDTH_MARGIN: u16 = 1;
 
 /// Safety margin subtracted from inner height when setting tmux PTY size.
 const PREVIEW_HEIGHT_MARGIN: u16 = 0;
+
+/// Origin of a scroll-mode entry request, used by `swap_scroll_content`
+/// to decide how to re-anchor the scroll offset when the full history
+/// arrives from the background capture task.
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScrollOrigin {
+    WheelUp,
+    PageUpRemote,
+    PageUpLocal,
+}
 
 pub struct ExpertPanelDisplay {
     expert_id: Option<u32>,
@@ -25,6 +46,10 @@ pub struct ExpertPanelDisplay {
     focused: bool,
     auto_scroll: bool,
     is_scrolling: bool,
+    #[allow(dead_code)]
+    scroll_mode_loading: bool,
+    #[allow(dead_code)]
+    just_auto_exited: bool,
     last_render_size: (u16, u16),
     content_hash: u64,
     cached_visual_line_count: usize,
@@ -49,6 +74,8 @@ impl ExpertPanelDisplay {
             focused: false,
             auto_scroll: true,
             is_scrolling: false,
+            scroll_mode_loading: false,
+            just_auto_exited: false,
             last_render_size: (0, 0),
             content_hash: 0,
             cached_visual_line_count: 0,
@@ -121,6 +148,7 @@ impl ExpertPanelDisplay {
         self.is_scrolling
     }
 
+    #[cfg(test)]
     pub fn enter_scroll_mode(&mut self, raw: &str) {
         self.is_scrolling = true;
         self.auto_scroll = false;
@@ -132,6 +160,99 @@ impl ExpertPanelDisplay {
         self.content = text;
         self.raw_line_count = line_count;
         self.scroll_offset = u16::MAX;
+    }
+
+    /// Flip into scroll mode using the content already present in `self.content`
+    /// (the live pane capture). Keeps caches intact so the transition is instant
+    /// and non-blocking. A follow-up `swap_scroll_content` call will later replace
+    /// the content with the full history once the background capture completes.
+    #[allow(dead_code)]
+    pub fn enter_scroll_mode_optimistic(&mut self) {
+        self.is_scrolling = true;
+        self.auto_scroll = false;
+        self.scroll_mode_loading = true;
+        self.scroll_offset = u16::MAX;
+    }
+
+    /// Cache-hit entry point: enter scroll mode with a pre-parsed `Text`,
+    /// skipping both the tmux capture and the `parse_ansi` pass.
+    #[allow(dead_code)]
+    pub fn enter_scroll_mode_from_text(&mut self, text: Text<'static>, raw_line_count: usize) {
+        self.is_scrolling = true;
+        self.auto_scroll = false;
+        self.scroll_mode_loading = false;
+        self.content_hash = 0;
+        self.cached_visual_line_count = 0;
+        self.cached_display_width = 0;
+        self.content = text;
+        self.raw_line_count = raw_line_count;
+        self.scroll_offset = u16::MAX;
+    }
+
+    /// Replace the optimistic live-content view with the full captured history,
+    /// re-anchoring the scroll position so the user sees no visual jump.
+    ///
+    /// Anchoring rules:
+    /// - When the user has not scrolled since entering scroll mode (`scroll_offset == u16::MAX`)
+    ///   via a wheel gesture, keep the bottom-sentinel so the render clamps to the new bottom.
+    /// - Otherwise, interpret the current offset as "N visual lines above the bottom" and
+    ///   re-anchor against the new line count. Handles both the unrendered sentinel case
+    ///   (offset counted down from `u16::MAX` by `scroll_up`) and the rendered/clamped case
+    ///   (offset within the old line range).
+    #[allow(dead_code)]
+    pub fn swap_scroll_content(
+        &mut self,
+        text: Text<'static>,
+        raw_line_count: usize,
+        origin: ScrollOrigin,
+    ) {
+        let old_offset = self.scroll_offset;
+        let old_line_count = self.raw_line_count;
+
+        self.content = text;
+        self.raw_line_count = raw_line_count;
+        self.content_hash = 0;
+        self.cached_visual_line_count = 0;
+        self.cached_display_width = 0;
+        self.scroll_mode_loading = false;
+
+        if matches!(origin, ScrollOrigin::WheelUp) && old_offset == u16::MAX {
+            self.scroll_offset = u16::MAX;
+            return;
+        }
+
+        let lines_above_bottom = if (old_offset as usize) > old_line_count {
+            // Unrendered sentinel space: scroll_offset counts down from u16::MAX
+            u16::MAX.saturating_sub(old_offset) as usize
+        } else {
+            // Clamped offset after a render: distance from old raw-line bottom
+            old_line_count.saturating_sub(old_offset as usize)
+        };
+        self.scroll_offset = raw_line_count.saturating_sub(lines_above_bottom) as u16;
+    }
+
+    /// Return a clone of the currently held scroll-mode content plus its raw line count.
+    /// Used by `TowerApp` to populate `scroll_mode_cache` on the frame after an auto-exit.
+    #[allow(dead_code)]
+    pub fn snapshot_scroll_content(&self) -> (Text<'static>, usize) {
+        (self.content.clone(), self.raw_line_count)
+    }
+
+    /// Expose the private `content_hash` for cache-validity checks performed by `TowerApp`.
+    #[allow(dead_code)]
+    pub fn content_hash(&self) -> u64 {
+        self.content_hash
+    }
+
+    /// One-shot accessor for the auto-exit flag. Returns the previous value and clears it.
+    #[allow(dead_code)]
+    pub fn take_auto_exit_signal(&mut self) -> bool {
+        std::mem::replace(&mut self.just_auto_exited, false)
+    }
+
+    #[cfg(test)]
+    pub fn set_auto_exit_signal_for_test(&mut self) {
+        self.just_auto_exited = true;
     }
 
     pub fn exit_scroll_mode(&mut self) {
@@ -226,15 +347,14 @@ impl ExpertPanelDisplay {
         let visible_height = inner_height as usize;
         let display_width = inner_width as usize;
 
-        // Build paragraph without block for accurate line_count measurement.
-        // line_count() passes width directly to WordWrapper, and rendering
-        // uses block.inner(area).width == inner_width, so both see the same width.
-        let paragraph = Paragraph::new(self.content.clone()).wrap(Wrap { trim: false });
-
+        // Visual line-count measurement uses the same inner_width as rendering,
+        // so probe and final see identical wrapping. On cache hit the probe is
+        // skipped, bringing the per-frame `borrow_lines` count from 2 down to 1.
         let visual_line_count =
             if display_width != self.cached_display_width || self.cached_display_width == 0 {
                 let count = if inner_width > 0 {
-                    paragraph.line_count(inner_width)
+                    let probe = Paragraph::new(self.borrow_lines()).wrap(Wrap { trim: false });
+                    probe.line_count(inner_width)
                 } else {
                     self.raw_line_count
                 };
@@ -256,7 +376,11 @@ impl ExpertPanelDisplay {
         }
 
         let history_indicator = if self.is_scrolling {
-            " [SCROLL MODE]"
+            if self.scroll_mode_loading {
+                " [SCROLL MODE (loading...)]"
+            } else {
+                " [SCROLL MODE]"
+            }
         } else {
             ""
         };
@@ -276,9 +400,38 @@ impl ExpertPanelDisplay {
             .borders(Borders::ALL)
             .border_style(Style::default().fg(border_color));
 
-        let paragraph = paragraph.block(block).scroll((self.scroll_offset, 0));
+        let paragraph = Paragraph::new(self.borrow_lines())
+            .wrap(Wrap { trim: false })
+            .block(block)
+            .scroll((self.scroll_offset, 0));
 
         frame.render_widget(paragraph, area);
+    }
+
+    /// Return a shallow view over `self.content` as `Vec<Line<'_>>` with
+    /// `Cow::Borrowed` spans — no string bytes are copied. Used by `render`
+    /// both for the line-count probe (cache miss only) and the final paragraph
+    /// so the Text body is borrowed rather than deep-cloned per frame.
+    fn borrow_lines(&self) -> Vec<Line<'_>> {
+        #[cfg(test)]
+        BORROW_LINES_COUNTER.with(|c| c.set(c.get() + 1));
+
+        self.content
+            .lines
+            .iter()
+            .map(|line| Line {
+                style: line.style,
+                alignment: line.alignment,
+                spans: line
+                    .spans
+                    .iter()
+                    .map(|span| Span {
+                        style: span.style,
+                        content: Cow::Borrowed(span.content.as_ref()),
+                    })
+                    .collect(),
+            })
+            .collect()
     }
 
     /// Parse raw ANSI-escaped string into styled `Text`.
@@ -1428,6 +1581,412 @@ mod tests {
         assert_eq!(
             panel.cached_visual_line_count, 3,
             "word-wrap: 'aaaa bbbbbbbb cccc' at width 10 should be 3 visual lines, not 2"
+        );
+    }
+
+    // --- Task 1.1: flag lifecycle defaults ---
+
+    #[test]
+    fn scroll_mode_loading_starts_false() {
+        let panel = ExpertPanelDisplay::new();
+        assert!(
+            !panel.scroll_mode_loading,
+            "scroll_mode_loading: should default to false on new()"
+        );
+    }
+
+    #[test]
+    fn just_auto_exited_starts_false() {
+        let panel = ExpertPanelDisplay::new();
+        assert!(
+            !panel.just_auto_exited,
+            "just_auto_exited: should default to false on new()"
+        );
+    }
+
+    // --- Task 2.1: optimistic entry invariants ---
+
+    #[test]
+    fn optimistic_entry_flips_is_scrolling_without_clearing_content() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.set_content(Text::raw("live1\nlive2\nlive3"), 3);
+        let line_count_before = panel.raw_line_count;
+
+        panel.enter_scroll_mode_optimistic();
+
+        assert!(
+            panel.is_scrolling(),
+            "enter_scroll_mode_optimistic: should set is_scrolling"
+        );
+        assert_eq!(
+            panel.raw_line_count, line_count_before,
+            "enter_scroll_mode_optimistic: must not clear existing content"
+        );
+        assert_eq!(
+            panel.scroll_offset,
+            u16::MAX,
+            "enter_scroll_mode_optimistic: should set bottom sentinel"
+        );
+        assert!(
+            !panel.auto_scroll,
+            "enter_scroll_mode_optimistic: should disable auto_scroll"
+        );
+    }
+
+    #[test]
+    fn optimistic_entry_preserves_content_hash() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.try_set_content("live content");
+        let hash_before = panel.content_hash;
+        assert!(hash_before != 0, "precondition: hash should be populated");
+
+        panel.enter_scroll_mode_optimistic();
+        assert_eq!(
+            panel.content_hash, hash_before,
+            "enter_scroll_mode_optimistic: must preserve content_hash so cache remains valid"
+        );
+    }
+
+    #[test]
+    fn optimistic_entry_sets_loading_flag() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.enter_scroll_mode_optimistic();
+        assert!(
+            panel.scroll_mode_loading,
+            "enter_scroll_mode_optimistic: should raise scroll_mode_loading"
+        );
+    }
+
+    // --- Task 3.1: cache-hit entry parity ---
+
+    #[test]
+    fn from_text_matches_from_raw_for_same_input() {
+        let raw = "line1\nline2\nline3";
+        let mut a = ExpertPanelDisplay::new();
+        a.enter_scroll_mode(raw);
+
+        let mut b = ExpertPanelDisplay::new();
+        let text = ExpertPanelDisplay::parse_ansi(raw);
+        b.enter_scroll_mode_from_text(text, raw.lines().count());
+
+        assert_eq!(a.is_scrolling(), b.is_scrolling());
+        assert_eq!(a.auto_scroll, b.auto_scroll);
+        assert_eq!(a.scroll_offset, b.scroll_offset);
+        assert_eq!(a.raw_line_count, b.raw_line_count);
+        assert_eq!(a.content_hash, b.content_hash);
+        assert_eq!(a.cached_visual_line_count, b.cached_visual_line_count);
+        assert_eq!(a.cached_display_width, b.cached_display_width);
+    }
+
+    #[test]
+    fn from_text_clears_loading_flag() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.enter_scroll_mode_optimistic();
+        assert!(panel.scroll_mode_loading, "precondition: loading set");
+
+        let text = ExpertPanelDisplay::parse_ansi("a\nb");
+        panel.enter_scroll_mode_from_text(text, 2);
+        assert!(
+            !panel.scroll_mode_loading,
+            "enter_scroll_mode_from_text: should clear loading flag"
+        );
+    }
+
+    // --- Task 4.1: swap semantics ---
+
+    #[test]
+    fn swap_preserves_u16_max_for_unmoved_wheel_origin() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.set_content(Text::raw("a\nb\nc"), 3);
+        panel.enter_scroll_mode_optimistic();
+        assert_eq!(
+            panel.scroll_offset,
+            u16::MAX,
+            "precondition: optimistic sets sentinel"
+        );
+
+        let text = ExpertPanelDisplay::parse_ansi("x\ny\nz");
+        panel.swap_scroll_content(text, 200, ScrollOrigin::WheelUp);
+        assert_eq!(
+            panel.scroll_offset,
+            u16::MAX,
+            "swap: unmoved wheel origin keeps sentinel for render-time clamp"
+        );
+    }
+
+    #[test]
+    fn swap_preserves_bottom_relative_offset_when_user_has_scrolled() {
+        let mut panel = ExpertPanelDisplay::new();
+        let live = (0..20)
+            .map(|i| format!("live{}", i))
+            .collect::<Vec<_>>()
+            .join("\n");
+        panel.set_content(Text::raw(live), 20);
+        panel.enter_scroll_mode_optimistic();
+        for _ in 0..5 {
+            panel.scroll_up();
+        }
+        assert_eq!(
+            panel.scroll_offset,
+            u16::MAX - 5,
+            "precondition: 5 scroll_ups from sentinel"
+        );
+
+        let full = (0..200)
+            .map(|i| format!("hist{}", i))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let text = ExpertPanelDisplay::parse_ansi(&full);
+        panel.swap_scroll_content(text, 200, ScrollOrigin::WheelUp);
+        assert_eq!(
+            panel.scroll_offset, 195,
+            "swap: user scrolled 5 lines above bottom, expect 200 - 5 = 195"
+        );
+    }
+
+    #[test]
+    fn swap_clears_loading_flag() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.enter_scroll_mode_optimistic();
+        assert!(panel.scroll_mode_loading, "precondition: loading set");
+
+        let text = ExpertPanelDisplay::parse_ansi("a\nb\nc");
+        panel.swap_scroll_content(text, 3, ScrollOrigin::WheelUp);
+        assert!(
+            !panel.scroll_mode_loading,
+            "swap: should clear loading flag"
+        );
+    }
+
+    #[test]
+    fn swap_invalidates_visual_line_cache() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let mut panel = ExpertPanelDisplay::new();
+        panel.set_content(Text::raw("a\nb\nc"), 3);
+        let backend = TestBackend::new(40, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| panel.render(frame, frame.area()))
+            .unwrap();
+        assert!(
+            panel.cached_visual_line_count > 0,
+            "precondition: cache populated"
+        );
+        assert!(panel.cached_display_width > 0, "precondition: width cached");
+
+        panel.enter_scroll_mode_optimistic();
+        let text = ExpertPanelDisplay::parse_ansi("x\ny\nz\nw");
+        panel.swap_scroll_content(text, 4, ScrollOrigin::PageUpLocal);
+
+        assert_eq!(
+            panel.cached_visual_line_count, 0,
+            "swap: should invalidate cached visual line count"
+        );
+        assert_eq!(
+            panel.cached_display_width, 0,
+            "swap: should invalidate cached display width"
+        );
+        assert_eq!(
+            panel.content_hash, 0,
+            "swap: should reset content hash so next live update refreshes"
+        );
+    }
+
+    // --- Task 5.1: snapshot and auto-exit signal accessors ---
+
+    #[test]
+    fn snapshot_returns_current_text_and_line_count() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.enter_scroll_mode("line1\nline2\nline3");
+
+        let (text, line_count) = panel.snapshot_scroll_content();
+        assert_eq!(
+            line_count, 3,
+            "snapshot_scroll_content: should return current raw_line_count"
+        );
+        assert_eq!(
+            text.lines.len(),
+            panel.content.lines.len(),
+            "snapshot_scroll_content: returned Text should mirror current content"
+        );
+    }
+
+    #[test]
+    fn snapshot_is_non_destructive() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.enter_scroll_mode("a\nb\nc");
+        let line_count_before = panel.raw_line_count;
+        let content_lines_before = panel.content.lines.len();
+
+        let _ = panel.snapshot_scroll_content();
+
+        assert_eq!(
+            panel.raw_line_count, line_count_before,
+            "snapshot_scroll_content: must not mutate raw_line_count"
+        );
+        assert_eq!(
+            panel.content.lines.len(),
+            content_lines_before,
+            "snapshot_scroll_content: must not mutate self.content"
+        );
+    }
+
+    #[test]
+    fn content_hash_accessor_matches_private_field() {
+        let mut panel = ExpertPanelDisplay::new();
+        assert_eq!(
+            panel.content_hash(),
+            0,
+            "content_hash: fresh panel should report zero"
+        );
+
+        panel.try_set_content("hello world");
+        assert_eq!(
+            panel.content_hash(),
+            panel.content_hash,
+            "content_hash: accessor must expose the internal hash unchanged"
+        );
+        assert_ne!(
+            panel.content_hash(),
+            0,
+            "content_hash: should be non-zero after try_set_content"
+        );
+    }
+
+    #[test]
+    fn take_auto_exit_signal_returns_false_when_unset() {
+        let mut panel = ExpertPanelDisplay::new();
+        assert!(
+            !panel.take_auto_exit_signal(),
+            "take_auto_exit_signal: should be false on a fresh panel"
+        );
+    }
+
+    #[test]
+    fn take_auto_exit_signal_returns_true_then_false_when_set() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.just_auto_exited = true;
+
+        assert!(
+            panel.take_auto_exit_signal(),
+            "take_auto_exit_signal: first call should return true once signal is set"
+        );
+        assert!(
+            !panel.take_auto_exit_signal(),
+            "take_auto_exit_signal: second call should return false (one-shot)"
+        );
+    }
+
+    // --- Task 6.1: render title loading indicator ---
+
+    #[test]
+    fn render_title_contains_loading_when_flag_set() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.set_expert(1, "Alice".to_string());
+        panel.set_content(Text::raw("live1\nlive2"), 2);
+        panel.enter_scroll_mode_optimistic();
+        assert!(
+            panel.scroll_mode_loading,
+            "precondition: optimistic entry sets loading"
+        );
+
+        let rendered = render_to_string(&mut panel, 80, 10);
+        let title = rendered.lines().next().unwrap_or("");
+        assert!(
+            title.contains("SCROLL MODE (loading...)"),
+            "render: title should include '(loading...)' when scroll_mode_loading is set, got: {}",
+            title
+        );
+    }
+
+    #[test]
+    fn render_title_omits_loading_when_flag_clear() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.set_expert(1, "Alice".to_string());
+        panel.enter_scroll_mode("line1\nline2");
+        assert!(
+            !panel.scroll_mode_loading,
+            "precondition: full-entry clears loading"
+        );
+
+        let rendered = render_to_string(&mut panel, 80, 10);
+        let title = rendered.lines().next().unwrap_or("");
+        assert!(
+            title.contains("[SCROLL MODE]"),
+            "render: bare '[SCROLL MODE]' expected when loading flag is clear, got: {}",
+            title
+        );
+        assert!(
+            !title.contains("(loading"),
+            "render: must not include '(loading...)' when flag is clear, got: {}",
+            title
+        );
+    }
+
+    // ---- Task 30.1: borrow_lines call-count instrumentation (Property P12) ----
+
+    #[test]
+    fn render_with_warm_cache_calls_borrow_lines_exactly_once() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let mut panel = ExpertPanelDisplay::new();
+        panel.set_expert(1, "Alice".to_string());
+        panel.set_content(Text::raw("line1\nline2\nline3\nline4\nline5"), 5);
+
+        // Warm the cache with a first render at a fixed width.
+        let backend = TestBackend::new(40, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| panel.render(frame, frame.area()))
+            .unwrap();
+        assert!(
+            panel.cached_display_width > 0,
+            "precondition: first render should warm the visual-line cache"
+        );
+
+        // Reset counter and render again at the same width — cache hit, probe skipped.
+        BORROW_LINES_COUNTER.with(|c| c.set(0));
+        let backend = TestBackend::new(40, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| panel.render(frame, frame.area()))
+            .unwrap();
+
+        let count = BORROW_LINES_COUNTER.with(|c| c.get());
+        assert_eq!(
+            count, 1,
+            "render: warm-cache path must call borrow_lines exactly once (final paragraph only)"
+        );
+    }
+
+    #[test]
+    fn render_with_cold_cache_calls_borrow_lines_exactly_twice_probe_plus_final() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let mut panel = ExpertPanelDisplay::new();
+        panel.set_expert(1, "Alice".to_string());
+        panel.set_content(Text::raw("line1\nline2\nline3\nline4\nline5"), 5);
+        assert_eq!(
+            panel.cached_display_width, 0,
+            "precondition: fresh panel should have cold visual-line cache"
+        );
+
+        // Reset counter immediately before cold render.
+        BORROW_LINES_COUNTER.with(|c| c.set(0));
+        let backend = TestBackend::new(40, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| panel.render(frame, frame.area()))
+            .unwrap();
+
+        let count = BORROW_LINES_COUNTER.with(|c| c.get());
+        assert_eq!(
+            count, 2,
+            "render: cold-cache path must call borrow_lines exactly twice (probe + final)"
         );
     }
 }

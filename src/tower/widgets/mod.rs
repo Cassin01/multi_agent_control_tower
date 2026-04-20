@@ -7,7 +7,7 @@ mod role_selector;
 mod status_display;
 mod task_input;
 
-pub use expert_panel_display::ExpertPanelDisplay;
+pub use expert_panel_display::{ExpertPanelDisplay, ScrollOrigin};
 pub use help_modal::HelpModal;
 #[allow(unused_imports)]
 pub use messaging_display::{MessageFilter, MessagingDisplay};
