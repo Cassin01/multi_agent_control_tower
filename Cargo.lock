@@ -748,7 +748,7 @@ dependencies = [
 
 [[package]]
 name = "macot"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "ansi-to-tui",
  "anyhow",
