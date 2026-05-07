@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 
-use crate::commands::{down, launch, reset, start, status, tower};
+use crate::commands::{down, expert, launch, reset, start, status, tower};
 
 #[derive(Parser)]
 #[command(name = "macot")]
@@ -33,4 +33,7 @@ pub enum Commands {
 
     /// Reset expert context and instructions
     Reset(reset::Args),
+
+    /// Manage experts (add, list)
+    Expert(expert::Args),
 }

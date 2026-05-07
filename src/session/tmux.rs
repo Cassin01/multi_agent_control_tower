@@ -1,11 +1,23 @@
 use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
+use std::path::Path;
 use std::process::{Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::process::Command;
 
 use crate::config::Config;
+use crate::models::ExpertId;
+
+/// Quote a value for safe inclusion inside a single-quoted shell string.
+///
+/// Mirrors the helper used by [`crate::session::ClaudeManager`] so the
+/// dynamic-add window spawn produces identical command lines when the
+/// path contains shell metacharacters (apostrophes, spaces).
+#[allow(dead_code)]
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
 
 fn check_tmux_output(output: Output, context: &str) -> Result<String> {
     if !output.status.success() {
@@ -59,6 +71,49 @@ static NEXT_BUFFER_ID: AtomicU64 = AtomicU64::new(1);
 fn next_tmux_buffer_name(window_id: u32) -> String {
     let id = NEXT_BUFFER_ID.fetch_add(1, Ordering::Relaxed);
     format!("macot-{}-{}-{}", std::process::id(), window_id, id)
+}
+
+/// Trait for spawning and killing per-expert tmux windows.
+///
+/// Extracted from [`TmuxManager`] so the dynamic-add service can be
+/// tested with an in-memory mock that records calls and can be wired to
+/// fail on demand. Real-tmux work is done by the `TmuxManager` impl
+/// below; tests use the mock in `expert::add::tests`.
+///
+/// See dynamic-expert-add-design.md §3.5 / §7.3.
+#[allow(dead_code)]
+#[async_trait::async_trait]
+pub trait TmuxWindowSpawner: Send + Sync {
+    /// Create a window named `expert{N}` in the current session and
+    /// start `claude` inside it. Returns the new window's tmux index.
+    async fn spawn_expert_window(
+        &self,
+        expert_id: ExpertId,
+        cwd: &Path,
+        prompt_path: &Path,
+        settings_path: &Path,
+    ) -> Result<u32>;
+
+    /// Kill the window named `expert{N}`. Idempotent: returns `Ok(())`
+    /// if the window does not exist.
+    async fn kill_expert_window(&self, expert_id: ExpertId) -> Result<()>;
+}
+
+#[async_trait::async_trait]
+impl TmuxWindowSpawner for TmuxManager {
+    async fn spawn_expert_window(
+        &self,
+        expert_id: ExpertId,
+        cwd: &Path,
+        prompt_path: &Path,
+        settings_path: &Path,
+    ) -> Result<u32> {
+        TmuxManager::spawn_expert_window(self, expert_id, cwd, prompt_path, settings_path).await
+    }
+
+    async fn kill_expert_window(&self, expert_id: ExpertId) -> Result<()> {
+        TmuxManager::kill_expert_window(self, expert_id).await
+    }
 }
 
 /// Trait for sending keys to and capturing output from tmux windows.
@@ -501,6 +556,122 @@ impl TmuxManager {
         Ok(sessions)
     }
 
+    /// Add a new window to the existing session and launch `claude` inside it.
+    ///
+    /// Mirrors the `create_session` shape (`new-window -t {session}: -n
+    /// expert{N} -c {cwd} -d` followed by `send-keys` to start claude).
+    /// The window is created in detached mode so the user's current
+    /// focus is preserved.
+    ///
+    /// Returns the tmux window index that the new window was assigned —
+    /// derived from `display-message #{window_index}` after creation.
+    ///
+    /// See dynamic-expert-add-design.md §3.5.
+    #[allow(dead_code)]
+    pub async fn spawn_expert_window(
+        &self,
+        expert_id: ExpertId,
+        cwd: &Path,
+        prompt_path: &Path,
+        settings_path: &Path,
+    ) -> Result<u32> {
+        let window_name = format!("expert{expert_id}");
+        let cwd_str = cwd
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("cwd path is not valid UTF-8: {cwd:?}"))?;
+
+        let new_window_output = Command::new("tmux")
+            .args([
+                "new-window",
+                "-t",
+                &format!("{}:", self.session_name),
+                "-n",
+                &window_name,
+                "-c",
+                cwd_str,
+                "-P",
+                "-F",
+                "#{window_index}",
+                "-d",
+            ])
+            .output()
+            .await
+            .context(format!("Failed to create tmux window {window_name}"))?;
+        let stdout = check_tmux_output(new_window_output, &format!("new-window {window_name}"))?;
+        let window_index: u32 = stdout
+            .trim()
+            .parse()
+            .with_context(|| format!("Failed to parse new window index from tmux: {stdout:?}"))?;
+
+        let prompt_str = prompt_path
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("prompt path is not valid UTF-8: {prompt_path:?}"))?;
+        let settings_str = settings_path.to_str().ok_or_else(|| {
+            anyhow::anyhow!("settings path is not valid UTF-8: {settings_path:?}")
+        })?;
+
+        let claude_cmd = format!(
+            "cd {} && claude --dangerously-skip-permissions \
+             --append-system-prompt \"$(cat {})\" --settings \"$(cat {})\"",
+            shell_single_quote(cwd_str),
+            shell_single_quote(prompt_str),
+            shell_single_quote(settings_str),
+        );
+
+        let target = format!("{}:{}", self.session_name, window_index);
+        // Clear any pre-prompt input then send the claude launch line.
+        let cl_out = Command::new("tmux")
+            .args(["send-keys", "-t", &target, "C-l"])
+            .output()
+            .await
+            .context(format!("Failed to send C-l to {target}"))?;
+        check_tmux_status(cl_out, &format!("send-keys C-l {target}"))?;
+
+        let cmd_out = Command::new("tmux")
+            .args(["send-keys", "-t", &target, &claude_cmd])
+            .output()
+            .await
+            .context(format!("Failed to send claude cmd to {target}"))?;
+        check_tmux_status(cmd_out, &format!("send-keys claude {target}"))?;
+
+        let enter_out = Command::new("tmux")
+            .args(["send-keys", "-t", &target, "Enter"])
+            .output()
+            .await
+            .context(format!("Failed to send Enter to {target}"))?;
+        check_tmux_status(enter_out, &format!("send-keys Enter {target}"))?;
+
+        Ok(window_index)
+    }
+
+    /// Kill the window for `expert_id` if it exists.
+    ///
+    /// Idempotent: returns `Ok(())` when the window is already gone.
+    /// Used by the dynamic-add rollback flow to undo a partial spawn.
+    #[allow(dead_code)]
+    pub async fn kill_expert_window(&self, expert_id: ExpertId) -> Result<()> {
+        let target = format!("{}:expert{expert_id}", self.session_name);
+        let output = Command::new("tmux")
+            .args(["kill-window", "-t", &target])
+            .output()
+            .await
+            .context(format!("Failed to kill window {target}"))?;
+        if output.status.success() {
+            return Ok(());
+        }
+        // Treat "window/session not found" as success — the window is
+        // already in the desired state for rollback purposes.
+        let stderr = String::from_utf8_lossy(&output.stderr).to_lowercase();
+        if stderr.contains("can't find") || stderr.contains("no such") {
+            return Ok(());
+        }
+        bail!(
+            "kill-window {target}: tmux exited with {}: {}",
+            output.status,
+            stderr.trim()
+        );
+    }
+
     pub async fn init_session_metadata(&self, project_path: &str, num_experts: u32) -> Result<()> {
         self.set_env("MACOT_PROJECT_PATH", project_path).await?;
         self.set_env("MACOT_NUM_EXPERTS", &num_experts.to_string())
@@ -548,6 +719,104 @@ pub struct SessionMetadata {
     pub num_experts: Option<u32>,
     pub created_at: Option<String>,
     pub queue_path: String,
+}
+
+/// Test-only in-memory mock of [`TmuxWindowSpawner`] used by integration
+/// tests for `ExpertAddService`. Records every call and can be flipped
+/// to fail spawn calls on demand.
+#[cfg(test)]
+pub mod test_support {
+    use super::*;
+    use std::path::PathBuf;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Debug, Clone)]
+    pub struct MockSpawnCall {
+        pub expert_id: ExpertId,
+        pub cwd: PathBuf,
+        pub prompt_path: PathBuf,
+        pub settings_path: PathBuf,
+    }
+
+    /// Mock spawner used by tests in `expert::add` and `session::tmux`.
+    #[derive(Clone, Default)]
+    pub struct MockSpawner {
+        spawn_calls: Arc<Mutex<Vec<MockSpawnCall>>>,
+        kill_calls: Arc<Mutex<Vec<ExpertId>>>,
+        fail_spawn: Arc<Mutex<bool>>,
+        next_window_index: Arc<Mutex<u32>>,
+        observe_during_spawn: Arc<Mutex<Option<Arc<dyn Fn() + Send + Sync>>>>,
+    }
+
+    impl MockSpawner {
+        pub fn new() -> Self {
+            Self {
+                spawn_calls: Arc::new(Mutex::new(Vec::new())),
+                kill_calls: Arc::new(Mutex::new(Vec::new())),
+                fail_spawn: Arc::new(Mutex::new(false)),
+                next_window_index: Arc::new(Mutex::new(1)),
+                observe_during_spawn: Arc::new(Mutex::new(None)),
+            }
+        }
+
+        pub fn fail_next_spawn(&self) {
+            *self.fail_spawn.lock().unwrap() = true;
+        }
+
+        pub fn spawn_calls(&self) -> Vec<MockSpawnCall> {
+            self.spawn_calls.lock().unwrap().clone()
+        }
+
+        pub fn kill_calls(&self) -> Vec<ExpertId> {
+            self.kill_calls.lock().unwrap().clone()
+        }
+
+        /// Install a closure that runs synchronously inside `spawn_expert_window`
+        /// before returning. Used by lock-release-before-tmux tests.
+        pub fn on_spawn<F>(&self, f: F)
+        where
+            F: Fn() + Send + Sync + 'static,
+        {
+            *self.observe_during_spawn.lock().unwrap() = Some(Arc::new(f));
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl TmuxWindowSpawner for MockSpawner {
+        async fn spawn_expert_window(
+            &self,
+            expert_id: ExpertId,
+            cwd: &Path,
+            prompt_path: &Path,
+            settings_path: &Path,
+        ) -> Result<u32> {
+            self.spawn_calls.lock().unwrap().push(MockSpawnCall {
+                expert_id,
+                cwd: cwd.to_path_buf(),
+                prompt_path: prompt_path.to_path_buf(),
+                settings_path: settings_path.to_path_buf(),
+            });
+            // Clone the Arc out of the mutex so the observer runs without
+            // holding the lock (the observer may itself try to acquire
+            // application-level locks).
+            let observer = self.observe_during_spawn.lock().unwrap().clone();
+            if let Some(observer) = observer {
+                observer();
+            }
+            if *self.fail_spawn.lock().unwrap() {
+                bail!("mock spawn failure for expert{expert_id}");
+            }
+            let mut idx = self.next_window_index.lock().unwrap();
+            let assigned = *idx;
+            *idx += 1;
+            Ok(assigned)
+        }
+
+        async fn kill_expert_window(&self, expert_id: ExpertId) -> Result<()> {
+            self.kill_calls.lock().unwrap().push(expert_id);
+            Ok(())
+        }
+    }
 }
 
 #[cfg(test)]
@@ -938,6 +1207,71 @@ mod tests {
                 .stderr(Stdio::null())
                 .status();
         }
+    }
+
+    // --- dynamic-expert-add Task 7.3: mock spawner lifecycle ---
+
+    use super::test_support::MockSpawner;
+    use std::path::PathBuf;
+
+    #[tokio::test]
+    async fn mock_spawn_records_call_and_returns_monotonic_index() {
+        let spawner = MockSpawner::new();
+        let cwd = PathBuf::from("/tmp/wd");
+        let prompt = PathBuf::from("/tmp/prompts/expert4.md");
+        let settings = PathBuf::from("/tmp/prompts/expert4_settings.json");
+
+        let idx_a = TmuxWindowSpawner::spawn_expert_window(&spawner, 4, &cwd, &prompt, &settings)
+            .await
+            .unwrap();
+        let idx_b = TmuxWindowSpawner::spawn_expert_window(&spawner, 5, &cwd, &prompt, &settings)
+            .await
+            .unwrap();
+
+        assert!(
+            idx_b > idx_a,
+            "mock spawn: indices should be monotonically increasing"
+        );
+        let calls = spawner.spawn_calls();
+        assert_eq!(calls.len(), 2, "mock spawn: should record both calls");
+        assert_eq!(calls[0].expert_id, 4);
+        assert_eq!(calls[0].cwd, cwd);
+        assert_eq!(calls[0].prompt_path, prompt);
+    }
+
+    #[tokio::test]
+    async fn mock_spawn_can_fail_on_demand() {
+        let spawner = MockSpawner::new();
+        spawner.fail_next_spawn();
+        let result = TmuxWindowSpawner::spawn_expert_window(
+            &spawner,
+            1,
+            Path::new("/tmp"),
+            Path::new("/tmp/p"),
+            Path::new("/tmp/s"),
+        )
+        .await;
+        assert!(result.is_err(), "mock spawn: should fail when configured");
+    }
+
+    #[tokio::test]
+    async fn mock_kill_is_idempotent() {
+        let spawner = MockSpawner::new();
+        TmuxWindowSpawner::kill_expert_window(&spawner, 4)
+            .await
+            .unwrap();
+        // Second call must not error — mirrors the contract of the real
+        // `kill_expert_window` which treats missing windows as success.
+        TmuxWindowSpawner::kill_expert_window(&spawner, 4)
+            .await
+            .unwrap();
+
+        let calls = spawner.kill_calls();
+        assert_eq!(
+            calls,
+            vec![4, 4],
+            "mock kill: should record every call (idempotency does not mean coalesced)"
+        );
     }
 
     #[tokio::test]

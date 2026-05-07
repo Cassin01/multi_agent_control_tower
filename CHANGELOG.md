@@ -6,6 +6,20 @@ The format is based on Keep a Changelog.
 
 ## [Unreleased]
 
+### Added
+
+- Dynamic expert add (`macot expert add` / `macot expert list`): add a new
+  expert to a running session without restarting it. Supports built-in roles
+  (`architect`, `planner`, `general`) and custom roles via
+  `.macot/templates/roles/{name}.md` or `~/.config/macot/roles/{name}.md`,
+  with `--dry-run` and `--json` for automation.
+- Tower TUI: `F2` opens the Add Expert modal; the `notify`-based manifest
+  watcher reloads the Expert Panel automatically on changes.
+- New dependencies: `fs2` (advisory `.macot/.lock`) and `notify` (manifest
+  change events).
+- New `make test-e2e` target running the dynamic-add E2E suite (`cargo test
+  -- --ignored`, requires `tmux` on PATH).
+
 ## [0.1.11] - 2026-05-01
 
 ### Added

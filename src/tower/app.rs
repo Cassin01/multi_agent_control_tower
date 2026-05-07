@@ -33,11 +33,14 @@ const EVENT_POLL_TIMEOUT: Duration = Duration::from_millis(16);
 /// One wheel notch ≈ 3 lines matches conventional terminal scrolling.
 const WHEEL_SCROLL_LINES: usize = 3;
 
+use super::manifest_watcher::ManifestWatcher;
 use super::ui::UI;
 use super::widgets::{
-    ExpertPanelDisplay, HelpModal, MessagingDisplay, ReportDisplay, RoleSelector, StatusDisplay,
-    TaskInput, ViewMode,
+    AddExpertForm, AddExpertModal, ExpertPanelDisplay, HelpModal, MessagingDisplay, ModalField,
+    ModalRole, ReportDisplay, RoleSelector, StatusDisplay, TaskInput, ViewMode,
 };
+use crate::expert::add::{ExpertAddRequest, ExpertAddService};
+use crate::expert::role::{BuiltinRole, RoleSpec};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusArea {
@@ -131,6 +134,8 @@ pub struct TowerApp {
     report_display: ReportDisplay,
     help_modal: HelpModal,
     role_selector: RoleSelector,
+    add_expert_modal: AddExpertModal,
+    manifest_watcher: Option<ManifestWatcher>,
     messaging_display: MessagingDisplay,
     expert_panel_display: ExpertPanelDisplay,
 
@@ -226,6 +231,8 @@ impl TowerApp {
             report_display: ReportDisplay::new(),
             help_modal: HelpModal::new(),
             role_selector: RoleSelector::new(),
+            add_expert_modal: AddExpertModal::new(),
+            manifest_watcher: ManifestWatcher::start(&config.project_path).ok(),
             messaging_display: MessagingDisplay::new(),
             expert_panel_display: ExpertPanelDisplay::new(),
 
@@ -326,6 +333,116 @@ impl TowerApp {
 
     pub fn role_selector(&mut self) -> &mut RoleSelector {
         &mut self.role_selector
+    }
+
+    pub fn add_expert_modal(&mut self) -> &mut AddExpertModal {
+        &mut self.add_expert_modal
+    }
+
+    /// Translate a modal form into an `ExpertAddRequest` and dispatch
+    /// the add through `ExpertAddService`. Errors are surfaced to the
+    /// status bar — the modal already closed before we got here.
+    async fn dispatch_add_expert(&mut self, form: AddExpertForm) -> Result<()> {
+        let role = match form.role {
+            ModalRole::Architect => RoleSpec::Builtin(BuiltinRole::Architect),
+            ModalRole::Planner => RoleSpec::Builtin(BuiltinRole::Planner),
+            ModalRole::General => RoleSpec::Builtin(BuiltinRole::General),
+            ModalRole::Custom => {
+                let trimmed = form.custom_role.trim();
+                if trimmed.is_empty() {
+                    self.set_message(
+                        "Add expert: custom role name is required when role is <custom>"
+                            .to_string(),
+                    );
+                    return Ok(());
+                }
+                RoleSpec::Custom {
+                    name: trimmed.to_string(),
+                }
+            }
+        };
+        let name = {
+            let trimmed = form.name.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        };
+
+        let project_root = self.config.project_path.clone();
+        let session_name = self.config.session_name();
+        let session_hash = self.config.session_hash();
+        let tmux = TmuxManager::new(session_name.clone());
+        let svc = ExpertAddService::new(project_root, session_name, session_hash, tmux);
+
+        match svc.add_expert(ExpertAddRequest { role, name }).await {
+            Ok(added) => {
+                let msg = format!(
+                    "Added expert {} ({}, {}) — window {}",
+                    added.expert_id, added.name, added.role, added.tmux_window_index
+                );
+                tracing::info!("{msg}");
+                if form.worktree {
+                    self.set_message(format!(
+                        "{msg} — use Ctrl+W to convert into a worktree expert."
+                    ));
+                } else {
+                    self.set_message(msg);
+                }
+            }
+            Err(e) => {
+                tracing::warn!("expert add failed: {e}");
+                self.set_message(format!("Add expert failed: {e}"));
+            }
+        }
+        Ok(())
+    }
+
+    /// Pull on the manifest watcher and rebuild the in-memory expert
+    /// registry / status display when the manifest has changed
+    /// (Property 8). Returns whether a reload happened.
+    pub fn poll_manifest_changes(&mut self) -> bool {
+        let changed = match self.manifest_watcher.as_ref() {
+            Some(w) => w.poll_change(),
+            None => false,
+        };
+        if changed {
+            if let Err(e) = self.reload_from_manifest() {
+                tracing::warn!("manifest reload failed: {e}");
+            }
+        }
+        changed
+    }
+
+    /// Re-read `experts_manifest.json` and replace the in-memory
+    /// `ExpertRegistry` plus the cached `Vec<ExpertEntry>` shown in the
+    /// expert panel. Selection / scroll state is preserved by ID via
+    /// `StatusDisplay::set_experts`.
+    pub fn reload_from_manifest(&mut self) -> Result<()> {
+        let persistor =
+            crate::experts::persist::ManifestPersistor::new(self.config.project_path.clone());
+        let entries = persistor.load_entries()?;
+        let mut registry = ExpertRegistry::new();
+        for entry in &entries {
+            let info = ExpertInfo::new(
+                entry.expert_id,
+                entry.name.clone(),
+                Role::specialist(entry.role.clone()),
+                self.config.session_name(),
+                entry.expert_id.to_string(),
+            );
+            if let Err(e) = registry.register_expert(info) {
+                tracing::warn!(
+                    "manifest reload: register {} failed: {}",
+                    entry.expert_id,
+                    e
+                );
+            }
+        }
+        self.expert_registry = registry;
+        self.needs_redraw = true;
+        Ok(())
     }
 
     #[allow(dead_code)]
@@ -854,6 +971,56 @@ impl TowerApp {
 
                     if key.code == KeyCode::F(1) {
                         self.help_modal.toggle();
+                        return Ok(());
+                    }
+
+                    if self.add_expert_modal.is_visible() {
+                        match key.code {
+                            KeyCode::Esc => {
+                                self.add_expert_modal.hide();
+                            }
+                            KeyCode::Tab => {
+                                self.add_expert_modal.next_focus();
+                            }
+                            KeyCode::BackTab => {
+                                self.add_expert_modal.prev_focus();
+                            }
+                            KeyCode::Up => {
+                                if self.add_expert_modal.focus() == ModalField::Role {
+                                    self.add_expert_modal.prev_role();
+                                }
+                            }
+                            KeyCode::Down => {
+                                if self.add_expert_modal.focus() == ModalField::Role {
+                                    self.add_expert_modal.next_role();
+                                }
+                            }
+                            KeyCode::Char(' ')
+                                if self.add_expert_modal.focus() == ModalField::Worktree =>
+                            {
+                                self.add_expert_modal.toggle_worktree();
+                            }
+                            KeyCode::Char(c) => {
+                                self.add_expert_modal.type_char(c);
+                            }
+                            KeyCode::Backspace => {
+                                self.add_expert_modal.backspace();
+                            }
+                            KeyCode::Enter => {
+                                let form = self.add_expert_modal.form();
+                                self.add_expert_modal.hide();
+                                self.dispatch_add_expert(form).await?;
+                            }
+                            _ => {}
+                        }
+                        return Ok(());
+                    }
+
+                    if key.code == KeyCode::F(2) {
+                        // Open the Add-Expert modal. Bound to F2 because
+                        // Ctrl+A / Ctrl+N collide with task-input cursor
+                        // controls (handle_task_input_keys).
+                        self.add_expert_modal.show();
                         return Ok(());
                     }
 
@@ -2247,6 +2414,7 @@ impl TowerApp {
 
             self.poll_expert_panel().await?;
             self.poll_feature_executor().await?;
+            self.poll_manifest_changes();
 
             let loop_elapsed = loop_start.elapsed();
             if loop_elapsed.as_millis() > 20 {
@@ -4223,6 +4391,58 @@ mod tests {
                 "manifest_includes_all_experts: expert_id should match index"
             );
         }
+    }
+
+    // --- Task 11.4: Property 8 — Tower Liveness Under Add ----------------
+
+    #[test]
+    fn reload_from_manifest_rebuilds_registry_from_disk_state() {
+        // Property 8: when the manifest changes on disk (atomic rename
+        // by `ExpertAddService::add_expert`), the tower's in-memory
+        // expert registry reflects the new contents on the next reload.
+        let tmp = tempfile::tempdir().unwrap();
+        let project_root = tmp.path().to_path_buf();
+        let mut config = Config::default().with_project_path(project_root.clone());
+        config.experts.clear();
+        let wm = WorktreeManager::new(project_root.clone());
+        let mut app = TowerApp::new(config, wm);
+
+        // Empty registry to begin with.
+        assert_eq!(app.expert_registry().len(), 0);
+
+        // Simulate `ExpertAddService` committing two new entries.
+        let manifest_dir = project_root.join(".macot");
+        std::fs::create_dir_all(&manifest_dir).unwrap();
+        let manifest = manifest_dir.join("experts_manifest.json");
+        let body = r#"[
+  {"expert_id":0,"name":"Smerdyakov","role":"general","worktree_path":null},
+  {"expert_id":1,"name":"Dmitri","role":"architect","worktree_path":null}
+]"#;
+        std::fs::write(&manifest, body).unwrap();
+
+        app.reload_from_manifest()
+            .expect("reload_from_manifest should succeed");
+
+        assert_eq!(
+            app.expert_registry().len(),
+            2,
+            "reload should reflect new manifest contents"
+        );
+        assert!(app.expert_registry().find_by_name("Smerdyakov").is_some());
+        assert!(app.expert_registry().find_by_name("Dmitri").is_some());
+    }
+
+    #[test]
+    fn poll_manifest_changes_reports_no_change_for_quiescent_disk() {
+        // Sanity: when nothing has changed, polling returns false and
+        // the registry is untouched. Guards against a busy-loop
+        // regression in the watcher integration.
+        let tmp = tempfile::tempdir().unwrap();
+        let mut config = Config::default().with_project_path(tmp.path().to_path_buf());
+        config.experts.clear();
+        let wm = WorktreeManager::new(config.project_path.clone());
+        let mut app = TowerApp::new(config, wm);
+        assert!(!app.poll_manifest_changes());
     }
 }
 

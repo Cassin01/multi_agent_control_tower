@@ -1,9 +1,12 @@
-.PHONY: build test check clean install fmt fmt-check lint ci demo-gif-validate demo-gif
+.PHONY: build test test-e2e check clean install fmt fmt-check lint ci demo-gif-validate demo-gif
 build: ## Build the project in release mode
 	cargo build --release
 
 test: ## Run the test suite
 	cargo test
+
+test-e2e: ## Run end-to-end tests (requires tmux on PATH)
+	cargo test --tests -- --ignored
 
 check: ## Check compilation without building artifacts
 	cargo check
