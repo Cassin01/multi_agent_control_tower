@@ -4430,14 +4430,24 @@ mod tests {
 
     #[test]
     fn poll_manifest_changes_reports_no_change_for_quiescent_disk() {
-        // Sanity: when nothing has changed, polling returns false and
-        // the registry is untouched. Guards against a busy-loop
-        // regression in the watcher integration.
+        // Sanity: once the watcher has settled, polling on a quiescent
+        // disk returns false. Guards against a busy-loop regression in
+        // the watcher integration.
+        //
+        // Note: Linux inotify can emit setup-related events when
+        // attaching to a freshly created directory, so we drain those
+        // first within a short window before asserting quiescence.
         let tmp = tempfile::tempdir().unwrap();
         let mut config = Config::default().with_project_path(tmp.path().to_path_buf());
         config.experts.clear();
         let wm = WorktreeManager::new(config.project_path.clone());
         let mut app = TowerApp::new(config, wm);
+
+        let settle_deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+        while std::time::Instant::now() < settle_deadline {
+            let _ = app.poll_manifest_changes();
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
         assert!(!app.poll_manifest_changes());
     }
 }
