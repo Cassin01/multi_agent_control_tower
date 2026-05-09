@@ -985,15 +985,11 @@ impl TowerApp {
                             KeyCode::BackTab => {
                                 self.add_expert_modal.prev_focus();
                             }
-                            KeyCode::Up => {
-                                if self.add_expert_modal.focus() == ModalField::Role {
-                                    self.add_expert_modal.prev_role();
-                                }
+                            KeyCode::Up if self.add_expert_modal.focus() == ModalField::Role => {
+                                self.add_expert_modal.prev_role();
                             }
-                            KeyCode::Down => {
-                                if self.add_expert_modal.focus() == ModalField::Role {
-                                    self.add_expert_modal.next_role();
-                                }
+                            KeyCode::Down if self.add_expert_modal.focus() == ModalField::Role => {
+                                self.add_expert_modal.next_role();
                             }
                             KeyCode::Char(' ')
                                 if self.add_expert_modal.focus() == ModalField::Worktree =>
