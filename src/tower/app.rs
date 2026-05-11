@@ -166,6 +166,28 @@ pub struct TowerApp {
 
 impl TowerApp {
     pub fn new(config: Config, worktree_manager: WorktreeManager) -> Self {
+        Self::build(
+            config,
+            worktree_manager,
+            /* enable_watcher_and_manifest */ true,
+        )
+    }
+
+    /// Build a TowerApp without starting the manifest watcher or writing the
+    /// initial expert manifest. Test-only path: skipping the notify-rs
+    /// watcher avoids the ~100–200 ms FSEvents setup cost per construction,
+    /// which dominates proptest runtime when `new` is invoked hundreds of
+    /// times.
+    #[cfg(test)]
+    pub(crate) fn new_without_watcher(config: Config, worktree_manager: WorktreeManager) -> Self {
+        Self::build(config, worktree_manager, false)
+    }
+
+    fn build(
+        config: Config,
+        worktree_manager: WorktreeManager,
+        enable_watcher_and_manifest: bool,
+    ) -> Self {
         let session_name = config.session_name();
         let session_hash = config.session_hash();
         let queue_manager = QueueManager::new(config.queue_path.clone());
@@ -232,7 +254,11 @@ impl TowerApp {
             help_modal: HelpModal::new(),
             role_selector: RoleSelector::new(),
             add_expert_modal: AddExpertModal::new(),
-            manifest_watcher: ManifestWatcher::start(&config.project_path).ok(),
+            manifest_watcher: if enable_watcher_and_manifest {
+                ManifestWatcher::start(&config.project_path).ok()
+            } else {
+                None
+            },
             messaging_display: MessagingDisplay::new(),
             expert_panel_display: ExpertPanelDisplay::new(),
 
@@ -263,8 +289,10 @@ impl TowerApp {
             config,
         };
 
-        if let Err(e) = app.refresh_expert_manifest() {
-            tracing::warn!("Failed to generate initial expert manifest: {}", e);
+        if enable_watcher_and_manifest {
+            if let Err(e) = app.refresh_expert_manifest() {
+                tracing::warn!("Failed to generate initial expert manifest: {}", e);
+            }
         }
 
         app
@@ -441,8 +469,44 @@ impl TowerApp {
             }
         }
         self.expert_registry = registry;
+
+        // Property 8' (expert-panel-manifest-sync §3.1): immediately project
+        // the registry onto `status_display` so the Experts panel reflects the
+        // new manifest within the current tick (≤ 1s after disk commit).
+        self.push_registry_to_status_display();
+
         self.needs_redraw = true;
         Ok(())
+    }
+
+    /// Project the current `expert_registry` onto `status_display` (the
+    /// canonical UI cache). Single source of truth at runtime is
+    /// `ExpertRegistry`; `Config::experts` is *not* read here. Invariant I2
+    /// (Display ⊇ Registry) holds at function exit.
+    fn push_registry_to_status_display(&mut self) {
+        let mut experts: Vec<crate::models::ExpertInfo> = self
+            .expert_registry
+            .get_all_experts()
+            .into_iter()
+            .cloned()
+            .collect();
+        experts.sort_by_key(|e| e.id);
+
+        let entries: Vec<ExpertEntry> = experts
+            .iter()
+            .map(|info| ExpertEntry {
+                expert_id: info.id,
+                expert_name: info.name.clone(),
+                state: self.detector.detect_state(info.id),
+            })
+            .collect();
+        self.status_display.set_experts(entries);
+
+        let roles: std::collections::HashMap<u32, String> = experts
+            .iter()
+            .map(|info| (info.id, info.role.as_str().to_string()))
+            .collect();
+        self.status_display.set_expert_roles(roles);
     }
 
     #[allow(dead_code)]
@@ -558,36 +622,21 @@ impl TowerApp {
     }
 
     pub async fn refresh_status(&mut self) -> Result<()> {
-        let expert_ids: Vec<u32> = (0..self.config.experts.len() as u32).collect();
-        let states = self.detector.detect_all(&expert_ids);
+        // Project the registry (single source of truth at runtime, see
+        // `.macot/specs/expert-panel-manifest-sync-design.md` §2.3) onto
+        // `status_display`. Roles default to the registry's view; session
+        // overrides take precedence below for any expert that has one.
+        self.push_registry_to_status_display();
 
-        let entries: Vec<ExpertEntry> = self
-            .config
-            .experts
+        let mut roles: std::collections::HashMap<u32, String> = self
+            .expert_registry
+            .get_all_experts()
             .iter()
-            .enumerate()
-            .map(|(i, e)| {
-                let state = states
-                    .iter()
-                    .find(|(id, _)| *id == i as u32)
-                    .map(|(_, s)| s.clone())
-                    .unwrap_or(ExpertState::Idle);
-                ExpertEntry {
-                    expert_id: i as u32,
-                    expert_name: e.name.clone(),
-                    state,
-                }
-            })
+            .map(|info| (info.id, info.role.as_str().to_string()))
             .collect();
-
-        self.status_display.set_experts(entries);
-
-        let roles: std::collections::HashMap<u32, String> = self
-            .session_roles
-            .assignments
-            .iter()
-            .map(|a| (a.expert_id, a.role.clone()))
-            .collect();
+        for assignment in &self.session_roles.assignments {
+            roles.insert(assignment.expert_id, assignment.role.clone());
+        }
         self.status_display.set_expert_roles(roles);
 
         let working_dirs = self
@@ -675,10 +724,22 @@ impl TowerApp {
         self.needs_redraw = true;
 
         if let Some(ref mut router) = self.message_router {
-            // Update expert states from status marker files
-            // Config indices and registry IDs are both 0-based
-            for (i, _) in self.config.experts.iter().enumerate() {
-                let expert_id = i as u32;
+            // Update expert states from status marker files. Iterate the
+            // router's registry (single source of truth at runtime, see
+            // `.macot/specs/expert-panel-manifest-sync-design.md` §3.3) so
+            // that experts added at runtime via `macot expert add` are
+            // visited. `config.experts` is a startup snapshot only.
+            //
+            // Borrow discipline: collect IDs into an owned `Vec<u32>` first
+            // so the immutable borrow of `expert_registry()` ends before
+            // `expert_registry_mut()` is taken in the loop body.
+            let expert_ids: Vec<u32> = router
+                .expert_registry()
+                .get_all_experts()
+                .iter()
+                .map(|info| info.id)
+                .collect();
+            for expert_id in expert_ids {
                 let expert_state = self.detector.detect_state(expert_id);
                 if let Err(e) = router
                     .expert_registry_mut()
@@ -4450,6 +4511,290 @@ mod tests {
         }
         assert!(!app.poll_manifest_changes());
     }
+
+    // --- T1 (expert-panel-manifest-sync §7.1): Reload-then-display N → N+1
+    //
+    // Validates Property 8' (Tower Liveness ≤1s) and I2 (Display/Registry
+    // Sync). After `ManifestPersistor::append_atomic` lands a new entry,
+    // `poll_manifest_changes()` must propagate it to `status_display`, and
+    // a subsequent `refresh_status()` must NOT regress the display back to
+    // `config.experts.len()` (registry-driven idempotency).
+    #[tokio::test]
+    async fn reload_then_display_reflects_added_expert() {
+        use crate::config::ExpertConfig;
+        use crate::experts::persist::{ExpertEntry as PersistEntry, ManifestPersistor};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let project_root = tmp.path().to_path_buf();
+        let mut config = Config::default().with_project_path(project_root.clone());
+        config.experts = vec![
+            ExpertConfig {
+                name: "Alyosha".to_string(),
+                role: "architect".to_string(),
+            },
+            ExpertConfig {
+                name: "Ilyusha".to_string(),
+                role: "planner".to_string(),
+            },
+        ];
+        let wm = WorktreeManager::new(project_root.clone());
+        let mut app = TowerApp::new(config, wm);
+
+        // Drain any startup notify events emitted by the watcher so the
+        // post-append poll only sees the rename we trigger below.
+        let settle_deadline = Instant::now() + Duration::from_millis(500);
+        while Instant::now() < settle_deadline {
+            let _ = app.poll_manifest_changes();
+            std::thread::sleep(Duration::from_millis(25));
+        }
+
+        // Append a third entry via the same atomic-rename path used by
+        // `macot expert add`.
+        let persistor = ManifestPersistor::new(project_root.clone());
+        let new_entry = PersistEntry {
+            expert_id: 2,
+            name: "Smerdyakov".to_string(),
+            role: "general".to_string(),
+            worktree_path: None,
+        };
+        persistor
+            .append_atomic(&new_entry)
+            .expect("append_atomic should succeed");
+
+        // Wait for the watcher to deliver the rename event. 2s gives macOS
+        // fsevents enough headroom while keeping the test bounded.
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut changed = false;
+        while Instant::now() < deadline {
+            if app.poll_manifest_changes() {
+                changed = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        assert!(
+            changed,
+            "T1 reload-then-display: poll_manifest_changes should detect the append within 2s"
+        );
+
+        let display_ids = app.status_display().expert_ids_for_test();
+        assert_eq!(
+            display_ids.len(),
+            3,
+            "T1 reload-then-display: status_display should reflect 3 experts after manifest append, got {:?}",
+            display_ids
+        );
+        assert!(
+            display_ids.contains(&2),
+            "T1 reload-then-display: status_display should include expert id=2, got {:?}",
+            display_ids
+        );
+
+        // Idempotency: the periodic refresh must NOT regress to N=2 by
+        // reading `config.experts`. Registry is the single source of truth.
+        app.refresh_status()
+            .await
+            .expect("refresh_status should succeed");
+        let after_refresh = app.status_display().expert_ids_for_test();
+        assert_eq!(
+            after_refresh.len(),
+            3,
+            "T1 reload-then-display: refresh_status must keep 3 experts (registry-driven), got {:?}",
+            after_refresh
+        );
+        assert!(
+            after_refresh.contains(&2),
+            "T1 reload-then-display: refresh_status must keep expert id=2, got {:?}",
+            after_refresh
+        );
+    }
+
+    // --- T4 (expert-panel-manifest-sync §7.1): poll_messages iterates the
+    // registry, not `config.experts` ---------------------------------------
+    //
+    // Validates Property 11 (No Stale Mirror) and I2 (Display/Registry Sync).
+    // Set `config.experts.len() == 2` but make the router's registry hold a
+    // third expert (id=2). With the bug present, `poll_messages` iterates
+    // `0..config.experts.len()` and never visits id=2, so its state remains
+    // `Idle`. After the migration to registry-driven iteration, id=2 is
+    // visited and its state is updated to `Busy` (the marker file content
+    // is "processing", which `ExpertStateDetector` maps to `Busy`).
+    #[tokio::test]
+    async fn poll_messages_iterates_registry_not_config_experts() {
+        use crate::config::ExpertConfig;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let project_root = tmp.path().to_path_buf();
+        let status_dir = project_root.join(".macot").join("status");
+        std::fs::create_dir_all(&status_dir).unwrap();
+
+        let mut config = Config::default().with_project_path(project_root.clone());
+        config.experts = vec![
+            ExpertConfig {
+                name: "Alyosha".to_string(),
+                role: "architect".to_string(),
+            },
+            ExpertConfig {
+                name: "Ilyusha".to_string(),
+                role: "planner".to_string(),
+            },
+        ];
+        let wm = WorktreeManager::new(project_root.clone());
+        let mut app = TowerApp::new(config, wm);
+
+        // Bring `app.expert_registry` to N+1 by reloading from a 3-entry
+        // manifest. The router's registry is independent, so we register
+        // id=2 there manually below.
+        let manifest_dir = project_root.join(".macot");
+        let manifest = manifest_dir.join("experts_manifest.json");
+        let body = r#"[
+  {"expert_id":0,"name":"Alyosha","role":"architect","worktree_path":null},
+  {"expert_id":1,"name":"Ilyusha","role":"planner","worktree_path":null},
+  {"expert_id":2,"name":"Smerdyakov","role":"general","worktree_path":null}
+]"#;
+        std::fs::write(&manifest, body).unwrap();
+        app.reload_from_manifest()
+            .expect("reload_from_manifest should succeed");
+        assert_eq!(
+            app.expert_registry().len(),
+            3,
+            "precondition: expert_registry should hold 3 entries after manifest reload"
+        );
+
+        // Register id=2 in the router's registry too. The router holds its
+        // own copy of the registry and `reload_from_manifest` does not sync
+        // it; without this step `update_expert_state(2, ..)` would fail
+        // regardless of which loop variable drove the call.
+        let new_info = ExpertInfo::new(
+            2,
+            "Smerdyakov".to_string(),
+            Role::specialist("general".to_string()),
+            app.config().session_name(),
+            "2".to_string(),
+        );
+        app.message_router
+            .as_mut()
+            .unwrap()
+            .expert_registry_mut()
+            .register_expert(new_info)
+            .expect("router registry should accept id=2");
+
+        // Mock detector via a real file: id=2 marker = "processing" → Busy.
+        // Keep id=0/1 as "pending" → Idle to avoid noise in the assertion.
+        std::fs::write(status_dir.join("expert0"), "pending").unwrap();
+        std::fs::write(status_dir.join("expert1"), "pending").unwrap();
+        std::fs::write(status_dir.join("expert2"), "processing").unwrap();
+
+        // Drive `poll_messages`. Reset poll timers so the function does not
+        // skip on the input-debounce / interval gate.
+        app.reset_poll_timers_for_test();
+        // `last_input_time` was set to 10s in the past by
+        // `reset_poll_timers_for_test`, so debounce is bypassed.
+        app.poll_messages()
+            .await
+            .expect("poll_messages should succeed");
+
+        let router = app
+            .message_router
+            .as_ref()
+            .expect("router should be initialized");
+        let expert2 = router
+            .expert_registry()
+            .get_expert(2)
+            .expect("router registry should contain id=2 after registration");
+        assert_eq!(
+            expert2.state,
+            ExpertState::Busy,
+            "T4 poll_messages: registry-driven iteration must visit id=2 and mark it Busy from the 'processing' marker, got {:?}",
+            expert2.state
+        );
+    }
+
+    // --- T2 (expert-panel-manifest-sync §7.1): Property 8' timing bound ---
+    //
+    // Property 8' (Tower Liveness Under Add, refined bound): from the moment
+    // `ManifestPersistor::append_atomic` returns, the new expert id must be
+    // visible in `status_display` within ≤ 1s wall-clock. The bound covers
+    // OS notify latency + watcher poll cadence + a single tick (~16ms).
+    //
+    // macOS fsevents can run hot near 1s under load. If this test becomes
+    // flaky on macOS, gate it behind `#[cfg(not(target_os = "macos"))]`
+    // (per design §7.1) and track the macOS path via the manual
+    // acceptance scenario in §7.4.
+    #[tokio::test]
+    async fn property_8_prime_tower_liveness_within_one_second() {
+        use crate::config::ExpertConfig;
+        use crate::experts::persist::{ExpertEntry as PersistEntry, ManifestPersistor};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let project_root = tmp.path().to_path_buf();
+        let mut config = Config::default().with_project_path(project_root.clone());
+        config.experts = vec![
+            ExpertConfig {
+                name: "Alyosha".to_string(),
+                role: "architect".to_string(),
+            },
+            ExpertConfig {
+                name: "Ilyusha".to_string(),
+                role: "planner".to_string(),
+            },
+        ];
+        let wm = WorktreeManager::new(project_root.clone());
+        let mut app = TowerApp::new(config, wm);
+
+        // Drain the watcher's startup events so only the rename-after-t0
+        // counts toward the 1s budget.
+        let settle_deadline = Instant::now() + Duration::from_millis(500);
+        while Instant::now() < settle_deadline {
+            let _ = app.poll_manifest_changes();
+            std::thread::sleep(Duration::from_millis(25));
+        }
+
+        let persistor = ManifestPersistor::new(project_root.clone());
+        let new_entry = PersistEntry {
+            expert_id: 2,
+            name: "Smerdyakov".to_string(),
+            role: "general".to_string(),
+            worktree_path: None,
+        };
+
+        let t0 = Instant::now();
+        persistor
+            .append_atomic(&new_entry)
+            .expect("append_atomic should succeed");
+
+        // Spin-wait for the watcher → poll_manifest_changes → reload pipeline.
+        // Hard-limit 1s per Property 8' contract.
+        let deadline = t0 + Duration::from_secs(1);
+        let mut detected = false;
+        while Instant::now() < deadline {
+            if app.poll_manifest_changes() {
+                detected = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(16));
+        }
+        let elapsed_to_detect = t0.elapsed();
+        assert!(
+            detected,
+            "T2 Property 8': watcher should detect append within 1s, took {:?}",
+            elapsed_to_detect
+        );
+
+        let display_ids = app.status_display().expert_ids_for_test();
+        assert!(
+            display_ids.contains(&2),
+            "T2 Property 8': status_display should include expert id=2 within 1s, got {:?}",
+            display_ids
+        );
+
+        let elapsed = t0.elapsed();
+        assert!(
+            elapsed <= Duration::from_secs(1),
+            "T2 Property 8': total elapsed must be ≤ 1s (Tower Liveness contract), got {:?}",
+            elapsed
+        );
+    }
 }
 
 #[cfg(test)]
@@ -4476,14 +4821,21 @@ mod property_tests {
     fn create_app_with_experts(num_experts: usize) -> (Config, TowerApp) {
         let config = create_config_with_experts(num_experts);
         let wm = WorktreeManager::new(config.project_path.clone());
-        let app = TowerApp::new(config.clone(), wm);
+        // Skip the notify-rs watcher and on-disk manifest write — proptest
+        // invariants here only inspect in-memory initialization, and the
+        // FSEvents setup dominates runtime when run hundreds of times.
+        let app = TowerApp::new_without_watcher(config.clone(), wm);
         (config, app)
     }
 
     // Feature: inter-expert-messaging, Property 13: System Initialization Consistency
     // **Validates: Requirements 11.5, 4.2**
+    //
+    // `with_cases(16)`: `arbitrary_num_experts()` ranges over 1..10 (only 9
+    // distinct values), so 100 cases just repeats inputs. 16 retains
+    // shrinking headroom without inflating runtime.
     proptest! {
-        #![proptest_config(ProptestConfig::with_cases(100))]
+        #![proptest_config(ProptestConfig::with_cases(16))]
 
         #[test]
         fn system_initialization_consistency(
@@ -4590,6 +4942,52 @@ mod property_tests {
             } else {
                 panic!("Message router should be initialized");
             }
+        }
+
+        // T3 (expert-panel-manifest-sync §7.1): registry → status_display
+        // projection invariant. Validates Property 12 (Display ⊇ Registry)
+        // and Invariant I2 (Display/Registry Sync).
+        #[test]
+        fn push_registry_to_status_display_projects_all_registry_ids(
+            ids in proptest::collection::vec(0u32..1000, 0..16),
+        ) {
+            use std::collections::HashSet;
+
+            let mut config = Config::default().with_project_path(PathBuf::from("/tmp/test"));
+            config.experts.clear();
+            let wm = WorktreeManager::new(config.project_path.clone());
+            let mut app = TowerApp::new_without_watcher(config, wm);
+
+            let mut unique_ids: Vec<u32> = ids.clone();
+            unique_ids.sort();
+            unique_ids.dedup();
+
+            let mut new_registry = crate::experts::ExpertRegistry::new();
+            for &id in &unique_ids {
+                let info = ExpertInfo::new(
+                    id,
+                    format!("expert_{}", id),
+                    Role::specialist("general"),
+                    "test-session".to_string(),
+                    id.to_string(),
+                );
+                let _ = new_registry.register_expert(info);
+            }
+            app.expert_registry = new_registry;
+
+            app.push_registry_to_status_display();
+
+            let display_ids: HashSet<u32> = app
+                .status_display()
+                .expert_ids_for_test()
+                .into_iter()
+                .collect();
+            let registry_ids: HashSet<u32> = unique_ids.iter().copied().collect();
+            prop_assert_eq!(
+                display_ids,
+                registry_ids,
+                "push_registry_to_status_display: display ids should equal registry ids"
+            );
         }
 
         #[test]

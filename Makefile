@@ -1,4 +1,4 @@
-.PHONY: build test test-e2e check clean install fmt fmt-check lint ci demo-gif-validate demo-gif
+.PHONY: build test test-e2e check clean install fmt fmt-check lint check-no-stale-mirror ci demo-gif-validate demo-gif
 build: ## Build the project in release mode
 	cargo build --release
 
@@ -27,7 +27,16 @@ fmt-check: ## Verify Rust formatting without writing files
 lint: ## Run clippy lints and fail on warnings
 	cargo clippy -- -D warnings
 
-ci: build lint fmt-check test ## Run local CI checks (build, lint, format, test)
+check-no-stale-mirror: ## Enforce Property 11: no runtime reads of self.config.experts in tower app
+	@hits=$$(rg -n 'self\.config\.experts' src/tower/app.rs || true); \
+	if [ -n "$$hits" ]; then \
+		echo "Property 11 violation: self.config.experts read at runtime in src/tower/app.rs"; \
+		echo "$$hits"; \
+		echo "See .macot/specs/expert-panel-manifest-sync-design.md §2.3"; \
+		exit 1; \
+	fi
+
+ci: build lint fmt-check check-no-stale-mirror test ## Run local CI checks (build, lint, format, test)
 
 demo-gif-validate: ## Validate the VHS tape for the README demo
 	vhs validate assets/demo-quickstart.tape

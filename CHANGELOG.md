@@ -19,6 +19,24 @@ The format is based on Keep a Changelog.
   change events).
 - New `make test-e2e` target running the dynamic-add E2E suite (`cargo test
   -- --ignored`, requires `tmux` on PATH).
+- New `make check-no-stale-mirror` target enforcing Property 11 (no runtime
+  reads of `self.config.experts` in `src/tower/app.rs`); now part of `make ci`.
+
+### Changed
+
+- `Config::experts` is now treated as a **startup snapshot only**; the
+  runtime list of experts is owned by `ExpertRegistry` (single source of
+  truth). `TowerApp::reload_from_manifest`, `refresh_status`, and
+  `poll_messages` now drive iteration off the registry so dynamically added
+  experts surface in the Experts panel and message-state polling within
+  ≤ 1s of `macot expert add` (Property 8'). See
+  `.macot/specs/expert-panel-manifest-sync-design.md` §2.3.
+
+### Fixed
+
+- Expert Panel did not reflect experts added at runtime via `macot expert
+  add` or the `F2` modal; the panel and `poll_messages` iterated the stale
+  startup snapshot in `Config::experts`.
 
 ## [0.1.11] - 2026-05-01
 
