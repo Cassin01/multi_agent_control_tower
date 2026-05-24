@@ -87,6 +87,15 @@ impl Default for TimeoutConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub session_prefix: String,
+    /// Experts loaded from `config.yaml` at startup.
+    ///
+    /// **Startup snapshot only.** This vector is *not* updated at runtime
+    /// when `experts_manifest.json` changes (e.g. via `macot expert add`
+    /// or the F2 modal). For the runtime list of experts, query
+    /// `ExpertRegistry::get_all_experts()` via `TowerApp::expert_registry`,
+    /// which is the single source of truth at runtime.
+    ///
+    /// See `.macot/specs/expert-panel-manifest-sync-design.md` §2.3.
     pub experts: Vec<ExpertConfig>,
     #[serde(default)]
     pub timeouts: TimeoutConfig,

@@ -1,3 +1,5 @@
+pub mod names;
+pub mod persist;
 pub mod registry;
 
 #[allow(unused_imports)]

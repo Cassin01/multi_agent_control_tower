@@ -25,6 +25,26 @@ pub enum RegistryError {
 /// The ExpertRegistry maintains a centralized view of all experts in the system,
 /// providing efficient lookups by ID, name, and role. It tracks expert states
 /// to support non-blocking message delivery and role-based recipient targeting.
+///
+/// # `next_id` lifecycle (dynamic-expert-add)
+///
+/// `next_id` is the **derived view** of the on-disk
+/// `experts_manifest.json` array; the manifest is the single source of
+/// truth (see `dynamic-expert-add-design.md` §4.2.1). The lifecycle is:
+///
+/// 1. **Restore on startup**: [`crate::experts::persist::ManifestPersistor::load_into_registry`]
+///    rebuilds `next_id` as `max(entry.expert_id) + 1` (or `0` for an
+///    empty manifest).
+/// 2. **Allocate**: [`Self::register_expert`] with `AUTO_ASSIGN_ID`
+///    increments `next_id` by 1.
+/// 3. **Rollback after failed manifest commit**: callers holding
+///    `.macot/.lock` invoke
+///    [`Self::decrement_next_id_after_failed_commit`] to undo step 2.
+/// 4. **Reconcile across processes**: after re-acquiring
+///    `.macot/.lock`, callers should invoke
+///    [`Self::reconcile_next_id_with_disk`] with the freshly loaded
+///    `max(entry.expert_id)` to guard against another process having
+///    claimed higher IDs.
 #[derive(Debug, Clone)]
 pub struct ExpertRegistry {
     /// Primary storage of expert information indexed by ID
@@ -341,6 +361,54 @@ impl ExpertRegistry {
         // For now, allow all state transitions
         // This can be extended with specific business rules if needed
         true
+    }
+
+    /// Read the in-memory `next_id` counter without mutating it.
+    ///
+    /// Crate-internal accessor used by `ExpertAddService` rollback paths
+    /// and the persistence layer.
+    #[allow(dead_code)]
+    pub(crate) fn next_id(&self) -> ExpertId {
+        self.next_id
+    }
+
+    /// Roll back the most recent ID allocation after a manifest commit
+    /// failed.
+    ///
+    /// Caller MUST hold `.macot/.lock` and must have just allocated an ID
+    /// via [`Self::register_expert`] with `AUTO_ASSIGN_ID` whose manifest
+    /// commit then failed. The decrement is by exactly one.
+    ///
+    /// No-op when `next_id == 0`. Note that this does NOT remove the
+    /// expert info from the in-memory map; rollback callers are expected
+    /// to also call [`Self::remove_expert`] for the failed ID.
+    #[allow(dead_code)]
+    pub(crate) fn decrement_next_id_after_failed_commit(&mut self) {
+        if self.next_id > 0 {
+            self.next_id -= 1;
+        }
+    }
+
+    /// Reconcile `next_id` against the on-disk manifest.
+    ///
+    /// `disk_max_id` is the maximum `expert_id` observed in
+    /// `experts_manifest.json` (or `None` if the manifest is empty). The
+    /// resulting `next_id` is `max(disk_max + 1, current_next_id)` so
+    /// concurrent allocations from another process are observed before
+    /// the next local allocation. Returns the reconciled value.
+    ///
+    /// Caller MUST hold `.macot/.lock` while calling this and the
+    /// subsequent allocation, otherwise another process may interleave.
+    #[allow(dead_code)]
+    pub(crate) fn reconcile_next_id_with_disk(
+        &mut self,
+        disk_max_id: Option<ExpertId>,
+    ) -> ExpertId {
+        let disk_next = disk_max_id.map(|m| m.saturating_add(1)).unwrap_or(0);
+        if disk_next > self.next_id {
+            self.next_id = disk_next;
+        }
+        self.next_id
     }
 }
 
@@ -858,6 +926,139 @@ mod tests {
             result,
             vec![id1],
             "role_in_worktree: should exclude non-idle experts"
+        );
+    }
+
+    // --- dynamic-expert-add Task 5.2: next_id reconciliation ---
+
+    #[test]
+    fn decrement_next_id_rolls_back_one_after_failed_commit() {
+        let mut registry = ExpertRegistry::new();
+        let expert = create_test_expert("doomed", Role::Developer);
+        let assigned_id = registry.register_expert(expert).unwrap();
+        assert_eq!(assigned_id, 0);
+        assert_eq!(registry.next_id(), 1);
+
+        // Simulate a manifest commit failure: registry caller removes the
+        // expert and rolls back the counter.
+        registry.remove_expert(assigned_id);
+        registry.decrement_next_id_after_failed_commit();
+
+        assert_eq!(
+            registry.next_id(),
+            0,
+            "decrement_next_id: should roll back next_id by exactly one"
+        );
+
+        // Next allocation must reuse the now-free slot, not skip it.
+        let retry = create_test_expert("retried", Role::Developer);
+        let retry_id = registry.register_expert(retry).unwrap();
+        assert_eq!(
+            retry_id, 0,
+            "decrement_next_id: subsequent allocation should reuse slot 0"
+        );
+    }
+
+    #[test]
+    fn decrement_next_id_at_zero_is_noop() {
+        let mut registry = ExpertRegistry::new();
+        registry.decrement_next_id_after_failed_commit();
+        assert_eq!(
+            registry.next_id(),
+            0,
+            "decrement_next_id: should saturate at 0"
+        );
+    }
+
+    #[test]
+    fn reconcile_next_id_advances_to_disk_when_disk_is_higher() {
+        let mut registry = ExpertRegistry::new();
+        // In-memory has nothing.
+        let new_next = registry.reconcile_next_id_with_disk(Some(5));
+        assert_eq!(new_next, 6, "reconcile: disk max=5 should yield next_id=6");
+        assert_eq!(registry.next_id(), 6);
+    }
+
+    #[test]
+    fn reconcile_next_id_keeps_memory_when_memory_is_higher() {
+        let mut registry = ExpertRegistry::new();
+        // Allocate two locally so memory next_id is 2.
+        registry
+            .register_expert(create_test_expert("a", Role::Developer))
+            .unwrap();
+        registry
+            .register_expert(create_test_expert("b", Role::Developer))
+            .unwrap();
+        assert_eq!(registry.next_id(), 2);
+
+        // Disk view says max=0 (stale read). Memory must win.
+        let new_next = registry.reconcile_next_id_with_disk(Some(0));
+        assert_eq!(
+            new_next, 2,
+            "reconcile: memory next_id should win over stale disk view"
+        );
+    }
+
+    #[test]
+    fn reconcile_next_id_with_empty_disk_does_not_regress() {
+        let mut registry = ExpertRegistry::new();
+        registry
+            .register_expert(create_test_expert("solo", Role::Developer))
+            .unwrap();
+        assert_eq!(registry.next_id(), 1);
+
+        let new_next = registry.reconcile_next_id_with_disk(None);
+        assert_eq!(
+            new_next, 1,
+            "reconcile: empty disk should never regress next_id"
+        );
+    }
+
+    /// Property 2 + Property 3 reconciliation:
+    /// Two registries simulating two processes must never mint the same ID
+    /// when the lock+reload protocol is followed.
+    #[test]
+    fn reconcile_after_other_process_commits_avoids_id_collision() {
+        // Process A and B both load with manifest=[0,1].
+        let mut reg_a = ExpertRegistry::new();
+        reg_a
+            .register_expert(create_test_expert("a0", Role::Developer))
+            .unwrap();
+        reg_a
+            .register_expert(create_test_expert("a1", Role::Developer))
+            .unwrap();
+        // After load both registries see next_id=2 in their own memory.
+        assert_eq!(reg_a.next_id(), 2);
+
+        let mut reg_b = ExpertRegistry::new();
+        reg_b
+            .register_expert(create_test_expert("a0", Role::Developer))
+            .unwrap();
+        reg_b
+            .register_expert(create_test_expert("a1", Role::Developer))
+            .unwrap();
+        assert_eq!(reg_b.next_id(), 2);
+
+        // Process A acquires the lock first and commits id=2 to disk.
+        reg_a
+            .register_expert(create_test_expert("a2", Role::Developer))
+            .unwrap();
+        assert_eq!(reg_a.next_id(), 3);
+
+        // Process B then acquires the lock and reconciles against the
+        // updated disk view (max=2). It must advance to 3 before
+        // allocating, never reuse id=2.
+        let reconciled = reg_b.reconcile_next_id_with_disk(Some(2));
+        assert_eq!(
+            reconciled, 3,
+            "reconcile: B must observe A's commit and advance to 3"
+        );
+        let id = reg_b
+            .register_expert(create_test_expert("b2", Role::Developer))
+            .unwrap();
+        assert_eq!(
+            id, 3,
+            "reconcile: B's next allocation must be 3, never collide with A's 2"
         );
     }
 

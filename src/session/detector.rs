@@ -29,6 +29,7 @@ impl ExpertStateDetector {
         }
     }
 
+    #[allow(dead_code)]
     pub fn detect_all(&self, expert_ids: &[u32]) -> Vec<(u32, ExpertState)> {
         expert_ids
             .iter()

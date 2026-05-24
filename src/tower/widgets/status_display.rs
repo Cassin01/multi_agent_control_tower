@@ -142,6 +142,11 @@ impl StatusDisplay {
         self.experts.len()
     }
 
+    #[cfg(test)]
+    pub fn expert_ids_for_test(&self) -> Vec<u32> {
+        self.experts.iter().map(|e| e.expert_id).collect()
+    }
+
     pub fn render(&mut self, frame: &mut Frame, area: Rect) {
         let items: Vec<ListItem> = self
             .experts

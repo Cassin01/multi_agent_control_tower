@@ -108,6 +108,10 @@ impl UI {
         if app.role_selector().is_visible() {
             app.role_selector().render(frame, frame.area());
         }
+
+        if app.add_expert_modal().is_visible() {
+            app.add_expert_modal().render(frame, frame.area());
+        }
     }
 
     fn responsive_modal_size(area: Rect, base_x: u16, base_y: u16) -> (u16, u16) {

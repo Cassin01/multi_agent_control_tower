@@ -72,6 +72,7 @@ impl HelpModal {
             Self::key_line("Mouse Click", "Focus clicked panel"),
             Self::key_line("Ctrl+C / Ctrl+Q", "Quit application"),
             Self::key_line("F1", "Toggle this help"),
+            Self::key_line("F2", "Open Add Expert modal"),
             Self::key_line("Ctrl+J", "Toggle expert panel"),
             Line::from(""),
             Self::subsection_title("Task Input"),
@@ -234,6 +235,24 @@ mod tests {
         assert!(
             text.contains("F1"),
             "build_help_lines: should show F1 for help toggle"
+        );
+    }
+
+    #[test]
+    fn help_text_shows_f2_for_add_expert_modal() {
+        let modal = HelpModal::new();
+        let lines = modal.build_help_lines();
+        let text: String = lines
+            .iter()
+            .flat_map(|line| line.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(
+            text.contains("F2"),
+            "build_help_lines: should show F2 for opening Add Expert modal"
+        );
+        assert!(
+            text.contains("Add Expert"),
+            "build_help_lines: should describe Add Expert modal"
         );
     }
 

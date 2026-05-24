@@ -6,12 +6,14 @@ mod cli;
 mod commands;
 mod config;
 mod context;
+mod expert;
 mod experts;
 mod feature;
 mod instructions;
 mod models;
 mod queue;
 mod session;
+mod state;
 mod tower;
 mod utils;
 
@@ -37,5 +39,6 @@ async fn main() -> Result<()> {
         Commands::Status(args) => commands::status::execute(args).await,
         Commands::Sessions => commands::sessions::execute().await,
         Commands::Reset(args) => commands::reset::execute(args).await,
+        Commands::Expert(args) => commands::expert::execute(args).await,
     }
 }

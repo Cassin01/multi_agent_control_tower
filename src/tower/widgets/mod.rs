@@ -1,3 +1,4 @@
+mod add_expert_modal;
 mod expert_panel_display;
 mod help_modal;
 mod messaging_display;
@@ -7,6 +8,7 @@ mod role_selector;
 mod status_display;
 mod task_input;
 
+pub use add_expert_modal::{AddExpertForm, AddExpertModal, ModalField, ModalRole};
 pub use expert_panel_display::ExpertPanelDisplay;
 pub use help_modal::HelpModal;
 #[allow(unused_imports)]

@@ -15,6 +15,7 @@
 | [`status`](#macot-status) | Display current session status |
 | [`sessions`](#macot-sessions) | List all running macot sessions |
 | [`reset`](#macot-reset) | Reset expert context and instructions |
+| [`expert`](#macot-expert) | Add or list experts in a running session |
 
 ---
 
@@ -173,6 +174,7 @@ macot tower --config ./custom-config.yaml
 | **Global** | |
 | `Ctrl+T` | Switch focus between panels |
 | `F1` | Toggle help |
+| `F2` | Open Add Expert modal (dynamic expert add) |
 | `Ctrl+C` / `Ctrl+Q` | Quit application |
 | **Task Input** | |
 | `Ctrl+S` | Assign task to selected expert |
@@ -382,6 +384,110 @@ Resetting expert 0 (architect)...
   Sending /clear to Claude...
   Resending instructions...
 Expert 0 reset complete.
+```
+
+---
+
+## macot expert
+
+Manage experts inside a **running** macot session without restarting it. Use this to add a new expert on the fly when an extra role is needed, or to inspect the current roster.
+
+### Subcommand: `expert add`
+
+Add a new expert to a running session. Allocates a fresh `expert_id` (monotonically increasing — IDs are never reused), writes the per-expert state files, appends the manifest atomically, and spawns a new tmux window named `expert{N}` for the agent.
+
+#### Options
+
+| Option | Short | Type | Default | Description |
+|--------|-------|------|---------|-------------|
+| `--session` | `-s` | String | auto | Target session name. Required only when multiple sessions are running. |
+| `--role` | `-r` | String | `general` | Role: `architect`, `planner`, `general`, or a custom name resolved against `.macot/templates/roles/{name}.md` then `~/.config/macot/roles/{name}.md`. |
+| `--name` | `-n` | String | auto | Display name. Must match `^[A-Za-z][A-Za-z0-9_-]*$`, length 1–32, and be unique in the session. Auto-picked from the literary pool when omitted; falls back to `Expert{NN}` once the pool is exhausted. |
+| `--prompt-file` | - | PathBuf | - | Reserved for a future custom-prompt path; currently rejected with a hint to use the templates directory instead. |
+| `--worktree` | - | bool | `false` | Marker for the worktree-launch flow. Currently CLI emits a notice asking you to use `Ctrl+W` from the tower TUI; full CLI integration is tracked as Future Work. |
+| `--worktree-branch` | - | String | - | Branch to use with `--worktree` once full CLI integration lands. |
+| `--dry-run` | - | bool | `false` | Validate inputs and print the planned `expert_id`, name, role, prompt path, and template source. Writes nothing to disk and does not touch tmux. |
+| `--json` | - | bool | `false` | Emit the result as JSON on stdout instead of the human-readable line. Compatible with `--dry-run` (emits the planned-state JSON). |
+
+#### Examples
+
+```bash
+# Auto-pick a name from the literary pool
+macot expert add -r general
+
+# Pin a name (must be unique in the session)
+macot expert add -r planner -n Smerdyakov
+
+# Custom role from .macot/templates/roles/qa-bot.md
+macot expert add -r qa-bot
+
+# Plan-only — see what an add would do, write nothing
+macot expert add -r general --dry-run
+
+# Machine-readable output
+macot expert add -r general --json
+```
+
+#### Output
+
+Default (human):
+
+```
+Added expert 4 (Smerdyakov, general) in session macot-8c0dda46 (window 4)
+```
+
+`--json`:
+
+```json
+{"session":"macot-8c0dda46","expert_id":4,"name":"Smerdyakov","role":"general","tmux_window_index":4}
+```
+
+`--dry-run` (human):
+
+```
+DRY RUN — no state files written, no tmux operations performed.
+  session         : macot-8c0dda46
+  planned id      : 4
+  planned name    : Smerdyakov
+  template source : builtin:general
+  prompt path     : /path/to/project/.macot/system_prompt/expert4.md
+```
+
+#### Behavior
+
+1. Resolves the session (auto-selects when exactly one is running).
+2. Resolves the role (built-in template, or the first match under `.macot/templates/roles/{name}.md` → `~/.config/macot/roles/{name}.md`).
+3. Acquires the `.macot/.lock` advisory file lock (5 s timeout; returns "another macot operation in progress" otherwise).
+4. Allocates the next `expert_id` as `max(existing_ids) + 1`, reconciling against any concurrent on-disk progress.
+5. Writes `system_prompt/expert{N}.md`, `system_prompt/expert{N}_settings.json`, `status/expert{N}` (= `pending`), `sessions/{h}/experts/expert{N}/context.yaml`, and appends to `sessions/{h}/expert_roles.yaml`.
+6. Atomically commits `experts_manifest.json` (temp-file + rename) — this is the commit point.
+7. Releases the file lock and spawns the tmux window outside the lock so other processes are unblocked while tmux/Claude come up.
+8. On any tmux failure the manifest entry, role assignment, and per-expert files are unwound; on success the tower TUI's manifest watcher detects the change and re-renders within ~100 ms.
+
+### Subcommand: `expert list`
+
+List the experts registered in a session by reading `experts_manifest.json` directly. Read-only — does not require the file lock.
+
+#### Options
+
+| Option | Short | Type | Description |
+|--------|-------|------|-------------|
+| `--session` | `-s` | String | Session name. Auto-selects the only running session when omitted; falls back to the manifest in the current directory if no session is running. |
+
+#### Example
+
+```bash
+macot expert list
+```
+
+```
+ ID  NAME              ROLE              WORKTREE
+------------------------------------------------------------
+  0  Alyosha           architect
+  1  Ilyusha           planner
+  2  Grigory           general
+  3  Katya             general
+  4  Smerdyakov        general
 ```
 
 ---

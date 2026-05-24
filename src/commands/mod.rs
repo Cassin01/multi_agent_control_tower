@@ -1,5 +1,6 @@
 pub mod common;
 pub mod down;
+pub mod expert;
 pub mod launch;
 pub mod reset;
 pub mod sessions;
