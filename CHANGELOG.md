@@ -6,6 +6,8 @@ The format is based on Keep a Changelog.
 
 ## [Unreleased]
 
+## [0.1.12] - 2026-07-28
+
 ### Added
 
 - Dynamic expert add (`macot expert add` / `macot expert list`): add a new
@@ -31,6 +33,10 @@ The format is based on Keep a Changelog.
   experts surface in the Experts panel and message-state polling within
   ≤ 1s of `macot expert add` (Property 8'). See
   `.macot/specs/expert-panel-manifest-sync-design.md` §2.3.
+- Experts are now launched with `claude --permission-mode auto` instead of
+  `--dangerously-skip-permissions`, so expert sessions no longer bypass the
+  permission system. Readiness detection matches the `auto mode on` status
+  line accordingly.
 
 ### Fixed
 
