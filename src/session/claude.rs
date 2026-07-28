@@ -4,6 +4,9 @@ use tokio::time::{sleep, Duration};
 
 use super::{TmuxManager, TmuxSender};
 
+/// Status-line marker Claude prints once the session is up in auto permission mode.
+pub const READY_MARKER: &str = "auto mode on";
+
 #[derive(Clone)]
 pub struct ClaudeManager<T: TmuxSender = TmuxManager> {
     tmux: T,
@@ -31,7 +34,7 @@ impl<T: TmuxSender> ClaudeManager<T> {
         agents_file: Option<&Path>,
         settings_file: Option<&Path>,
     ) -> Result<()> {
-        let mut args = vec!["--dangerously-skip-permissions".to_string()];
+        let mut args = vec!["--permission-mode".to_string(), "auto".to_string()];
 
         if let Some(file) = instruction_file {
             args.push("--append-system-prompt".to_string());
@@ -123,7 +126,7 @@ impl<T: TmuxSender> ClaudeManager<T> {
         while start.elapsed() < timeout {
             let content = self.tmux.capture_pane(expert_id).await?;
 
-            if content.contains("bypass permissions") {
+            if content.contains(READY_MARKER) {
                 return Ok(true);
             }
 
@@ -242,8 +245,8 @@ mod tests {
             "launch_claude: should include --append-system-prompt flag"
         );
         assert!(
-            cmd.contains("--dangerously-skip-permissions"),
-            "launch_claude: should include --dangerously-skip-permissions flag"
+            cmd.contains("--permission-mode auto"),
+            "launch_claude: should launch in auto permission mode"
         );
     }
 
@@ -268,8 +271,12 @@ mod tests {
             "launch_claude: should not include --append-system-prompt when no instruction file"
         );
         assert!(
-            cmd.contains("--dangerously-skip-permissions"),
-            "launch_claude: should include --dangerously-skip-permissions flag"
+            cmd.contains("--permission-mode auto"),
+            "launch_claude: should launch in auto permission mode"
+        );
+        assert!(
+            !cmd.contains("--dangerously-skip-permissions"),
+            "launch_claude: should not bypass permission checks"
         );
     }
 
@@ -398,14 +405,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn wait_for_ready_returns_true_when_bypass_found() {
-        let mock = MockTmuxSender::new().with_capture_response("bypass permissions");
+    async fn wait_for_ready_returns_true_when_auto_mode_found() {
+        let mock =
+            MockTmuxSender::new().with_capture_response("⏵⏵ auto mode on (shift+tab to cycle)");
         let manager = create_mock_manager(mock);
 
         let ready = manager.wait_for_ready(0, 2).await.unwrap();
         assert!(
             ready,
-            "wait_for_ready: should return true when window contains 'bypass permissions'"
+            "wait_for_ready: should return true when window shows the auto mode marker"
         );
     }
 

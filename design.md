@@ -170,7 +170,7 @@ Initialize the expert session with Claude agents for a specific project.
    tmux setenv -t {session} MACOT_CREATED_AT {timestamp}
    ```
 6. Set unique prompt colors per window
-7. Launch Claude CLI in each window with `--dangerously-skip-permissions`
+7. Launch Claude CLI in each window with `--permission-mode auto`
 8. Wait for all agents to be ready
 9. Send instruction prompts to each expert
 

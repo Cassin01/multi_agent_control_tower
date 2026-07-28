@@ -113,7 +113,7 @@ impl ReportDetailModal {
             Span::raw("  |  "),
             Span::styled("Expert: ", Style::default().add_modifier(Modifier::BOLD)),
             Span::styled(
-                format!("[{}] {}", report.expert_id, &report.expert_name),
+                format!("[{}] {}", report.expert_id, report.expert_name),
                 Style::default().fg(Color::Yellow),
             ),
         ]));
