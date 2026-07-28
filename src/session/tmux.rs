@@ -611,7 +611,7 @@ impl TmuxManager {
         })?;
 
         let claude_cmd = format!(
-            "cd {} && claude --dangerously-skip-permissions \
+            "cd {} && claude --permission-mode auto \
              --append-system-prompt \"$(cat {})\" --settings \"$(cat {})\"",
             shell_single_quote(cwd_str),
             shell_single_quote(prompt_str),

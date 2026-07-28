@@ -221,8 +221,8 @@ Before every batch, the expert's Claude session is reset to provide a fresh cont
 1. **Exit**: Send `/exit` to the expert via tmux
 2. **Wait**: Wait `exit_wait` seconds (default 3s) for Claude to shut down
 3. **Reset status**: Set expert status marker to `pending`
-4. **Relaunch**: Send `cd {working_dir} && claude --dangerously-skip-permissions --append-system-prompt "$(cat '{instruction_file}')"` to the expert's tmux pane
-5. **Detect ready**: Poll the expert's pane for "bypass permissions" text (non-blocking, checked each main loop tick). If detected within `ready_timeout`, transition to `SendingBatch`. If timeout exceeded, transition to `Failed`.
+4. **Relaunch**: Send `cd {working_dir} && claude --permission-mode auto --append-system-prompt "$(cat '{instruction_file}')"` to the expert's tmux pane
+5. **Detect ready**: Poll the expert's pane for "auto mode on" text (non-blocking, checked each main loop tick). If detected within `ready_timeout`, transition to `SendingBatch`. If timeout exceeded, transition to `Failed`.
 
 This approach:
 - Guarantees a fresh context window for every batch (no accumulated context bloat)
@@ -291,7 +291,7 @@ async fn poll_feature_executor(&mut self) -> Result<()> {
         ExecutionPhase::RelaunchingExpert { started_at } => {
             // Non-blocking: check pane for ready indicator
             let content = self.claude.capture_pane_with_escapes(expert_id).await?;
-            if content.contains("bypass permissions") {
+            if content.contains("auto mode on") {
                 executor.set_phase(ExecutionPhase::SendingBatch);
             } else if started_at.elapsed() >= executor.ready_timeout() {
                 executor.set_phase(ExecutionPhase::Failed(
@@ -430,7 +430,7 @@ feature_execution:
 | P2   | Batch Correctness | Each batch contains exactly min(batch_size, remaining) uncompleted tasks |
 | P3   | No Duplicate Assignment | A task number is never sent twice across batches (re-read from disk each cycle) |
 | P4   | Session Reset | Expert session is fully reset (exit + relaunch) before every batch prompt |
-| P5   | Ready Detection | No batch prompt is sent until expert's Claude session reports ready ("bypass permissions" detected) |
+| P5   | Ready Detection | No batch prompt is sent until expert's Claude session reports ready ("auto mode on" detected) |
 | P6   | Status Polling Delay | Status polling does not begin until `poll_delay` seconds after task submission |
 | P7   | Cancellation Safety | Cancellation stops execution immediately without sending partial batches |
 | P8   | Non-blocking | TUI event loop never blocks; all waits are timer-based or pane-polling |
@@ -479,7 +479,7 @@ User          TowerApp         FeatureExecutor     TaskParser      Claude(tmux) 
  |               |                ... exit_wait (3s) ...                |                |
  |               |--launch_claude(id, dir, instr)---------------------->|                |
  |               |               ... poll pane for ready ...            |                |
- |               |<--"bypass permissions"-------------------------------|                |
+ |               |<--"auto mode on"-------------------------------------|                |
  |               |                   |                 |                |                |
  |               |                   |--parse_tasks()->|                |                |
  |               |                   |<--tasks[]-------|                |                |
@@ -503,7 +503,7 @@ User          TowerApp         FeatureExecutor     TaskParser      Claude(tmux) 
  |               |               ... exit_wait (3s) ...                |                |
  |               |--launch_claude(id, dir, instr)---------------------->|                |
  |               |               ... poll pane for ready ...           |                |
- |               |<--"bypass permissions"-------------------------------|                |
+ |               |<--"auto mode on"-------------------------------------|                |
  |               |                   |                 |                |                |
  |               |                   |--parse_tasks()->|                |                |
  |               |                   |<--tasks[]-------|                |                |

@@ -25,7 +25,7 @@ graph TD
 
     H --> K[launch_claude]
     J --> K
-    K --> L["claude --dangerously-skip-permissions<br/>--append-system-prompt ...<br/>--agents ..."]
+    K --> L["claude --permission-mode auto<br/>--append-system-prompt ...<br/>--agents ..."]
 ```
 
 **Data flow**: Template loading assembles two outputs per expert: the system prompt file (existing) and the agents JSON file (new). Both are passed to `launch_claude()` which constructs the final Claude CLI command.
@@ -105,7 +105,7 @@ pub async fn launch_claude(
 ) -> Result<()>
 ```
 
-Generated command: `cd {dir} && claude --dangerously-skip-permissions --append-system-prompt "$(cat '{instruction_file}')" --agents "$(cat '{agents_file}')"`
+Generated command: `cd {dir} && claude --permission-mode auto --append-system-prompt "$(cat '{instruction_file}')" --agents "$(cat '{agents_file}')"`
 
 ### 3.6 Extended FeatureExecutor
 

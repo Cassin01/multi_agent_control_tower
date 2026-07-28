@@ -17,7 +17,7 @@ use crate::models::{ExpertInfo, Role};
 use crate::queue::{MessageRouter, QueueManager};
 use crate::session::{
     ClaudeManager, ExpertStateDetector, TmuxManager, TmuxSender, WorktreeLaunchResult,
-    WorktreeLaunchState, WorktreeManager,
+    WorktreeLaunchState, WorktreeManager, READY_MARKER,
 };
 use crate::tower::widgets::ExpertEntry;
 use crate::utils::sanitize_branch_name;
@@ -2201,7 +2201,7 @@ impl TowerApp {
                 } else {
                     match self.tmux.capture_pane(expert_id).await {
                         Ok(content) => {
-                            if content.contains("bypass permissions") {
+                            if content.contains(READY_MARKER) {
                                 executor.set_phase(ExecutionPhase::RelaunchingExpert {
                                     started_at,
                                     ready_detected_at: Some(Instant::now()),

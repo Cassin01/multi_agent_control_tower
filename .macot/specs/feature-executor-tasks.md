@@ -106,7 +106,7 @@ This plan decomposes the Feature Executor into incremental tasks that build bott
 - [x] 9. Implement `poll_feature_executor()` method in `src/tower/app.rs`
   - Add async method that matches on `executor.phase()` and drives state transitions per design section 4.3
   - Handle `ExitingExpert`: check elapsed vs `exit_wait`, then relaunch Claude
-  - Handle `RelaunchingExpert`: poll pane for "bypass permissions", check timeout
+  - Handle `RelaunchingExpert`: poll pane for "auto mode on", check timeout
   - Handle `SendingBatch`: parse tasks, calculate batch, send prompt or complete
   - Handle `WaitingPollDelay`: check elapsed vs `poll_delay`
   - Handle `PollingStatus`: check expert state, re-read tasks, decide next action
