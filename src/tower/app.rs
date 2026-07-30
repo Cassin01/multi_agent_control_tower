@@ -2043,35 +2043,9 @@ impl TowerApp {
             return Ok(());
         }
 
-        let instruction_role = self
-            .session_roles
-            .get_role(expert_id)
-            .map(ToString::to_string)
-            .unwrap_or_else(|| self.config.get_expert_role(expert_id));
-
-        let worktree_path = self
-            .expert_registry
-            .get_expert(expert_id)
-            .and_then(|info| info.worktree_path.as_deref().map(|s| s.to_string()));
-        let prepared = prepare_expert_files_with_role(
-            &self.config,
-            expert_id,
-            &instruction_role,
-            worktree_path.as_deref(),
-        )?;
-
-        let working_dir = self.config.project_path.to_str().unwrap_or(".").to_string();
-
-        let mut executor = FeatureExecutor::new(
-            feature_name.clone(),
-            expert_id,
-            &self.config.feature_execution,
-            &self.config.project_path,
-            prepared.instruction_file,
-            prepared.agents_file,
-            prepared.settings_file,
-            working_dir,
-        );
+        let mut executor = self
+            .build_feature_executor(expert_id, &feature_name)
+            .await?;
 
         match executor.validate() {
             Ok(()) => {
@@ -2090,6 +2064,44 @@ impl TowerApp {
         }
 
         Ok(())
+    }
+
+    /// Build a feature executor for `expert_id`, honoring the worktree the
+    /// expert currently runs in so the relaunched Claude stays there.
+    async fn build_feature_executor(
+        &self,
+        expert_id: u32,
+        feature_name: &str,
+    ) -> Result<FeatureExecutor> {
+        let instruction_role = self
+            .session_roles
+            .get_role(expert_id)
+            .map(ToString::to_string)
+            .unwrap_or_else(|| self.config.get_expert_role(expert_id));
+
+        let worktree_path = self
+            .expert_registry
+            .get_expert(expert_id)
+            .and_then(|info| info.worktree_path.as_deref().map(|s| s.to_string()));
+        let prepared = prepare_expert_files_with_role(
+            &self.config,
+            expert_id,
+            &instruction_role,
+            worktree_path.as_deref(),
+        )?;
+
+        let working_dir = self.resolve_expert_working_dir(expert_id).await;
+
+        Ok(FeatureExecutor::new(
+            feature_name.to_string(),
+            expert_id,
+            &self.config.feature_execution,
+            &self.config.project_path,
+            prepared.instruction_file,
+            prepared.agents_file,
+            prepared.settings_file,
+            working_dir,
+        ))
     }
 
     #[allow(dead_code)]
@@ -3744,6 +3756,82 @@ mod tests {
                 || app.message().unwrap().contains("Error"),
             "start_feature_execution: should show error about missing task file, got: {:?}",
             app.message()
+        );
+    }
+
+    /// Set up a temp project whose expert 0 lives in a worktree, and return
+    /// (app, worktree path) ready for feature execution of `feature`.
+    async fn create_worktree_app(feature: &str) -> (TowerApp, String, tempfile::TempDir) {
+        let temp = tempfile::TempDir::new().unwrap();
+        let project_path = temp.path().to_path_buf();
+
+        let specs = project_path.join(".macot").join("specs");
+        std::fs::create_dir_all(&specs).unwrap();
+        std::fs::write(specs.join(format!("{feature}-tasks.md")), "- [ ] 1. Task\n").unwrap();
+        std::fs::create_dir_all(project_path.join(".macot").join("status")).unwrap();
+        std::fs::create_dir_all(project_path.join(".macot").join("system_prompt")).unwrap();
+
+        let worktree = project_path.join(".macot").join("worktrees").join(feature);
+        std::fs::create_dir_all(&worktree).unwrap();
+        let worktree_str = worktree.to_str().unwrap().to_string();
+
+        let config = Config::default().with_project_path(project_path);
+        let wm = WorktreeManager::new(config.project_path.clone());
+        let mut app = TowerApp::new(config.clone(), wm);
+
+        let mut ctx =
+            ExpertContext::new(0, "Alyosha".to_string(), config.session_hash().to_string());
+        ctx.set_worktree(feature.to_string(), worktree_str.clone());
+        app.context_store.save_expert_context(&ctx).await.unwrap();
+        app.expert_registry
+            .update_expert_worktree(0, Some(worktree_str.clone()))
+            .unwrap();
+
+        (app, worktree_str, temp)
+    }
+
+    #[tokio::test]
+    async fn build_feature_executor_uses_worktree_as_working_dir() {
+        let (app, worktree, _temp) = create_worktree_app("wt-feature").await;
+
+        let executor = app.build_feature_executor(0, "wt-feature").await.unwrap();
+
+        assert_eq!(
+            executor.working_dir(),
+            worktree,
+            "build_feature_executor: should run the expert in its worktree, not the project root"
+        );
+    }
+
+    #[tokio::test]
+    async fn build_feature_executor_falls_back_to_project_root() {
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(temp.path().join(".macot").join("status")).unwrap();
+        std::fs::create_dir_all(temp.path().join(".macot").join("system_prompt")).unwrap();
+        let config = Config::default().with_project_path(temp.path().to_path_buf());
+        let wm = WorktreeManager::new(config.project_path.clone());
+        let app = TowerApp::new(config.clone(), wm);
+
+        let executor = app.build_feature_executor(0, "root-feature").await.unwrap();
+
+        assert_eq!(
+            executor.working_dir(),
+            config.project_path.to_str().unwrap(),
+            "build_feature_executor: should fall back to project root when expert has no worktree"
+        );
+    }
+
+    #[tokio::test]
+    async fn build_feature_executor_resolves_task_file_in_worktree() {
+        let (app, _worktree, _temp) = create_worktree_app("wt-feature").await;
+
+        // A worktree's .macot is a symlink to the project root's, so specs stay
+        // resolvable even though the expert runs from the worktree.
+        let mut executor = app.build_feature_executor(0, "wt-feature").await.unwrap();
+
+        assert!(
+            executor.validate().is_ok(),
+            "build_feature_executor: task file should resolve for a worktree expert"
         );
     }
 
