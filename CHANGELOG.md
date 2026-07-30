@@ -17,6 +17,10 @@ The format is based on Keep a Changelog.
   sessions now pin `"tui": "default"` via the generated `--settings` document,
   which overrides a global `settings.json` set to `fullscreen`. Relaunch experts
   to pick this up.
+- `Ctrl+G` (task batch execution) relaunched Claude in the macot project root
+  instead of the expert's worktree, so a worktree expert silently fell back to
+  the wrong working directory. The working dir is now resolved the same way
+  `reset_expert` resolves it.
 
 ## [0.1.12] - 2026-07-28
 
