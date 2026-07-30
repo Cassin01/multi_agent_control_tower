@@ -44,7 +44,18 @@ pub fn write_settings_file(queue_path: &Path, expert_id: u32, json: &str) -> Res
     write_expert_file(&settings_file_path(queue_path, expert_id), json)
 }
 
-pub fn generate_hooks_settings(status_file_path: &str) -> String {
+/// Claude Code TUI renderer used for expert panes.
+///
+/// The `fullscreen` renderer draws into the terminal's alternate screen, where
+/// tmux keeps no scrollback at all. macot reads expert output via
+/// `capture-pane`, so under that renderer the Expert Panel can only ever see
+/// the visible viewport: older output is unreachable and scroll mode has no
+/// history to walk. Pinning `default` keeps output flowing into tmux history.
+const EXPERT_TUI_RENDERER: &str = "default";
+
+/// Build the `--settings` document for an expert: status-tracking hooks plus
+/// the renderer pin required by the Expert Panel's `capture-pane` reads.
+pub fn generate_expert_settings(status_file_path: &str) -> String {
     let dq_path = shell_double_quote(status_file_path);
     let processing_cmd = bash_c_wrap(&format!("printf \"%s\" \"processing\" >| \"{}\"", dq_path));
     let pending_cmd = bash_c_wrap(&format!("printf \"%s\" \"pending\" >| \"{}\"", dq_path));
@@ -80,7 +91,8 @@ pub fn generate_hooks_settings(status_file_path: &str) -> String {
                     "command": pre_tool_use_command,
                 }]
             }]
-        }
+        },
+        "tui": EXPERT_TUI_RENDERER
     })
     .to_string()
 }
@@ -277,136 +289,169 @@ mod tests {
     }
 
     #[test]
-    fn generate_hooks_settings_contains_user_prompt_submit() {
-        let json = generate_hooks_settings("/tmp/status/expert0");
+    fn generate_expert_settings_contains_user_prompt_submit() {
+        let json = generate_expert_settings("/tmp/status/expert0");
         assert!(
             json.contains("UserPromptSubmit"),
-            "generate_hooks_settings: should contain UserPromptSubmit hook"
+            "generate_expert_settings: should contain UserPromptSubmit hook"
         );
     }
 
     #[test]
-    fn generate_hooks_settings_contains_stop_hook() {
-        let json = generate_hooks_settings("/tmp/status/expert0");
+    fn generate_expert_settings_contains_stop_hook() {
+        let json = generate_expert_settings("/tmp/status/expert0");
         assert!(
             json.contains("Stop"),
-            "generate_hooks_settings: should contain Stop hook"
+            "generate_expert_settings: should contain Stop hook"
         );
     }
 
     #[test]
-    fn generate_hooks_settings_contains_status_path() {
-        let json = generate_hooks_settings("/tmp/status/expert0");
+    fn generate_expert_settings_contains_status_path() {
+        let json = generate_expert_settings("/tmp/status/expert0");
         assert!(
             json.contains("/tmp/status/expert0"),
-            "generate_hooks_settings: should contain the status file path"
+            "generate_expert_settings: should contain the status file path"
         );
     }
 
     #[test]
-    fn generate_hooks_settings_contains_processing_command() {
-        let json = generate_hooks_settings("/tmp/status/expert0");
+    fn generate_expert_settings_contains_processing_command() {
+        let json = generate_expert_settings("/tmp/status/expert0");
         assert!(
             json.contains("processing"),
-            "generate_hooks_settings: UserPromptSubmit hook should write 'processing'"
+            "generate_expert_settings: UserPromptSubmit hook should write 'processing'"
         );
     }
 
     #[test]
-    fn generate_hooks_settings_contains_pending_command() {
-        let json = generate_hooks_settings("/tmp/status/expert0");
+    fn generate_expert_settings_contains_pending_command() {
+        let json = generate_expert_settings("/tmp/status/expert0");
         assert!(
             json.contains("pending"),
-            "generate_hooks_settings: Stop hook should write 'pending'"
+            "generate_expert_settings: Stop hook should write 'pending'"
         );
     }
 
     #[test]
-    fn generate_hooks_settings_is_valid_json() {
-        let json = generate_hooks_settings("/tmp/status/expert0");
+    fn generate_expert_settings_is_valid_json() {
+        let json = generate_expert_settings("/tmp/status/expert0");
         let parsed: serde_json::Value = serde_json::from_str(&json)
-            .expect("generate_hooks_settings: output should be valid JSON");
+            .expect("generate_expert_settings: output should be valid JSON");
         assert!(
             parsed.get("hooks").is_some(),
-            "generate_hooks_settings: should have a 'hooks' top-level key"
+            "generate_expert_settings: should have a 'hooks' top-level key"
         );
     }
 
     #[test]
-    fn generate_hooks_settings_contains_pre_tool_use_hook() {
-        let json = generate_hooks_settings("/tmp/status/expert0");
+    fn generate_expert_settings_contains_pre_tool_use_hook() {
+        let json = generate_expert_settings("/tmp/status/expert0");
         assert!(
             json.contains("PreToolUse"),
-            "generate_hooks_settings: should contain PreToolUse hook"
+            "generate_expert_settings: should contain PreToolUse hook"
         );
     }
 
     #[test]
-    fn generate_hooks_settings_pre_tool_use_has_write_edit_bash_matcher() {
-        let json = generate_hooks_settings("/tmp/status/expert0");
+    fn generate_expert_settings_pre_tool_use_has_write_edit_bash_matcher() {
+        let json = generate_expert_settings("/tmp/status/expert0");
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         let pre_tool_use = &parsed["hooks"]["PreToolUse"];
         assert!(
             !pre_tool_use.is_null(),
-            "generate_hooks_settings: PreToolUse hook should exist"
+            "generate_expert_settings: PreToolUse hook should exist"
         );
         let matcher = pre_tool_use[0]["matcher"].as_str().unwrap_or("");
         assert!(
             matcher.contains("Write") && matcher.contains("Edit") && matcher.contains("Bash"),
-            "generate_hooks_settings: PreToolUse matcher should include Write, Edit, and Bash"
+            "generate_expert_settings: PreToolUse matcher should include Write, Edit, and Bash"
         );
     }
 
     #[test]
-    fn generate_hooks_settings_pre_tool_use_blocks_queue_writes() {
-        let json = generate_hooks_settings("/tmp/status/expert0");
+    fn generate_expert_settings_pre_tool_use_blocks_queue_writes() {
+        let json = generate_expert_settings("/tmp/status/expert0");
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         let command = parsed["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
             .as_str()
             .unwrap_or("");
         assert!(
             command.contains("messages/queue/"),
-            "generate_hooks_settings: PreToolUse command should check for messages/queue/ path"
+            "generate_expert_settings: PreToolUse command should check for messages/queue/ path"
         );
         assert!(
             command.contains("deny"),
-            "generate_hooks_settings: PreToolUse command should deny writes to queue"
+            "generate_expert_settings: PreToolUse command should deny writes to queue"
         );
     }
 
     #[test]
-    fn generate_hooks_settings_pre_tool_use_suggests_outbox() {
-        let json = generate_hooks_settings("/tmp/status/expert0");
+    fn generate_expert_settings_pre_tool_use_suggests_outbox() {
+        let json = generate_expert_settings("/tmp/status/expert0");
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         let command = parsed["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
             .as_str()
             .unwrap_or("");
         assert!(
             command.contains("outbox"),
-            "generate_hooks_settings: PreToolUse deny reason should suggest outbox"
+            "generate_expert_settings: PreToolUse deny reason should suggest outbox"
         );
     }
 
     #[test]
-    fn generate_hooks_settings_escapes_single_quote_in_status_path() {
-        let json = generate_hooks_settings("/tmp/status/it's/me");
+    fn generate_expert_settings_pins_classic_tui_renderer() {
+        let json = generate_expert_settings("/tmp/status/expert0");
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            parsed["tui"].as_str(),
+            Some("default"),
+            "generate_expert_settings: should pin the classic (main-screen) renderer"
+        );
+    }
+
+    #[test]
+    fn generate_expert_settings_keeps_hooks_alongside_tui() {
+        let json = generate_expert_settings("/tmp/status/expert0");
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(
+            parsed.get("hooks").is_some() && parsed.get("tui").is_some(),
+            "generate_expert_settings: should keep hooks when adding tui"
+        );
+    }
+
+    #[test]
+    fn generate_expert_settings_pins_tui_for_empty_status_path() {
+        let json = generate_expert_settings("");
         let parsed: serde_json::Value = serde_json::from_str(&json)
-            .expect("generate_hooks_settings: output should be valid JSON");
+            .expect("generate_expert_settings: output should be valid JSON for empty path");
+        assert_eq!(
+            parsed["tui"].as_str(),
+            Some("default"),
+            "generate_expert_settings: tui should not depend on the status file path"
+        );
+    }
+
+    #[test]
+    fn generate_expert_settings_escapes_single_quote_in_status_path() {
+        let json = generate_expert_settings("/tmp/status/it's/me");
+        let parsed: serde_json::Value = serde_json::from_str(&json)
+            .expect("generate_expert_settings: output should be valid JSON");
 
         let processing_cmd = parsed["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"]
             .as_str()
-            .expect("generate_hooks_settings: command should be string");
+            .expect("generate_expert_settings: command should be string");
         let stop_cmd = parsed["hooks"]["Stop"][0]["hooks"][0]["command"]
             .as_str()
-            .expect("generate_hooks_settings: command should be string");
+            .expect("generate_expert_settings: command should be string");
 
         assert_eq!(
             processing_cmd, "bash -c 'printf \"%s\" \"processing\" >| \"/tmp/status/it'\\''s/me\"'",
-            "generate_hooks_settings: processing command should be wrapped with bash -c"
+            "generate_expert_settings: processing command should be wrapped with bash -c"
         );
         assert_eq!(
             stop_cmd, "bash -c 'printf \"%s\" \"pending\" >| \"/tmp/status/it'\\''s/me\"'",
-            "generate_hooks_settings: stop command should be wrapped with bash -c"
+            "generate_expert_settings: stop command should be wrapped with bash -c"
         );
     }
 }

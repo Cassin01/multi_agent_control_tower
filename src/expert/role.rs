@@ -73,11 +73,11 @@ impl FromStr for BuiltinRole {
     }
 }
 
-/// Settings hook template carried alongside a resolved role.
+/// Settings template carried alongside a resolved role.
 ///
-/// The current implementation has a single shared hook family for every
-/// role (matching the existing `generate_hooks_settings` output). The
-/// type is kept as a value object so that future role-specific hook
+/// The current implementation has a single shared settings family for every
+/// role (matching the existing `generate_expert_settings` output). The
+/// type is kept as a value object so that future role-specific settings
 /// variations remain a non-breaking change for callers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsTemplate {
@@ -102,7 +102,7 @@ impl SettingsTemplate {
     pub fn render(&self, status_file_path: &str) -> String {
         match self.family {
             SettingsFamily::Default => {
-                crate::instructions::generate_hooks_settings(status_file_path)
+                crate::instructions::generate_expert_settings(status_file_path)
             }
         }
     }
