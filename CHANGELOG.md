@@ -6,6 +6,16 @@ The format is based on Keep a Changelog.
 
 ## [Unreleased]
 
+### Fixed
+
+- Expert Panel showed only the last screenful of Claude's output and scroll mode
+  (`PageUp`) had nothing to scroll. Claude Code's `fullscreen` renderer draws
+  into the terminal's alternate screen, where tmux keeps no scrollback, so
+  `capture-pane` could never see anything above the visible viewport. Expert
+  sessions now pin `"tui": "default"` via the generated `--settings` document,
+  which overrides a global `settings.json` set to `fullscreen`. Relaunch experts
+  to pick this up.
+
 ## [0.1.12] - 2026-07-28
 
 ### Added

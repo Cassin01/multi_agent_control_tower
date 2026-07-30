@@ -34,7 +34,7 @@ use crate::expert::role::{resolve as resolve_role, RoleError, RoleSpec};
 use crate::experts::names::NamePool;
 use crate::experts::persist::{ExpertEntry, ManifestPersistor, PersistError};
 use crate::experts::registry::{ExpertRegistry, AUTO_ASSIGN_ID};
-use crate::instructions::generate_hooks_settings;
+use crate::instructions::generate_expert_settings;
 use crate::models::{ExpertId, ExpertInfo, Role};
 use crate::session::TmuxWindowSpawner;
 use crate::state::lock::{LockError, MacotLock, DEFAULT_TIMEOUT};
@@ -531,12 +531,12 @@ impl<S: TmuxWindowSpawner> ExpertAddService<S> {
     }
 }
 
-// `generate_hooks_settings` is reachable through `resolved.settings_template.render`
+// `generate_expert_settings` is reachable through `resolved.settings_template.render`
 // (see role.rs) — keep an explicit reference here so removing it from
 // `instructions::*` would break this file too, surfacing the coupling.
 #[allow(dead_code)]
-fn _hooks_anchor(p: &str) -> String {
-    generate_hooks_settings(p)
+fn _settings_anchor(p: &str) -> String {
+    generate_expert_settings(p)
 }
 
 #[cfg(test)]

@@ -5,7 +5,7 @@ use anyhow::{bail, Context, Result};
 use crate::config::Config;
 use crate::context::ContextStore;
 use crate::instructions::{
-    generate_hooks_settings, load_instruction_with_template, write_agents_file,
+    generate_expert_settings, load_instruction_with_template, write_agents_file,
     write_instruction_file, write_settings_file,
 };
 use crate::queue::QueueManager;
@@ -161,11 +161,11 @@ pub fn prepare_expert_files_with_role(
         None => None,
     };
 
-    let hooks_json = generate_hooks_settings(&config.status_file_path(expert_id));
+    let settings_json = generate_expert_settings(&config.status_file_path(expert_id));
     let settings_file = Some(write_settings_file(
         &config.queue_path,
         expert_id,
-        &hooks_json,
+        &settings_json,
     )?);
 
     Ok(PreparedExpertFiles {
