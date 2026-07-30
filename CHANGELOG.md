@@ -6,6 +6,8 @@ The format is based on Keep a Changelog.
 
 ## [Unreleased]
 
+## [0.1.13] - 2026-07-30
+
 ### Fixed
 
 - Expert Panel showed only the last screenful of Claude's output and scroll mode
