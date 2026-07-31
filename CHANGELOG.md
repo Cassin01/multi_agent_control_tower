@@ -6,6 +6,18 @@ The format is based on Keep a Changelog.
 
 ## [Unreleased]
 
+## [0.1.14] - 2026-07-31
+
+### Fixed
+
+- Expert Panel scroll indicator never reached `m/m` at the bottom. It reported
+  the *first* visible line against a total-line denominator, so the bottom of a
+  20-row panel read `[81/100]`. It now reports the last visible line, clamped to
+  the total so content shorter than the viewport reads `[3/3]` instead of
+  `[1/3]`. Jumping to the bottom in scroll mode (`End` / `G`) also hid the
+  indicator entirely; it now stays visible for the whole of scroll mode. Scroll
+  positioning itself was already correct — this is a title-text fix.
+
 ## [0.1.13] - 2026-07-30
 
 ### Fixed
