@@ -260,8 +260,13 @@ impl ExpertPanelDisplay {
         } else {
             ""
         };
-        let scroll_indicator = if !self.auto_scroll {
-            format!(" [{}/{}]", self.scroll_offset + 1, visual_line_count)
+        // Report the last visible line, not the first, so the indicator reaches
+        // m/m at the bottom. Clamped for content shorter than the viewport.
+        let scroll_indicator = if self.is_scrolling || !self.auto_scroll {
+            let last_visible_line = (self.scroll_offset as usize)
+                .saturating_add(visible_height)
+                .min(visual_line_count);
+            format!(" [{last_visible_line}/{visual_line_count}]")
         } else {
             String::new()
         };
@@ -704,6 +709,105 @@ mod tests {
         assert!(
             !rendered.contains("/"),
             "render: should NOT show scroll position indicator when auto_scroll is enabled"
+        );
+    }
+
+    /// Extract the `[n/m]` scroll position indicator from a rendered frame.
+    fn parse_scroll_indicator(rendered: &str) -> Option<(usize, usize)> {
+        let title = rendered.lines().next()?;
+        let slash = title.rfind('/')?;
+        let open = title[..slash].rfind('[')?;
+        let close = slash + title[slash..].find(']')?;
+        let n = title[open + 1..slash].trim().parse().ok()?;
+        let m = title[slash + 1..close].trim().parse().ok()?;
+        Some((n, m))
+    }
+
+    /// Content of `count` short lines, one per raw line.
+    fn plain_lines(count: usize) -> String {
+        (0..count)
+            .map(|i| format!("line{i}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn scroll_indicator_reaches_total_at_bottom() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.set_expert(1, "Alice".to_string());
+        // 30 lines, area 60x10 → visible_height=8, no wrapping → max_scroll=22
+        panel.enter_scroll_mode(&plain_lines(30));
+        panel.scroll_to_bottom();
+
+        let rendered = render_to_string(&mut panel, 60, 10);
+        assert_eq!(
+            parse_scroll_indicator(&rendered),
+            Some((30, 30)),
+            "render: scroll indicator should reach m/m at the bottom, got title: {}",
+            rendered.lines().next().unwrap_or("")
+        );
+    }
+
+    #[test]
+    fn scroll_indicator_shows_last_visible_line_in_middle() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.set_expert(1, "Alice".to_string());
+        panel.enter_scroll_mode(&plain_lines(30));
+        panel.scroll_to_top();
+        for _ in 0..10 {
+            panel.scroll_down();
+        }
+
+        let rendered = render_to_string(&mut panel, 60, 10);
+        assert_eq!(
+            parse_scroll_indicator(&rendered),
+            Some((18, 30)),
+            "render: scroll indicator numerator should be the last visible line (offset 10 + height 8)"
+        );
+    }
+
+    #[test]
+    fn scroll_indicator_does_not_exceed_total_for_short_content() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.set_expert(1, "Alice".to_string());
+        // 3 lines in an 8-row viewport → max_scroll=0
+        panel.enter_scroll_mode(&plain_lines(3));
+
+        let rendered = render_to_string(&mut panel, 60, 10);
+        assert_eq!(
+            parse_scroll_indicator(&rendered),
+            Some((3, 3)),
+            "render: numerator must clamp to the total when content is shorter than the viewport"
+        );
+    }
+
+    #[test]
+    fn scroll_indicator_handles_empty_content() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.set_expert(1, "Alice".to_string());
+        panel.enter_scroll_mode("");
+
+        let rendered = render_to_string(&mut panel, 60, 10);
+        let (n, m) = parse_scroll_indicator(&rendered)
+            .expect("render: scroll indicator should still render for empty content");
+        assert!(
+            n <= m,
+            "render: numerator must not exceed the total for empty content, got [{n}/{m}]"
+        );
+    }
+
+    #[test]
+    fn scroll_indicator_reaches_total_for_very_large_content() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.set_expert(1, "Alice".to_string());
+        panel.enter_scroll_mode(&plain_lines(5000));
+        panel.scroll_to_bottom();
+
+        let rendered = render_to_string(&mut panel, 60, 10);
+        assert_eq!(
+            parse_scroll_indicator(&rendered),
+            Some((5000, 5000)),
+            "render: scroll indicator should reach m/m at the bottom of very large content"
         );
     }
 
