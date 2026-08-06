@@ -6,6 +6,16 @@ The format is based on Keep a Changelog.
 
 ## [Unreleased]
 
+### Changed
+
+- Expert Panel scroll mode now exits when you scroll down while already at the
+  bottom (`PageDown` or a mouse-wheel notch), resuming live tailing instead of
+  requiring `Esc`. The frozen history snapshot's bottom is the live pane's
+  bottom, so the transition is seamless. The trigger is the input, never the
+  rendered position: reflow, resize, and content shorter than the viewport all
+  pin the offset at the bottom without leaving scroll mode, and `End` still
+  jumps to the bottom while keeping the snapshot frozen.
+
 ## [0.1.14] - 2026-07-31
 
 ### Fixed
