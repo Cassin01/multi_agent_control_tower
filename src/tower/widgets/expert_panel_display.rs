@@ -29,6 +29,10 @@ pub struct ExpertPanelDisplay {
     content_hash: u64,
     cached_visual_line_count: usize,
     cached_display_width: usize,
+    /// Bottom-most offset measured by the last `render`, or `None` while the
+    /// current content has not been measured yet. Lets `scroll_down` detect
+    /// "already at the bottom" without re-measuring the wrapped content.
+    last_max_scroll: Option<u16>,
 }
 
 impl Default for ExpertPanelDisplay {
@@ -53,6 +57,7 @@ impl ExpertPanelDisplay {
             content_hash: 0,
             cached_visual_line_count: 0,
             cached_display_width: 0,
+            last_max_scroll: None,
         }
     }
 
@@ -132,6 +137,7 @@ impl ExpertPanelDisplay {
         self.content = text;
         self.raw_line_count = line_count;
         self.scroll_offset = u16::MAX;
+        self.last_max_scroll = None;
     }
 
     pub fn exit_scroll_mode(&mut self) {
@@ -193,7 +199,18 @@ impl ExpertPanelDisplay {
         self.auto_scroll = false;
     }
 
+    /// Scrolling down while already at the bottom leaves scroll mode and
+    /// resumes live tailing: the frozen snapshot's bottom is the live pane's
+    /// bottom, so the transition is seamless.
     pub fn scroll_down(&mut self) {
+        if self.is_scrolling
+            && self
+                .last_max_scroll
+                .is_some_and(|m| self.scroll_offset >= m)
+        {
+            self.exit_scroll_mode();
+            return;
+        }
         self.scroll_offset = self.scroll_offset.saturating_add(1);
     }
 
@@ -246,6 +263,7 @@ impl ExpertPanelDisplay {
             };
 
         let max_scroll = visual_line_count.saturating_sub(visible_height) as u16;
+        self.last_max_scroll = Some(max_scroll);
         if self.auto_scroll {
             self.scroll_offset = max_scroll;
         } else {
@@ -1532,6 +1550,132 @@ mod tests {
         assert_eq!(
             panel.cached_visual_line_count, 3,
             "word-wrap: 'aaaa bbbbbbbb cccc' at width 10 should be 3 visual lines, not 2"
+        );
+    }
+
+    // Exit-at-bottom tests: scrolling down while already at the bottom leaves
+    // scroll mode and resumes live tailing. The trigger is the input, never the
+    // rendered position, so reflow/clamping must not change the mode.
+
+    fn scrollable_history() -> String {
+        (0..30)
+            .map(|i| format!("history line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn scroll_down_at_bottom_exits_scroll_mode() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.enter_scroll_mode(&scrollable_history());
+        render_panel(&mut panel, 40, 10);
+
+        panel.scroll_down();
+
+        assert!(
+            !panel.is_scrolling(),
+            "scroll_down at bottom: should leave scroll mode"
+        );
+        assert!(
+            panel.auto_scroll,
+            "scroll_down at bottom: should resume auto_scroll"
+        );
+    }
+
+    #[test]
+    fn scroll_down_above_bottom_keeps_scroll_mode() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.enter_scroll_mode(&scrollable_history());
+        panel.scroll_to_top();
+        render_panel(&mut panel, 40, 10);
+
+        panel.scroll_down();
+
+        assert!(
+            panel.is_scrolling(),
+            "scroll_down above bottom: should stay in scroll mode"
+        );
+        assert_eq!(
+            panel.scroll_offset, 1,
+            "scroll_down above bottom: should advance offset"
+        );
+    }
+
+    #[test]
+    fn scroll_down_one_line_above_bottom_reaches_bottom_without_exiting() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.enter_scroll_mode(&scrollable_history());
+        render_panel(&mut panel, 40, 10);
+        let max_scroll = panel.last_max_scroll.unwrap();
+        panel.scroll_up();
+        assert_eq!(panel.scroll_offset, max_scroll - 1, "precondition");
+
+        panel.scroll_down();
+
+        assert!(
+            panel.is_scrolling(),
+            "landing on the bottom line: should stay in scroll mode until the next input"
+        );
+        assert_eq!(panel.scroll_offset, max_scroll, "should land at bottom");
+    }
+
+    #[test]
+    fn scroll_down_before_first_render_keeps_scroll_mode() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.enter_scroll_mode(&scrollable_history());
+
+        // No render yet: the bottom is unknown, so the mode must not flip.
+        panel.scroll_down();
+
+        assert!(
+            panel.is_scrolling(),
+            "scroll_down before the content is measured: should stay in scroll mode"
+        );
+    }
+
+    #[test]
+    fn render_clamping_to_bottom_keeps_scroll_mode() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.enter_scroll_mode(&scrollable_history());
+        render_panel(&mut panel, 40, 10);
+        panel.scroll_to_top();
+        panel.scroll_up();
+
+        // Viewport taller than the content: max_scroll collapses to 0 and the
+        // clamp pins the offset at the bottom. Reflow alone must not exit.
+        render_panel(&mut panel, 40, 40);
+
+        assert!(
+            panel.is_scrolling(),
+            "render clamp to bottom: reflow must not exit scroll mode"
+        );
+    }
+
+    #[test]
+    fn scroll_down_outside_scroll_mode_does_not_toggle_mode() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.set_content(Text::raw(scrollable_history()), 30);
+        render_panel(&mut panel, 40, 10);
+
+        panel.scroll_down();
+
+        assert!(
+            !panel.is_scrolling(),
+            "scroll_down outside scroll mode: must not enter scroll mode"
+        );
+    }
+
+    #[test]
+    fn scroll_down_at_offset_max_saturates_outside_scroll_mode() {
+        let mut panel = ExpertPanelDisplay::new();
+        panel.scroll_offset = u16::MAX;
+
+        panel.scroll_down();
+
+        assert_eq!(
+            panel.scroll_offset,
+            u16::MAX,
+            "scroll_down at u16::MAX: should saturate"
         );
     }
 }
