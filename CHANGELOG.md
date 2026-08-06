@@ -6,6 +6,8 @@ The format is based on Keep a Changelog.
 
 ## [Unreleased]
 
+## [0.1.15] - 2026-08-06
+
 ### Changed
 
 - Expert Panel scroll mode now exits when you scroll down while already at the
