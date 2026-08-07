@@ -6,6 +6,8 @@ The format is based on Keep a Changelog.
 
 ## [Unreleased]
 
+## [0.1.16] - 2026-08-07
+
 ### Fixed
 
 - Dynamically added experts (F2 modal / `macot expert add`) vanished from the
