@@ -6,6 +6,21 @@ The format is based on Keep a Changelog.
 
 ## [Unreleased]
 
+### Fixed
+
+- Dynamically added experts (F2 modal / `macot expert add`) vanished from the
+  Experts panel as soon as any other expert's role changed, and changing a
+  dynamic expert's own role killed the TUI. Both came from treating the startup
+  `config.yaml` snapshot as the expert roster: `experts_manifest.json` was
+  regenerated from `0..num_experts` only, so ids beyond the config were erased
+  and then reloaded as gone; and `prepare_expert_files_with_role` rejected any id
+  absent from the config, so the error propagated out of the event loop past
+  terminal restore. The manifest is now the union of config, registry, and
+  on-disk entries; instruction preparation resolves unknown ids through the
+  manifest; the tower seeds its registry from the manifest at startup (so dynamic
+  experts survive a tower restart, including their worktree paths); and a failed
+  user action is reported in the status bar instead of tearing down the TUI.
+
 ## [0.1.15] - 2026-08-06
 
 ### Changed

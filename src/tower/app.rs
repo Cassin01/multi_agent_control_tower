@@ -225,6 +225,44 @@ impl TowerApp {
             }
         }
 
+        // Dynamically added experts (F2 modal / `macot expert add`) exist only
+        // in the manifest, never in the config snapshot — merge them in so a
+        // tower restart keeps them in the panel and in the manifest.
+        let on_disk = if enable_watcher_and_manifest {
+            crate::experts::persist::ManifestPersistor::new(config.project_path.clone())
+                .load_entries()
+                .unwrap_or_else(|e| {
+                    tracing::warn!("Failed to read manifest at startup: {}", e);
+                    Vec::new()
+                })
+        } else {
+            Vec::new()
+        };
+        for entry in on_disk {
+            if expert_registry.get_expert(entry.expert_id).is_some() {
+                continue;
+            }
+            let info = ExpertInfo::new(
+                entry.expert_id,
+                entry.name.clone(),
+                Role::specialist(entry.role.clone()),
+                session_name.clone(),
+                entry.expert_id.to_string(),
+            );
+            if let Err(e) = expert_registry.register_expert(info) {
+                tracing::warn!(
+                    "Failed to register manifest expert {}: {}",
+                    entry.expert_id,
+                    e
+                );
+                continue;
+            }
+            if entry.worktree_path.is_some() {
+                let _ =
+                    expert_registry.update_expert_worktree(entry.expert_id, entry.worktree_path);
+            }
+        }
+
         let detector = ExpertStateDetector::new(config.queue_path.join("status"));
 
         // Create message queue manager for messaging system
@@ -328,8 +366,20 @@ impl TowerApp {
     }
 
     fn refresh_expert_manifest(&self) -> Result<()> {
-        let content =
-            generate_expert_manifest(&self.config, &self.session_roles, &self.expert_registry)?;
+        // Read-merge-write without taking `.macot/.lock`: an `expert add` that
+        // commits between our read and write is lost.
+        // ponytail: sub-ms window, take MacotLock here if it ever bites.
+        // An unreadable manifest aborts the refresh: rewriting it from config
+        // alone would drop every dynamically added expert.
+        let existing =
+            crate::experts::persist::ManifestPersistor::new(self.config.project_path.clone())
+                .load_entries()?;
+        let content = generate_expert_manifest(
+            &self.config,
+            &self.session_roles,
+            &self.expert_registry,
+            &existing,
+        )?;
         write_expert_manifest(&self.config.queue_path, &content)?;
         Ok(())
     }
@@ -1472,6 +1522,17 @@ impl TowerApp {
         Ok(())
     }
 
+    /// Every expert id known at runtime, including experts added dynamically
+    /// after startup (which never appear in `config.experts`).
+    fn known_expert_ids(&self) -> Vec<u32> {
+        let mut ids: Vec<u32> = (0..self.config.num_experts())
+            .chain(self.expert_registry.get_all_experts().iter().map(|i| i.id))
+            .collect();
+        ids.sort_unstable();
+        ids.dedup();
+        ids
+    }
+
     pub async fn initialize_session_roles(&mut self) -> Result<()> {
         let session_hash = self.config.session_hash();
 
@@ -1494,7 +1555,7 @@ impl TowerApp {
         self.context_store.save_session_roles(&roles).await?;
 
         // Sync session roles to expert registry for message routing
-        for i in 0..self.config.num_experts() {
+        for i in self.known_expert_ids() {
             if let Some(role_str) = roles.get_role(i) {
                 let new_role = Role::specialist(role_str.to_string());
                 if let Err(e) = self.expert_registry.update_expert_role(i, new_role.clone()) {
@@ -1516,7 +1577,7 @@ impl TowerApp {
     pub async fn restore_worktree_paths(&mut self) -> Result<()> {
         let session_hash = self.config.session_hash();
 
-        for i in 0..self.config.num_experts() {
+        for i in self.known_expert_ids() {
             let ctx = match self
                 .context_store
                 .load_expert_context(&session_hash, i)
@@ -2445,6 +2506,18 @@ impl TowerApp {
     pub async fn run(&mut self) -> Result<()> {
         let mut terminal = UI::setup_terminal()?;
 
+        // Restore the terminal even when the loop bails out — otherwise the
+        // shell is left in raw mode inside the alternate screen and macot
+        // looks like it crashed.
+        let outcome = self.event_loop(&mut terminal).await;
+        UI::restore_terminal()?;
+        outcome
+    }
+
+    async fn event_loop(
+        &mut self,
+        terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
+    ) -> Result<()> {
         self.initialize_session_roles().await?;
         self.restore_worktree_paths().await?;
         self.update_focus();
@@ -2462,7 +2535,12 @@ impl TowerApp {
             let draw_elapsed = draw_start.elapsed();
 
             let events_start = Instant::now();
-            self.handle_events().await?;
+            // A failed user action (role change, reset, worktree switch, …) is
+            // reported in the status bar; it must not tear down the TUI.
+            if let Err(e) = self.handle_events().await {
+                tracing::warn!("event handling failed: {e}");
+                self.set_message(format!("Error: {e}"));
+            }
             let events_elapsed = events_start.elapsed();
 
             let poll_status_start = Instant::now();
@@ -2499,7 +2577,6 @@ impl TowerApp {
             }
         }
 
-        UI::restore_terminal()?;
         Ok(())
     }
 }
@@ -4435,6 +4512,116 @@ mod tests {
         let wm = WorktreeManager::new(config.project_path.clone());
         let app = TowerApp::new(config, wm);
         (app, tmp)
+    }
+
+    /// Write a manifest holding the 4 config experts plus one dynamically
+    /// added expert (id 4), as `macot expert add` / the F2 modal would leave it.
+    fn write_manifest_with_dynamic_expert(project_path: &std::path::Path) {
+        let mut entries: Vec<serde_json::Value> = Config::default()
+            .experts
+            .iter()
+            .enumerate()
+            .map(|(i, e)| {
+                serde_json::json!({
+                    "expert_id": i,
+                    "name": e.name,
+                    "role": e.role,
+                    "worktree_path": null,
+                })
+            })
+            .collect();
+        entries.push(serde_json::json!({
+            "expert_id": 4,
+            "name": "Nova",
+            "role": "planner",
+            "worktree_path": null,
+        }));
+        std::fs::write(
+            project_path.join(".macot").join("experts_manifest.json"),
+            serde_json::to_string_pretty(&entries).unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn startup_keeps_dynamically_added_expert() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".macot")).unwrap();
+        write_manifest_with_dynamic_expert(tmp.path());
+
+        let config = Config::default().with_project_path(tmp.path().to_path_buf());
+        let wm = WorktreeManager::new(config.project_path.clone());
+        let app = TowerApp::new(config, wm);
+
+        assert!(
+            app.expert_registry.get_expert(4).is_some(),
+            "startup_keeps_dynamically_added_expert: manifest-only expert should be seeded into the registry"
+        );
+        let content =
+            std::fs::read_to_string(tmp.path().join(".macot").join("experts_manifest.json"))
+                .unwrap();
+        assert!(
+            content.contains("Nova"),
+            "startup_keeps_dynamically_added_expert: startup refresh must not drop it from disk, got: {content}"
+        );
+    }
+
+    #[tokio::test]
+    async fn role_change_of_static_expert_keeps_dynamic_expert_in_manifest() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".macot")).unwrap();
+        write_manifest_with_dynamic_expert(tmp.path());
+
+        let config = Config::default().with_project_path(tmp.path().to_path_buf());
+        let wm = WorktreeManager::new(config.project_path.clone());
+        let mut app = TowerApp::new(config, wm);
+
+        // The state-write half of `change_expert_role` (tmux I/O is skipped
+        // here — no session exists in tests).
+        app.session_roles.set_role(0, "frontend".to_string());
+        app.refresh_expert_manifest().unwrap();
+
+        let content =
+            std::fs::read_to_string(tmp.path().join(".macot").join("experts_manifest.json"))
+                .unwrap();
+        let entries: Vec<crate::instructions::manifest::ExpertManifestEntry> =
+            serde_json::from_str(&content).unwrap();
+
+        assert_eq!(
+            entries[0].role, "frontend",
+            "role_change_keeps_dynamic_expert: role change should be persisted"
+        );
+        assert!(
+            entries.iter().any(|e| e.expert_id == 4 && e.name == "Nova"),
+            "role_change_keeps_dynamic_expert: dynamically added expert must survive, got: {content}"
+        );
+    }
+
+    #[tokio::test]
+    async fn restore_worktree_paths_covers_dynamically_added_expert() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".macot")).unwrap();
+        write_manifest_with_dynamic_expert(tmp.path());
+        let worktree = tmp.path().join("wt-nova");
+        std::fs::create_dir_all(&worktree).unwrap();
+
+        let config = Config::default().with_project_path(tmp.path().to_path_buf());
+        let wm = WorktreeManager::new(config.project_path.clone());
+        let mut app = TowerApp::new(config.clone(), wm);
+
+        let mut ctx = ExpertContext::new(4, "Nova".to_string(), config.session_hash());
+        ctx.worktree_path = Some(worktree.to_string_lossy().into_owned());
+        app.context_store.save_expert_context(&ctx).await.unwrap();
+
+        app.restore_worktree_paths().await.unwrap();
+
+        assert_eq!(
+            app.expert_registry
+                .get_expert(4)
+                .and_then(|info| info.worktree_path.clone()),
+            Some(worktree.to_string_lossy().into_owned()),
+            "restore_worktree_paths_covers_dynamically_added_expert: worktree of an expert outside the config snapshot should be restored"
+        );
     }
 
     #[test]

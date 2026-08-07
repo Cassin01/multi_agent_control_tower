@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::config::Config;
 use crate::context::SessionExpertRoles;
+use crate::experts::persist::ExpertEntry;
 use crate::experts::ExpertRegistry;
 
 /// Entry in the expert manifest file.
@@ -17,29 +18,62 @@ pub struct ExpertManifestEntry {
     pub worktree_path: Option<String>,
 }
 
-/// Generate manifest JSON from config, session expert roles, and registry.
+/// Generate manifest JSON from config, session expert roles, registry, and the
+/// entries currently on disk.
 ///
-/// Iterates over all experts in the config. For each expert:
-/// - Uses `session_roles` for the current role assignment (falls back to config default).
-/// - Uses `registry` for the `worktree_path` field from `ExpertInfo`.
+/// The roster is the union of three sources, because dynamically added experts
+/// (F2 modal / `macot expert add`) exist in the registry and on disk but never
+/// in the startup `config` snapshot:
+/// - `config` — the startup snapshot (ids `0..num_experts`).
+/// - `registry` — the runtime source of truth, includes dynamic experts.
+/// - `existing` — whatever is on disk, so an entry this process has not
+///   reloaded yet is preserved instead of clobbered.
+///
+/// Per field: `session_roles` overrides win, then config defaults (config ids
+/// only), then registry, then disk. `worktree_path` comes from the registry
+/// whenever it knows the expert (so clearing a worktree sticks), otherwise from
+/// disk.
 pub fn generate_expert_manifest(
     config: &Config,
     session_roles: &SessionExpertRoles,
     registry: &ExpertRegistry,
+    existing: &[ExpertEntry],
 ) -> Result<String> {
-    let entries: Vec<ExpertManifestEntry> = (0..config.num_experts())
-        .map(|id| {
-            let name = config.get_expert_name(id);
+    let mut ids: Vec<u32> = (0..config.num_experts())
+        .chain(registry.get_all_experts().iter().map(|info| info.id))
+        .chain(existing.iter().map(|e| e.expert_id))
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
 
-            // Session roles take precedence over config defaults
+    let entries: Vec<ExpertManifestEntry> = ids
+        .into_iter()
+        .map(|id| {
+            let in_config = config.get_expert(id).is_some();
+            let from_registry = registry.get_expert(id);
+            let from_disk = existing.iter().find(|e| e.expert_id == id);
+
+            let name = if in_config {
+                config.get_expert_name(id)
+            } else {
+                from_registry
+                    .map(|info| info.name.clone())
+                    .or_else(|| from_disk.map(|e| e.name.clone()))
+                    .unwrap_or_else(|| format!("expert{id}"))
+            };
+
             let role = session_roles
                 .get_role(id)
                 .map(|r| r.to_string())
-                .unwrap_or_else(|| config.get_expert_role(id));
+                .or_else(|| in_config.then(|| config.get_expert_role(id)))
+                .or_else(|| from_registry.map(|info| info.role.as_str().to_string()))
+                .or_else(|| from_disk.map(|e| e.role.clone()))
+                .unwrap_or_else(|| "general".to_string());
 
-            let worktree_path = registry
-                .get_expert(id)
-                .and_then(|info| info.worktree_path.clone());
+            let worktree_path = match from_registry {
+                Some(info) => info.worktree_path.clone(),
+                None => from_disk.and_then(|e| e.worktree_path.clone()),
+            };
 
             ExpertManifestEntry {
                 expert_id: id,
@@ -94,7 +128,7 @@ mod tests {
         let roles = make_session_roles();
         let registry = ExpertRegistry::new();
 
-        let json = generate_expert_manifest(&config, &roles, &registry).unwrap();
+        let json = generate_expert_manifest(&config, &roles, &registry, &[]).unwrap();
         let entries: Vec<ExpertManifestEntry> = serde_json::from_str(&json).unwrap();
 
         assert!(
@@ -118,7 +152,7 @@ mod tests {
         let roles = make_session_roles();
         let registry = ExpertRegistry::new();
 
-        let json = generate_expert_manifest(&config, &roles, &registry).unwrap();
+        let json = generate_expert_manifest(&config, &roles, &registry, &[]).unwrap();
         let entries: Vec<ExpertManifestEntry> = serde_json::from_str(&json).unwrap();
 
         assert_eq!(
@@ -140,7 +174,7 @@ mod tests {
         let roles = make_session_roles();
         let registry = ExpertRegistry::new();
 
-        let json = generate_expert_manifest(&config, &roles, &registry).unwrap();
+        let json = generate_expert_manifest(&config, &roles, &registry, &[]).unwrap();
         let entries: Vec<ExpertManifestEntry> = serde_json::from_str(&json).unwrap();
 
         assert_eq!(
@@ -158,7 +192,7 @@ mod tests {
 
         let registry = ExpertRegistry::new();
 
-        let json = generate_expert_manifest(&config, &roles, &registry).unwrap();
+        let json = generate_expert_manifest(&config, &roles, &registry, &[]).unwrap();
         let entries: Vec<ExpertManifestEntry> = serde_json::from_str(&json).unwrap();
 
         assert_eq!(
@@ -197,7 +231,7 @@ mod tests {
             .update_expert_worktree(0, Some("/wt/feature-auth".to_string()))
             .unwrap();
 
-        let json = generate_expert_manifest(&config, &roles, &registry).unwrap();
+        let json = generate_expert_manifest(&config, &roles, &registry, &[]).unwrap();
         let entries: Vec<ExpertManifestEntry> = serde_json::from_str(&json).unwrap();
 
         assert_eq!(
@@ -217,7 +251,7 @@ mod tests {
         let roles = make_session_roles();
         let registry = ExpertRegistry::new();
 
-        let json = generate_expert_manifest(&config, &roles, &registry).unwrap();
+        let json = generate_expert_manifest(&config, &roles, &registry, &[]).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json)
             .expect("generate_manifest_is_valid_json: output should be valid JSON");
 
@@ -233,12 +267,172 @@ mod tests {
         let roles = make_session_roles();
         let registry = ExpertRegistry::new(); // Empty registry
 
-        let json = generate_expert_manifest(&config, &roles, &registry).unwrap();
+        let json = generate_expert_manifest(&config, &roles, &registry, &[]).unwrap();
         let entries: Vec<ExpertManifestEntry> = serde_json::from_str(&json).unwrap();
 
         assert_eq!(
             entries[0].worktree_path, None,
             "generate_manifest: expert not in registry should have None worktree_path"
+        );
+    }
+
+    #[test]
+    fn generate_manifest_preserves_dynamically_added_expert() {
+        // Expert 1 was added at runtime (F2 modal / `macot expert add`), so it
+        // lives in the registry but not in the startup config snapshot.
+        let config = make_config(vec![("Alyosha", "architect")]);
+        let roles = make_session_roles();
+        let mut registry = ExpertRegistry::new();
+        registry
+            .register_expert(ExpertInfo::new(
+                0,
+                "Alyosha".to_string(),
+                Role::specialist("architect"),
+                "session".to_string(),
+                "0".to_string(),
+            ))
+            .unwrap();
+        registry
+            .register_expert(ExpertInfo::new(
+                1,
+                "Nova".to_string(),
+                Role::specialist("planner"),
+                "session".to_string(),
+                "1".to_string(),
+            ))
+            .unwrap();
+
+        let json = generate_expert_manifest(&config, &roles, &registry, &[]).unwrap();
+        let entries: Vec<ExpertManifestEntry> = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(
+            entries.len(),
+            2,
+            "generate_manifest_preserves_dynamically_added_expert: registry-only expert must survive regeneration"
+        );
+        assert_eq!(entries[1].expert_id, 1);
+        assert_eq!(entries[1].name, "Nova");
+        assert_eq!(entries[1].role, "planner");
+    }
+
+    #[test]
+    fn generate_manifest_preserves_manifest_only_expert() {
+        // Expert 1 was committed to disk by another process; this process has
+        // not reloaded it into its registry yet.
+        let config = make_config(vec![("Alyosha", "architect")]);
+        let roles = make_session_roles();
+        let existing = vec![ExpertEntry {
+            expert_id: 1,
+            name: "Nova".to_string(),
+            role: "planner".to_string(),
+            worktree_path: Some("/wt/nova".to_string()),
+        }];
+
+        let json =
+            generate_expert_manifest(&config, &roles, &ExpertRegistry::new(), &existing).unwrap();
+        let entries: Vec<ExpertManifestEntry> = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(
+            entries.len(),
+            2,
+            "generate_manifest_preserves_manifest_only_expert: on-disk entry must not be dropped"
+        );
+        assert_eq!(entries[1].name, "Nova");
+        assert_eq!(entries[1].role, "planner");
+        assert_eq!(entries[1].worktree_path, Some("/wt/nova".to_string()));
+    }
+
+    #[test]
+    fn generate_manifest_dynamic_expert_honours_session_role() {
+        let config = make_config(vec![("Alyosha", "architect")]);
+        let mut roles = make_session_roles();
+        roles.set_role(1, "debugger".to_string());
+        let existing = vec![ExpertEntry {
+            expert_id: 1,
+            name: "Nova".to_string(),
+            role: "planner".to_string(),
+            worktree_path: None,
+        }];
+
+        let json =
+            generate_expert_manifest(&config, &roles, &ExpertRegistry::new(), &existing).unwrap();
+        let entries: Vec<ExpertManifestEntry> = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(
+            entries[1].role, "debugger",
+            "generate_manifest_dynamic_expert_honours_session_role: session override wins for dynamic experts"
+        );
+    }
+
+    #[test]
+    fn generate_manifest_registry_clears_worktree_of_known_expert() {
+        // Registry knows expert 0 and says "no worktree" — that must win over
+        // a stale on-disk path (worktree return / Ctrl+W toggle off).
+        let config = make_config(vec![("Alyosha", "architect")]);
+        let roles = make_session_roles();
+        let mut registry = ExpertRegistry::new();
+        registry
+            .register_expert(ExpertInfo::new(
+                0,
+                "Alyosha".to_string(),
+                Role::specialist("architect"),
+                "session".to_string(),
+                "0".to_string(),
+            ))
+            .unwrap();
+        let existing = vec![ExpertEntry {
+            expert_id: 0,
+            name: "Alyosha".to_string(),
+            role: "architect".to_string(),
+            worktree_path: Some("/wt/stale".to_string()),
+        }];
+
+        let json = generate_expert_manifest(&config, &roles, &registry, &existing).unwrap();
+        let entries: Vec<ExpertManifestEntry> = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(
+            entries[0].worktree_path, None,
+            "generate_manifest_registry_clears_worktree_of_known_expert: registry is authoritative for registered experts"
+        );
+    }
+
+    #[test]
+    fn generate_manifest_sorts_and_dedupes_ids() {
+        let config = make_config(vec![("Alyosha", "architect")]);
+        let roles = make_session_roles();
+        let mut registry = ExpertRegistry::new();
+        registry
+            .register_expert(ExpertInfo::new(
+                7,
+                "Nova".to_string(),
+                Role::specialist("planner"),
+                "session".to_string(),
+                "7".to_string(),
+            ))
+            .unwrap();
+        let existing = vec![
+            ExpertEntry {
+                expert_id: 7,
+                name: "Nova".to_string(),
+                role: "planner".to_string(),
+                worktree_path: None,
+            },
+            ExpertEntry {
+                expert_id: 3,
+                name: "Mira".to_string(),
+                role: "general".to_string(),
+                worktree_path: None,
+            },
+        ];
+
+        let json = generate_expert_manifest(&config, &roles, &registry, &existing).unwrap();
+        let entries: Vec<ExpertManifestEntry> = serde_json::from_str(&json).unwrap();
+
+        let ids: Vec<u32> = entries.iter().map(|e| e.expert_id).collect();
+        assert_eq!(
+            ids,
+            vec![0, 3, 7],
+            "generate_manifest_sorts_and_dedupes_ids: ids should be unique and ascending"
         );
     }
 
