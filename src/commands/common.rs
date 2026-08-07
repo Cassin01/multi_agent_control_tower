@@ -4,6 +4,7 @@ use anyhow::{bail, Context, Result};
 
 use crate::config::Config;
 use crate::context::ContextStore;
+use crate::experts::persist::ManifestPersistor;
 use crate::instructions::{
     generate_expert_settings, load_instruction_with_template, write_agents_file,
     write_instruction_file, write_settings_file,
@@ -123,12 +124,21 @@ pub fn prepare_expert_files_with_role(
     role: &str,
     worktree_path: Option<&str>,
 ) -> Result<PreparedExpertFiles> {
-    // Validate that the expert ID exists in the configuration
-    config
-        .get_expert(expert_id)
-        .with_context(|| format!("No expert configured with id {}", expert_id))?;
-
-    let expert_name = config.get_expert_name(expert_id);
+    // The expert must be known either to the config snapshot or to the
+    // manifest — dynamically added experts (F2 modal / `macot expert add`)
+    // only ever appear in the latter.
+    let expert_name = match config.get_expert(expert_id) {
+        Some(_) => config.get_expert_name(expert_id),
+        None => {
+            let entry = ManifestPersistor::new(config.project_path.clone())
+                .load_entries()
+                .unwrap_or_default()
+                .into_iter()
+                .find(|e| e.expert_id == expert_id)
+                .with_context(|| format!("No expert configured with id {}", expert_id))?;
+            entry.name
+        }
+    };
     let manifest_path = config.queue_path.join("experts_manifest.json");
     let manifest_path_str = manifest_path.to_string_lossy();
     let status_dir = config.queue_path.join("status");
@@ -222,6 +232,58 @@ mod tests {
         assert!(
             content.contains("Expert Instructions: Architect"),
             "prepare_expert_files: should load architect role instructions, not general fallback"
+        );
+    }
+
+    /// Write a manifest containing a single dynamically added expert.
+    fn write_manifest(queue_path: &std::path::Path, entries: &str) {
+        std::fs::create_dir_all(queue_path).unwrap();
+        std::fs::write(queue_path.join("experts_manifest.json"), entries).unwrap();
+    }
+
+    #[test]
+    fn prepare_expert_files_with_role_accepts_manifest_only_expert() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = Config::default().with_project_path(tmp.path().to_path_buf());
+        let dynamic_id = config.num_experts(); // beyond the config snapshot
+
+        std::fs::create_dir_all(config.queue_path.join("system_prompt")).ok();
+        std::fs::create_dir_all(config.queue_path.join("status")).ok();
+        write_manifest(
+            &config.queue_path,
+            &format!(
+                r#"[{{"expert_id":{dynamic_id},"name":"Nova","role":"planner","worktree_path":null}}]"#
+            ),
+        );
+
+        let prepared = prepare_expert_files_with_role(&config, dynamic_id, "planner", None)
+            .expect("prepare_expert_files_with_role: dynamically added expert should be accepted");
+
+        let content = std::fs::read_to_string(prepared.instruction_file.unwrap()).unwrap();
+        assert!(
+            content.contains("Planner"),
+            "prepare_expert_files_with_role: should load the requested role, got: {content}"
+        );
+        assert!(
+            prepared.settings_file.unwrap().exists(),
+            "prepare_expert_files_with_role: settings file should be written for a dynamic expert"
+        );
+    }
+
+    #[test]
+    fn prepare_expert_files_with_role_rejects_unknown_expert() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = Config::default().with_project_path(tmp.path().to_path_buf());
+
+        std::fs::create_dir_all(config.queue_path.join("system_prompt")).ok();
+        std::fs::create_dir_all(config.queue_path.join("status")).ok();
+        write_manifest(&config.queue_path, "[]");
+
+        let result = prepare_expert_files_with_role(&config, 99, "general", None);
+
+        assert!(
+            result.is_err(),
+            "prepare_expert_files_with_role: id absent from config and manifest should be rejected"
         );
     }
 
